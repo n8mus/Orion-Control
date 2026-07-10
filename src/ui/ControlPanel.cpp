@@ -145,11 +145,36 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     });
 
     // --- DSP: NR / NB / auto-notch -------------------------------------------
-    // Write-only on the CAT side (no query in the protocol), so these always
-    // start at OFF; the radio is set to match on first touch.
+    // Queryable on v3 despite the docs (undocumented ?R.NR/NB/NA) — synced
+    // from the radio at startup.
     lay->addWidget(makeDspRow("NR", nr_, nrVal_));
     lay->addWidget(makeDspRow("NB", nb_, nbVal_));
+
+    // Hardware noise blanker (undocumented *RMNH, strict on/off).
+    auto* hwBox = makeGroup("HARDWARE NB");
+    auto* hwRow = new QHBoxLayout(hwBox);
+    hwRow->setContentsMargins(0, 4, 0, 0);
+    hwNbBtn_ = makeButton("ON");
+    hwRow->addWidget(hwNbBtn_);
+    connect(hwNbBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit hwNbToggled(on); });
+    lay->addWidget(hwBox);
+
     lay->addWidget(makeDspRow("AUTO NOTCH", an_, anVal_));
+
+    // Manual notch: engage button + live center x width readout. Placement is
+    // on the panadapter itself (drag the orange marker; wheel over it = width).
+    auto* notchBox = makeGroup("MANUAL NOTCH");
+    auto* notchRow = new QHBoxLayout(notchBox);
+    notchRow->setContentsMargins(0, 4, 0, 0);
+    notchBtn_ = makeButton("NOTCH");
+    notchVal_ = new QLabel("--");
+    notchVal_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    notchRow->addWidget(notchBtn_);
+    notchRow->addWidget(notchVal_, 1);
+    connect(notchBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit notchToggled(on); });
+    lay->addWidget(notchBox);
     connect(nr_, &QSlider::valueChanged, this, [this](int v) {
         nrVal_->setText(v ? QString::number(v) : "off");
         emit nrChanged(v);
@@ -220,5 +245,16 @@ static void showDspLevel(QSlider* slider, QLabel* value, int level) {
 void ControlPanel::showNr(int level)        { showDspLevel(nr_, nrVal_, level); }
 void ControlPanel::showNb(int level)        { showDspLevel(nb_, nbVal_, level); }
 void ControlPanel::showAutoNotch(int level) { showDspLevel(an_, anVal_, level); }
+
+void ControlPanel::showNotch(bool on, int centerHz, int widthHz) {
+    QSignalBlocker block(notchBtn_);
+    notchBtn_->setChecked(on);
+    notchVal_->setText(QString("%1 Hz x %2").arg(centerHz).arg(widthHz));
+}
+
+void ControlPanel::showHwNb(bool on) {
+    QSignalBlocker block(hwNbBtn_);
+    hwNbBtn_->setChecked(on);
+}
 
 } // namespace ttc

@@ -4,6 +4,7 @@
 #include "radio/RadioController.h"
 
 class QButtonGroup;
+class QPushButton;
 class QSlider;
 class QLabel;
 class QTimer;
@@ -27,6 +28,8 @@ signals:
     void nrChanged(int level);            // 0..9, 0 = off
     void nbChanged(int level);
     void autoNotchChanged(int level);
+    void notchToggled(bool on);           // manual notch engage
+    void hwNbToggled(bool on);            // hardware noise blanker
 
 public slots:
     void showMode(Mode m);
@@ -38,6 +41,8 @@ public slots:
     void showNr(int level);
     void showNb(int level);
     void showAutoNotch(int level);
+    void showNotch(bool on, int centerHz, int widthHz);
+    void showHwNb(bool on);
 
 private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);
@@ -49,6 +54,8 @@ private:
     QSlider* nr_     = nullptr;   QLabel* nrVal_     = nullptr;
     QSlider* nb_     = nullptr;   QLabel* nbVal_     = nullptr;
     QSlider* an_     = nullptr;   QLabel* anVal_     = nullptr;
+    QPushButton* notchBtn_ = nullptr;  QLabel* notchVal_ = nullptr;
+    QPushButton* hwNbBtn_  = nullptr;
     // Trailing-edge coalescer for slider drags (the Orion's UART services
     // commands on a ~100 ms cycle; raw slider-move rates would flood it).
     QTimer* gainTx_ = nullptr;

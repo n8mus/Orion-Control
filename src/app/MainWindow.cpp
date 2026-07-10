@@ -13,6 +13,8 @@
 
 namespace ttc {
 
+static int pbtRfSign(Mode m);   // defined below with the passband math
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("Ten-Tec SDR Console");
 
@@ -69,13 +71,73 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     filterTx_->setSingleShot(true);
     filterTx_->setInterval(40);
     connect(filterTx_, &QTimer::timeout, this, &MainWindow::sendPendingFilter);
+    notchTx_ = new QTimer(this);
+    notchTx_->setSingleShot(true);
+    notchTx_->setInterval(40);
+    connect(notchTx_, &QTimer::timeout, this, &MainWindow::sendPendingNotch);
 
     // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
     connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
         if (rx != Rx::Main) return;
         rigctld_.cacheMode(m);                      // clients always see true mode
         panel_->showMode(m);                        // sidebar mirrors the front panel
-        if (m != rigMode_) { rigMode_ = m; refreshPassbandOverlay(); }
+        if (m != rigMode_) {
+            rigMode_ = m;
+            refreshPassbandOverlay();
+            refreshNotchOverlay();                  // marker side flips with sideband
+        }
+    });
+
+    // Manual notch: drag the orange marker to move it, wheel over it for width,
+    // sidebar button to engage. All audio<->RF mapping happens here.
+    connect(pan_, &PanadapterWidget::notchDragged, this, [this](int rfOffsetHz) {
+        const int audio = std::clamp(pbtRfSign(rigMode_) * rfOffsetHz, 20, 4000);
+        notchCenter_ = audio;
+        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
+        sinceNotchEdit_.restart();
+        notchDirty_ = true;
+        pendNotchHz_ = audio;
+        if (!notchTx_->isActive()) notchTx_->start();  // coalesce like the filter drag
+    });
+    connect(pan_, &PanadapterWidget::notchWidthAdjustRequested, this, [this](int steps) {
+        notchWidth_ = std::clamp(notchWidth_ + steps * 10, 10, 300);
+        radio_.setNotchWidth(Rx::Main, notchWidth_);
+        sinceNotchEdit_.restart();
+        refreshNotchOverlay();
+        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
+        statusBar()->showMessage(QString("notch width -> %1 Hz").arg(notchWidth_));
+    });
+    connect(panel_, &ControlPanel::notchToggled, this, [this](bool on) {
+        radio_.setNotchEngaged(Rx::Main, on);
+        notchOn_ = on;
+        refreshNotchOverlay();
+        panel_->showNotch(on, notchCenter_, notchWidth_);
+    });
+    connect(panel_, &ControlPanel::hwNbToggled, this,
+            [this](bool on) { radio_.setHardwareNb(Rx::Main, on); });
+    connect(&radio_, &TenTecOrion::notchCenterReported, this, [this](Rx rx, int hz) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        notchCenter_ = hz;
+        refreshNotchOverlay();
+        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
+    });
+    connect(&radio_, &TenTecOrion::notchWidthReported, this, [this](Rx rx, int hz) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        notchWidth_ = hz;
+        refreshNotchOverlay();
+        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
+    });
+    connect(&radio_, &TenTecOrion::notchEngagedReported, this, [this](Rx rx, bool on) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        notchOn_ = on;
+        refreshNotchOverlay();
+        panel_->showNotch(on, notchCenter_, notchWidth_);
+    });
+    connect(&radio_, &TenTecOrion::hardwareNbReported, this, [this](Rx rx, bool on) {
+        if (rx == Rx::Main) panel_->showHwNb(on);
     });
 
     // Radio state -> control surface (front-panel changes reflect on screen).
@@ -214,7 +276,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryAgc(Rx::Main);                  // sync the control sidebar
         radio_.queryRfGain(Rx::Main);
         radio_.queryAttenuator(Rx::Main);
-        radio_.queryDspLevels(Rx::Main);            // speculative; syncs NR/NB/AN if answered
+        radio_.queryDspLevels(Rx::Main);            // syncs NR/NB/AN/hw-NB sliders
+        radio_.queryNotch(Rx::Main);                // syncs notch center/width/engage
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);
@@ -229,10 +292,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 3) {
+                    switch ((pollTick_ / 25) % 4) {
                         case 0:  radio_.queryAgc(Rx::Main);        break;
                         case 1:  radio_.queryRfGain(Rx::Main);     break;
-                        default: radio_.queryAttenuator(Rx::Main); break;
+                        case 2:  radio_.queryAttenuator(Rx::Main); break;
+                        default: radio_.queryNotch(Rx::Main);      break;
                     }
                 } else {
                     radio_.querySMeter();
@@ -322,6 +386,21 @@ void MainWindow::onPassbandChanged(int loHz, int hiHz) {
     if (!filterTx_->isActive()) filterTx_->start();  // coalesce to ~25 writes/sec
     statusBar()->showMessage(QString("filter -> bw %1 Hz  pbt %2 Hz")
                                  .arg(pendBwHz_).arg(pendPbtHz_));
+}
+
+// The notch is an audio-domain DSP filter: an RF signal at offset d from the
+// carrier demodulates to audio |d| regardless of PBT (PBT moves the passband
+// filter, not the BFO). So marker RF offset = sideband sign x audio center.
+void MainWindow::refreshNotchOverlay() {
+    pan_->setNotch(notchOn_, pbtRfSign(rigMode_) * notchCenter_, notchWidth_);
+}
+
+void MainWindow::sendPendingNotch() {
+    if (!notchDirty_) return;
+    notchDirty_ = false;
+    radio_.setNotchCenter(Rx::Main, pendNotchHz_);  // -> *RMNC (clamped in driver)
+    statusBar()->showMessage(QString("notch -> %1 Hz x %2 Hz")
+                                 .arg(pendNotchHz_).arg(notchWidth_));
 }
 
 void MainWindow::sendPendingFilter() {

@@ -34,6 +34,21 @@ void PanadapterWidget::setPassband(int loHz, int hiHz) {
     update();
 }
 
+void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz) {
+    if (drag_ == Drag::Notch) return;              // never fight an active drag
+    notchOn_ = on;
+    notchRfHz_ = rfOffsetHz;
+    notchWidthHz_ = widthHz;
+    update();
+}
+
+bool PanadapterWidget::overNotch(int x) const {
+    if (!notchOn_) return false;
+    const int halfPx = (hzToX(notchRfHz_ + notchWidthHz_ / 2)
+                        - hzToX(notchRfHz_ - notchWidthHz_ / 2)) / 2;
+    return std::abs(x - hzToX(notchRfHz_)) <= std::max(6, halfPx + 3);
+}
+
 int PanadapterWidget::spectrumHeight() const {
     return static_cast<int>(height() * kSpectrumFrac);
 }
@@ -130,6 +145,17 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     p.drawLine(xLo, 0, xLo, height());
     p.drawLine(xHi, 0, xHi, height());
 
+    // Manual-notch marker: orange band, full height, over the passband tint.
+    if (notchOn_) {
+        const int xnLo = hzToX(notchRfHz_ - notchWidthHz_ / 2);
+        const int xnHi = hzToX(notchRfHz_ + notchWidthHz_ / 2);
+        p.fillRect(QRect(QPoint(xnLo, 0), QPoint(xnHi, height())), QColor(255, 140, 0, 70));
+        p.setPen(QPen(QColor(255, 160, 40), 1));
+        const int xnC = hzToX(notchRfHz_);
+        p.drawLine(xnC, 0, xnC, height());
+        p.drawText(xnC + 3, hSpec - 6, "N");
+    }
+
     // Center (tuned) marker, full height.
     p.setPen(QColor(200, 80, 80));
     p.drawLine(width() / 2, 0, width() / 2, height());
@@ -171,9 +197,14 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
                                  kMinViewSpanHz, fullSpanHz_);
         emit viewSpanChanged(viewSpanHz_);
         update();
-    } else {                                        // plain wheel = tune (Shift = fine)
+    } else {
         const int n = static_cast<int>(steps > 0 ? std::ceil(steps) : std::floor(steps));
-        emit tuneStepRequested(n, e->modifiers() & Qt::ShiftModifier);
+        // Wheel over the notch marker widens/narrows it; elsewhere it tunes
+        // (Shift = fine).
+        if (overNotch(static_cast<int>(e->position().x())))
+            emit notchWidthAdjustRequested(n);
+        else
+            emit tuneStepRequested(n, e->modifiers() & Qt::ShiftModifier);
     }
     e->accept();
 }
@@ -181,6 +212,12 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
 void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     const int x = e->pos().x();
     const int edgeTol = 6;
+    // The notch is the narrowest target — give it priority over the passband
+    // edges it may sit on top of.
+    if (overNotch(x)) {
+        drag_ = Drag::Notch;
+        return;
+    }
     if (std::abs(x - hzToX(pbLoHz_)) <= edgeTol)      drag_ = Drag::LoEdge;
     else if (std::abs(x - hzToX(pbHiHz_)) <= edgeTol) drag_ = Drag::HiEdge;
     if (drag_ != Drag::None) {
@@ -196,6 +233,12 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     if (drag_ == Drag::None) return;
     const int hz = xToHz(e->pos().x());
+    if (drag_ == Drag::Notch) {
+        notchRfHz_ = hz;
+        update();
+        emit notchDragged(notchRfHz_);              // drag-to-notch
+        return;
+    }
     if (drag_ == Drag::LoEdge) pbLoHz_ = std::min(hz, pbHiHz_ - 50);
     else                       pbHiHz_ = std::max(hz, pbLoHz_ + 50);
     update();

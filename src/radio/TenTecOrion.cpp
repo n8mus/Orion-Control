@@ -137,6 +137,7 @@ void TenTecOrion::queryDspLevels(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "NR");   // v3 NR letter (NN is dead)
     send(QByteArray("?R") + rxLetter(rx) + "NB");
     send(QByteArray("?R") + rxLetter(rx) + "NA");
+    send(QByteArray("?R") + rxLetter(rx) + "NH");   // hardware blanker on/off
 }
 
 void TenTecOrion::queryFrequency(Rx rx) {

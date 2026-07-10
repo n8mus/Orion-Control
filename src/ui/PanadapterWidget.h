@@ -20,6 +20,9 @@ public:
 
     void setSpanHz(int spanHz);                    // full captured span
     void setPassband(int loHz, int hiHz);          // offsets from center, in Hz
+    // Manual-notch marker, in display (RF-offset) space; caller maps the
+    // radio's audio-Hz notch through the mode sideband. Ignored mid-drag.
+    void setNotch(bool on, int rfOffsetHz, int widthHz);
     void setSpectrum(const std::vector<float>& magsDb);
 
 signals:
@@ -27,6 +30,8 @@ signals:
     void tuneStepRequested(int steps, bool fine);  // wheel tune; fine = Shift held
     void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state
     void passbandChanged(int loHz, int hiHz);      // drag-to-filter
+    void notchDragged(int rfOffsetHz);             // notch marker slid (streamed)
+    void notchWidthAdjustRequested(int steps);     // wheel over the notch marker
     void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
 
 protected:
@@ -43,15 +48,20 @@ private:
     void   appendWaterfallRow(const std::vector<float>& db);
     static QRgb colormap(float t);                 // t in [0,1]
 
+    bool   overNotch(int x) const;                 // cursor within the grab zone
+
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
     int pbLoHz_ = -1200;
     int pbHiHz_ = 1200;
+    bool notchOn_     = false;
+    int  notchRfHz_   = 0;                         // marker center, RF offset
+    int  notchWidthHz_ = 0;
     float dbMin_ = -125.0f, dbMax_ = -55.0f;       // display dB range
     std::vector<float> spectrum_;                  // full span, fftshifted
     QImage waterfall_;                             // width = bins, scrolls down
 
-    enum class Drag { None, LoEdge, HiEdge } drag_ = Drag::None;
+    enum class Drag { None, LoEdge, HiEdge, Notch } drag_ = Drag::None;
 };
 
 } // namespace ttc

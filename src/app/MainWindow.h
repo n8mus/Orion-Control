@@ -27,7 +27,9 @@ private slots:
 
 private:
     void refreshPassbandOverlay();     // radio state -> mode-sided on-screen passband
+    void refreshNotchOverlay();        // radio notch (audio Hz) -> RF-offset marker
     void sendPendingFilter();          // coalesced drag-to-filter serial writes
+    void sendPendingNotch();           // coalesced drag-to-notch serial writes
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
     PanadapterWidget* pan_ = nullptr;
@@ -51,10 +53,19 @@ private:
     int anchorLoHz_ = 0, anchorHiHz_ = 0;      // overlay edges at drag start
     int anchorBwHz_ = 2400, anchorPbtHz_ = 0;  // radio state at drag start
 
+    // Manual notch state (audio Hz, from polling; see refreshNotchOverlay).
+    bool notchOn_      = false;
+    int  notchCenter_  = 550;
+    int  notchWidth_   = 30;
+    QElapsedTimer sinceNotchEdit_;             // suppress poll snap-back after a drag
+
     // Coalesced drag-to-filter: keep only the latest values, send ~25x/sec.
     QTimer* filterTx_ = nullptr;
     int  pendBwHz_ = 0, pendPbtHz_ = 0;
     bool filterDirty_ = false;
+    QTimer* notchTx_ = nullptr;                // same pattern for notch drags
+    int  pendNotchHz_ = 0;
+    bool notchDirty_ = false;
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{4096};   // 61 Hz/bin at 250 kHz span — survives deep zoom

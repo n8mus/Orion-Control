@@ -31,6 +31,27 @@ profile quantizes it. See `src/radio/TenTecOrion.cpp` for the Orion implementati
 Set commands are fire-and-forget (no ACK). Queries return `@`-prefixed lines.
 Drag strategy: fire `*RMF`/`*RMP` coalesced to ~20-30/sec; reconcile via periodic query.
 
+### Manual notch — UNDOCUMENTED commands, discovered by live probe (2026-07-10)
+
+In no public Ten-Tec document or hamlib. The V3 user-manual addendum (TT 74474)
+documents only `*RMNS` (SAF) but says SAF "uses the same values for NOTCH Center
+Frequency and Width parameters. So no new commands are required" — implying these
+existed since the V2 firmware. Verified against Jon's Orion 565 (v3 firmware) with
+`tools/notch_probe.sh` / `tools/cat_probe -burst`, set + exact read-back:
+
+| Function            | Command                       | Verified behavior                        |
+|---------------------|-------------------------------|------------------------------------------|
+| Notch center freq   | `*RMNC<hz>` / `?RMNC`         | accepted 20..4000 Hz (1 Hz res); 1, 4500, 9999 **silently rejected**, value unchanged |
+| Notch width         | `*RMNW<hz>` / `?RMNW`         | accepted 10..300 Hz incl. 15 (finer than the front panel's 10 Hz steps); 1, 310, 999 rejected |
+| Manual notch engage | `*RMNM<0/1>` / `?RMNM`        | clean on/off toggle, query-confirmed     |
+| SAF engage          | `*RMNS<0/1>` / `?RMNS`        | documented in V3 addendum; SAF shares CF/W values with notch |
+
+Sub receiver presumably `*RSN<C/W/M/S>` (untested). Out-of-range sets are
+REJECTED, not clamped — the UI must clamp before sending or the radio ignores
+the command. This unlocks the draggable on-screen notch marker (same pattern
+as the passband drag: `*RMNC` streams the drag, `*RMNW` from a width gesture,
+audio-offset → RF mapping must respect mode sideband like PBT does).
+
 ## Omni VII 588 — 57600 8N1, **hardware handshaking (RTS/CTS) required**; also Ethernet
 
 Two operating modes: RADIO MODE (subset, compatible with existing programs) and

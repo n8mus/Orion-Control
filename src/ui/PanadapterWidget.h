@@ -23,9 +23,10 @@ public:
     void setSpectrum(const std::vector<float>& magsDb);
 
 signals:
-    void tuneRequested(int offsetHz);              // click-to-tune
+    void tuneRequested(int offsetHz);              // click-to-tune (offset from center)
+    void tuneStepRequested(int steps, bool fine);  // wheel tune; fine = Shift held
     void passbandChanged(int loHz, int hiHz);      // drag-to-filter
-    void viewSpanChanged(int spanHz);              // wheel zoom
+    void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
 
 protected:
     void paintEvent(QPaintEvent*) override;

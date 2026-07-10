@@ -30,6 +30,33 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
     });
+    // Wheel tuning: 100 Hz per notch, 10 Hz with Shift (Ctrl+wheel zooms).
+    connect(pan_, &PanadapterWidget::tuneStepRequested, this, [this](int steps, bool fine) {
+        onTuneRequested(steps * (fine ? 10 : 100));
+    });
+
+    // Coalesce drag-to-filter writes: the Orion's UART services on a ~100 ms cycle,
+    // so raw mouse-move rates (100+ cmd pairs/sec) would flood it. Send only the
+    // latest edges, at most ~25x/sec, trailing edge included.
+    filterTx_ = new QTimer(this);
+    filterTx_->setSingleShot(true);
+    filterTx_->setInterval(40);
+    connect(filterTx_, &QTimer::timeout, this, &MainWindow::sendPendingFilter);
+
+    // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
+    connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
+        if (rx != Rx::Main) return;
+        if (m != rigMode_) { rigMode_ = m; refreshPassbandOverlay(); }
+    });
+    connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {
+        if (rx != Rx::Main) return;
+        rigctld_.cacheBandwidth(bw);
+        if (bw != rigBwHz_) { rigBwHz_ = bw; refreshPassbandOverlay(); }
+    });
+    connect(&radio_, &TenTecOrion::pbtReported, this, [this](Rx rx, int pbt) {
+        if (rx != Rx::Main) return;
+        if (pbt != rigPbtHz_) { rigPbtHz_ = pbt; refreshPassbandOverlay(); }
+    });
 
     // The radio reported its frequency (startup sync or dial-follow poll): keep the
     // rigctld cache and the panadapter center locked to the physical VFO.
@@ -40,6 +67,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (std::getenv("TTC_SELFTEST"))
                     std::fprintf(stderr, "[radio] VFO-A reports %.4f MHz\n", hz / 1e6);
                 if (hz != centerHz_) {
+                    // Right after a click-to-tune the radio takes a few hundred ms to
+                    // settle; stale reads must not "confirm" the old frequency and
+                    // yank the tune back. Ignore dial-follow during that window.
+                    if (sinceTune_.isValid() && sinceTune_.elapsed() < 1500) return;
                     // The Orion occasionally emits a mangled frame that still parses
                     // as a plausible frequency. Require two consecutive identical
                     // reads before following a dial change (~200 ms, imperceptible).
@@ -98,20 +129,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     const std::string radioDev = devEnv ? devEnv : "/dev/orion";
     if (radio_.open(radioDev)) {
         radio_.queryFrequency(Rx::Main);            // one-shot sync at startup
+        radio_.queryMode(Rx::Main);
+        radio_.queryFilter(Rx::Main);
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);
         connect(poll, &QTimer::timeout, this, [this] {
             if (!radio_.connected()) return;
-            // Only one query in flight: the Orion's response tail runs ~110 ms, and
-            // overlapping queries glue responses together on the wire. Re-arm after
-            // 600 ms anyway in case a response was dropped.
+            ++pollTick_;
+            // Interleave slower mode/filter polls between the ~3 Hz frequency polls
+            // so the overlay tracks front-panel mode/BW/PBT changes too.
+            if (pollTick_ % 5 == 2) { radio_.queryMode(Rx::Main);   return; }
+            if (pollTick_ % 5 == 4) { radio_.queryFilter(Rx::Main); return; }
+            // Only one ?AF in flight: the Orion's response tail runs ~110 ms. Re-arm
+            // after 600 ms anyway in case a response was dropped.
             if (awaitingFreq_ && freqQueryAge_.elapsed() < 600) return;
             radio_.queryFrequency(Rx::Main);
             awaitingFreq_ = true;
             freqQueryAge_.restart();
         });
-        poll->start(200);                            // ~5 Hz dial-follow
+        poll->start(200);
     } else {
         statusBar()->showMessage("radio: could not open " + QString::fromStdString(radioDev));
     }
@@ -131,17 +168,62 @@ void MainWindow::onTuneRequested(int offsetHz) {
     radio_.setFrequencyHz(Rx::Main, f);
     rigctld_.cacheFrequency(f);
     centerHz_ = f;                              // recenter view on the clicked signal
+    pendingHz_ = f;
+    sinceTune_.restart();                       // hold off dial-follow while it settles
 #ifdef HAVE_SDRPLAY
     sdr_.setCenterFrequency(static_cast<double>(f));
 #endif
     statusBar()->showMessage(QString("tune -> %1 Hz").arg(f));
 }
 
+// Where the radio's filter sits relative to the carrier depends on mode:
+// LSB below, USB above, others treated as symmetric. Nominal placement at
+// PBT=0, shifted by PBT. (CW will need sidetone-pitch handling later.)
+static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
+    switch (m) {
+        case Mode::USB: lo = pbt;          hi = pbt + bw;     break;
+        case Mode::LSB: lo = pbt - bw;     hi = pbt;          break;
+        default:        lo = pbt - bw / 2; hi = pbt + bw / 2; break;
+    }
+}
+
+static void rigFromEdges(Mode m, int lo, int hi, int& bw, int& pbt) {
+    bw = hi - lo;
+    switch (m) {
+        case Mode::USB: pbt = lo;            break;
+        case Mode::LSB: pbt = hi;            break;
+        default:        pbt = (hi + lo) / 2; break;
+    }
+}
+
+void MainWindow::refreshPassbandOverlay() {
+    // Don't snap the overlay out from under the user right after they dragged it.
+    if (sinceFilterEdit_.isValid() && sinceFilterEdit_.elapsed() < 2000) return;
+    int lo = 0, hi = 0;
+    edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+    pan_->setPassband(lo, hi);
+}
+
 void MainWindow::onPassbandChanged(int loHz, int hiHz) {
-    radio_.setPassband(Rx::Main, loHz, hiHz);       // -> *RMF width + *RMP center
-    rigctld_.cacheBandwidth(hiHz - loHz);
+    pendLoHz_ = loHz;
+    pendHiHz_ = hiHz;
+    filterDirty_ = true;
+    sinceFilterEdit_.restart();
+    if (!filterTx_->isActive()) filterTx_->start();  // coalesce to ~25 writes/sec
     statusBar()->showMessage(QString("filter -> lo %1  hi %2  (bw %3 Hz)")
                                  .arg(loHz).arg(hiHz).arg(hiHz - loHz));
+}
+
+void MainWindow::sendPendingFilter() {
+    if (!filterDirty_) return;
+    filterDirty_ = false;
+    int bw = 0, pbt = 0;
+    rigFromEdges(rigMode_, pendLoHz_, pendHiHz_, bw, pbt);
+    radio_.setBandwidthHz(Rx::Main, bw);            // -> *RMF
+    radio_.setPbtHz(Rx::Main, pbt);                 // -> *RMP
+    rigBwHz_  = bw;                                 // optimistic; poll will confirm
+    rigPbtHz_ = pbt;
+    rigctld_.cacheBandwidth(bw);
 }
 
 } // namespace ttc

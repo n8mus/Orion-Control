@@ -28,6 +28,7 @@ void PanadapterWidget::setSpanHz(int spanHz) {
 }
 
 void PanadapterWidget::setPassband(int loHz, int hiHz) {
+    if (drag_ != Drag::None) return;               // never fight an active edge drag
     pbLoHz_ = std::min(loHz, hiHz);
     pbHiHz_ = std::max(loHz, hiHz);
     update();
@@ -155,7 +156,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
 
     // Span readout + separator line.
     p.setPen(QColor(200, 200, 200, 160));
-    p.drawText(6, 14, QString("span %1 kHz   (wheel to zoom)")
+    p.drawText(6, 14, QString("span %1 kHz   wheel: tune  shift: fine  ctrl: zoom")
                           .arg(viewSpanHz_ / 1000.0, 0, 'f', viewSpanHz_ < 20000 ? 1 : 0));
     p.setPen(QColor(255, 255, 255, 40));
     p.drawLine(0, hSpec, width(), hSpec);
@@ -164,11 +165,16 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {
     const double steps = e->angleDelta().y() / 120.0;
     if (steps == 0.0) return;
-    const double factor = std::pow(1.25, -steps);   // wheel up = zoom in
-    viewSpanHz_ = std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
-                             kMinViewSpanHz, fullSpanHz_);
-    emit viewSpanChanged(viewSpanHz_);
-    update();
+    if (e->modifiers() & Qt::ControlModifier) {     // Ctrl+wheel = zoom
+        const double factor = std::pow(1.25, -steps);
+        viewSpanHz_ = std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
+                                 kMinViewSpanHz, fullSpanHz_);
+        emit viewSpanChanged(viewSpanHz_);
+        update();
+    } else {                                        // plain wheel = tune (Shift = fine)
+        const int n = static_cast<int>(steps > 0 ? std::ceil(steps) : std::floor(steps));
+        emit tuneStepRequested(n, e->modifiers() & Qt::ShiftModifier);
+    }
     e->accept();
 }
 

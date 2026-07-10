@@ -2,6 +2,8 @@
 #include "radio/TenTecOrion.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 
 namespace ttc {
 
@@ -27,6 +29,8 @@ bool TenTecOrion::open(const std::string& device) {
 void TenTecOrion::close() { serial_.close(); }
 
 void TenTecOrion::send(const QByteArray& cmd) {
+    if (std::getenv("TTC_TRACE"))
+        std::fprintf(stderr, "[cat->] %s\n", cmd.constData());
     QByteArray out = cmd;
     out.append('\r');                 // ASCII CR terminates every Orion command
     serial_.write(out);
@@ -81,6 +85,10 @@ void TenTecOrion::queryFilter(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "P");
 }
 
+void TenTecOrion::queryMode(Rx rx) {
+    send(QByteArray("?R") + rxLetter(rx) + "M");
+}
+
 // Parse a leading run of digits (optionally signed), ignoring any trailing junk.
 // Responses occasionally arrive glued together on the wire; toULongLong() would
 // return 0 for the whole line, which upstream must never mistake for a frequency.
@@ -109,12 +117,17 @@ void TenTecOrion::onLine(const QByteArray& line) {
         }
         return;
     }
-    if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P]<val>
+    if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M]<val>
         Rx rx = (line[2] == 'M') ? Rx::Main : Rx::Sub;
         if (line[3] == 'F' && parseLeadingInt(line.mid(4), v) && v >= 100 && v <= 6000)
             emit bandwidthReported(rx, static_cast<int>(v));
         else if (line[3] == 'P' && parseLeadingInt(line.mid(4), v) && v >= -8000 && v <= 8000)
             emit pbtReported(rx, static_cast<int>(v));
+        else if (line[3] == 'M' && line.size() >= 5 && line[4] >= '0' && line[4] <= '5') {
+            static const Mode modes[] = { Mode::USB, Mode::LSB, Mode::CWU,
+                                          Mode::CWL, Mode::AM,  Mode::FM };
+            emit modeReported(rx, modes[line[4] - '0']);
+        }
     }
 }
 

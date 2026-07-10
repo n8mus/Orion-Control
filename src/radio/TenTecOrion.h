@@ -28,11 +28,13 @@ public:
     // Queries (responses arrive asynchronously via the signals below).
     void queryFrequency(Rx rx);
     void queryFilter(Rx rx);
+    void queryMode(Rx rx);
 
 signals:
     void frequencyReported(Rx rx, uint64_t hz);
     void bandwidthReported(Rx rx, int bwHz);
     void pbtReported(Rx rx, int pbtHz);
+    void modeReported(Rx rx, Mode mode);
     void rawLine(const QByteArray& line);
 
 private slots:

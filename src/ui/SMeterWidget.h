@@ -5,9 +5,10 @@
 
 namespace ttc {
 
-// SmartSDR-style horizontal S-meter bar. Fed raw Orion ?S readings; converts
-// to dB-relative-to-S9 via the hamlib TT565 V2 calibration table (firmware
-// 2.x/3.x scale), which we can re-fit against the real radio if it reads off.
+// Compact SmartSDR-style S-meter bar (fixed size; MainWindow left-aligns it
+// in a top strip). Fed raw Orion ?S readings; converts to dB-relative-to-S9
+// via the hamlib TT565 V2 calibration table (firmware 2.x/3.x scale), which
+// we can re-fit against the real radio if it reads off.
 class SMeterWidget : public QWidget {
     Q_OBJECT
 public:

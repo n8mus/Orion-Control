@@ -211,4 +211,14 @@ void ControlPanel::showRfGain(int gain) {
     rfGainVal_->setText(QString::number(gain));
 }
 
+static void showDspLevel(QSlider* slider, QLabel* value, int level) {
+    QSignalBlocker block(slider);
+    slider->setValue(level);
+    value->setText(level ? QString::number(level) : "off");
+}
+
+void ControlPanel::showNr(int level)        { showDspLevel(nr_, nrVal_, level); }
+void ControlPanel::showNb(int level)        { showDspLevel(nb_, nbVal_, level); }
+void ControlPanel::showAutoNotch(int level) { showDspLevel(an_, anVal_, level); }
+
 } // namespace ttc

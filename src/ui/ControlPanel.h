@@ -33,6 +33,11 @@ public slots:
     void showAgc(char agc);
     void showAtten(int step);
     void showRfGain(int gain);
+    // These only ever fire if the radio answers the speculative ?R.NN/NB/NA
+    // queries — the sliders then reflect true radio state instead of "off".
+    void showNr(int level);
+    void showNb(int level);
+    void showAutoNotch(int level);
 
 private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);

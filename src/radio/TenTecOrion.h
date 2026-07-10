@@ -35,6 +35,14 @@ public:
     void setNoiseBlanker(Rx rx, int level);       // *R<M/S>NB<val>
     void setAutoNotch(Rx rx, int level);          // *R<M/S>NA<val>
 
+    // Manual notch — UNDOCUMENTED commands, live-probe verified on the v3
+    // firmware (see docs/cat-command-reference.md). The firmware silently
+    // REJECTS out-of-range values, so these clamp before sending.
+    void setNotchCenter(Rx rx, int hz);           // *R<M/S>NC<20-4000>
+    void setNotchWidth(Rx rx, int hz);            // *R<M/S>NW<10-300>
+    void setNotchEngaged(Rx rx, bool on);         // *R<M/S>NM<0/1>
+    void setSaf(Rx rx, bool on);                  // *R<M/S>NS<0/1>
+
     // Queries (responses arrive asynchronously via the signals below).
     void queryFrequency(Rx rx);
     void queryFilter(Rx rx);
@@ -43,8 +51,11 @@ public:
     void queryAgc(Rx rx);                         // ?R<M/S>A
     void queryRfGain(Rx rx);                      // ?R<M/S>G
     void queryAttenuator(Rx rx);                  // ?R<M/S>T
-    // NOTE: rev 1.2 docs give no query for the NR/NB/auto-notch levels — those
-    // controls are write-only from the CAT side.
+    void queryNotch(Rx rx);                       // ?R.NC / ?R.NW / ?R.NM (undocumented)
+    // Speculative: NR/NB/AN level queries appear in no document, but neither
+    // did the notch ones and the radio answered those. Unanswered queries are
+    // harmless; if replies come back the *Reported signals below fire.
+    void queryDspLevels(Rx rx);                   // ?R.NN / ?R.NB / ?R.NA
 
 signals:
     void frequencyReported(Rx rx, uint64_t hz);
@@ -56,6 +67,13 @@ signals:
     void agcReported(Rx rx, char agc);
     void rfGainReported(Rx rx, int gain);
     void attenReported(Rx rx, int step);
+    void notchCenterReported(Rx rx, int hz);
+    void notchWidthReported(Rx rx, int hz);
+    void notchEngagedReported(Rx rx, bool on);
+    void safReported(Rx rx, bool on);
+    void nrReported(Rx rx, int level);
+    void nbReported(Rx rx, int level);
+    void autoNotchReported(Rx rx, int level);
     void rawLine(const QByteArray& line);
 
 private slots:

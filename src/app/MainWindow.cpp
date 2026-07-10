@@ -29,7 +29,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* left = new QVBoxLayout;
     left->setContentsMargins(0, 0, 0, 0);
     left->setSpacing(0);
-    left->addWidget(smeter_);
+    // The meter is compact and fixed-size; park it left in a dark strip so the
+    // rest of the row doesn't show the default window color.
+    auto* topStrip = new QWidget(this);
+    topStrip->setAutoFillBackground(true);
+    QPalette strip = topStrip->palette();
+    strip.setColor(QPalette::Window, QColor(12, 16, 22));
+    topStrip->setPalette(strip);
+    auto* topLay = new QHBoxLayout(topStrip);
+    topLay->setContentsMargins(0, 0, 0, 0);
+    topLay->addWidget(smeter_);
+    topLay->addStretch(1);
+    left->addWidget(topStrip);
     left->addWidget(pan_, 1);
     lay->addLayout(left, 1);
     lay->addWidget(panel_);
@@ -83,6 +94,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(&radio_, &TenTecOrion::attenReported, this, [this](Rx rx, int s) {
         if (rx == Rx::Main) panel_->showAtten(s);
+    });
+    connect(&radio_, &TenTecOrion::nrReported, this, [this](Rx rx, int l) {
+        if (rx == Rx::Main) panel_->showNr(l);
+    });
+    connect(&radio_, &TenTecOrion::nbReported, this, [this](Rx rx, int l) {
+        if (rx == Rx::Main) panel_->showNb(l);
+    });
+    connect(&radio_, &TenTecOrion::autoNotchReported, this, [this](Rx rx, int l) {
+        if (rx == Rx::Main) panel_->showAutoNotch(l);
     });
 
     // Control surface -> radio. Sets are fire-and-forget; polling confirms.
@@ -194,6 +214,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryAgc(Rx::Main);                  // sync the control sidebar
         radio_.queryRfGain(Rx::Main);
         radio_.queryAttenuator(Rx::Main);
+        radio_.queryDspLevels(Rx::Main);            // speculative; syncs NR/NB/AN if answered
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);

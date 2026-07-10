@@ -12,11 +12,15 @@ namespace {
 constexpr double kDbMin = -54.0;
 constexpr double kDbMax = +60.0;
 constexpr int    kPeakHoldMs = 1500;
+// Compact fixed geometry: labels row on top, bar below, readout to the right.
+constexpr int kLabelH = 12;
+constexpr int kBarH   = 10;
+constexpr int kBarX0  = 6;
+constexpr int kBarX1  = 300;   // bar ends here; text readout to the right
 } // namespace
 
 SMeterWidget::SMeterWidget(QWidget* parent) : QWidget(parent) {
-    setFixedHeight(46);
-    setMinimumWidth(320);
+    setFixedSize(364, kLabelH + kBarH + 8);
 }
 
 // Hamlib TT565_STR_CAL_V2 (rigs/tentec/orion.h): raw ?S units -> dB rel S9,
@@ -55,57 +59,52 @@ void SMeterWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), QColor(12, 16, 22));
 
-    const int barTop = 18, barH = 14;
-    const int x0 = 8, x1 = width() - 78;              // room for the text readout
+    const int barTop = kLabelH + 2;
     auto dbToX = [&](double db) {
         const double f = (db - kDbMin) / (kDbMax - kDbMin);
-        return x0 + static_cast<int>(std::clamp(f, 0.0, 1.0) * (x1 - x0));
+        return kBarX0 + static_cast<int>(std::clamp(f, 0.0, 1.0) * (kBarX1 - kBarX0));
     };
 
-    // Scale: S1..S9 every other unit, then +20/+40/+60.
+    // Bar trough and fill FIRST, labels after, so the scale is never overdrawn.
+    p.fillRect(QRect(kBarX0, barTop, kBarX1 - kBarX0, kBarH), QColor(30, 36, 44));
+    if (haveReading_) {
+        const int xS9  = dbToX(0.0);
+        const int xLvl = dbToX(dbS9_);
+        p.fillRect(QRect(kBarX0, barTop, std::min(xLvl, xS9) - kBarX0, kBarH),
+                   QColor(70, 200, 110));
+        if (xLvl > xS9)
+            p.fillRect(QRect(xS9, barTop, xLvl - xS9, kBarH), QColor(230, 80, 60));
+        const int xPk = dbToX(peakDb_);
+        p.fillRect(QRect(xPk - 1, barTop, 2, kBarH), QColor(240, 240, 240));
+    }
+
+    // Scale: S1..S9 every other unit, then +20/+40/+60, in the label row above.
+    QFont f = p.font(); f.setPixelSize(9); p.setFont(f);
     p.setPen(QColor(160, 170, 180));
-    QFont f = p.font(); f.setPixelSize(10); p.setFont(f);
     for (int s = 1; s <= 9; s += 2) {
         const int x = dbToX((s - 9) * 6.0);
-        p.drawLine(x, barTop - 4, x, barTop);
-        p.drawText(x - 8, barTop - 6, 16, 10, Qt::AlignCenter, QString::number(s));
+        p.drawText(x - 8, 0, 16, kLabelH - 2, Qt::AlignCenter, QString::number(s));
+        p.drawLine(x, kLabelH - 2, x, barTop);
     }
     for (int over = 20; over <= 60; over += 20) {
         const int x = dbToX(over);
-        p.drawLine(x, barTop - 4, x, barTop);
-        p.drawText(x - 14, barTop - 6, 28, 10, Qt::AlignCenter, QString("+%1").arg(over));
+        p.drawText(x - 14, 0, 28, kLabelH - 2, Qt::AlignCenter, QString("+%1").arg(over));
+        p.drawLine(x, kLabelH - 2, x, barTop);
     }
 
-    // Bar trough.
-    p.fillRect(QRect(x0, barTop, x1 - x0, barH), QColor(30, 36, 44));
-
+    // Text readout, e.g. "S7" or "S9+23", right of the bar.
+    QString txt = "--";
     if (haveReading_) {
-        // Green to S9, red above — classic meter split at the S9 tick.
-        const int xS9  = dbToX(0.0);
-        const int xLvl = dbToX(dbS9_);
-        p.fillRect(QRect(x0, barTop, std::min(xLvl, xS9) - x0, barH), QColor(70, 200, 110));
-        if (xLvl > xS9)
-            p.fillRect(QRect(xS9, barTop, xLvl - xS9, barH), QColor(230, 80, 60));
-
-        // Peak-hold marker.
-        const int xPk = dbToX(peakDb_);
-        p.fillRect(QRect(xPk - 1, barTop, 2, barH), QColor(240, 240, 240));
-
-        // Text readout, e.g. "S7" or "S9+23".
-        QString txt;
         if (dbS9_ >= 0.5) txt = QString("S9+%1").arg(static_cast<int>(std::lround(dbS9_)));
         else {
             const int s = std::clamp(static_cast<int>(std::lround(9.0 + dbS9_ / 6.0)), 0, 9);
             txt = QString("S%1").arg(s);
         }
-        f.setPixelSize(15); f.setBold(true); p.setFont(f);
-        p.setPen(QColor(220, 230, 240));
-        p.drawText(QRect(x1 + 6, barTop - 4, width() - x1 - 8, barH + 8),
-                   Qt::AlignVCenter | Qt::AlignLeft, txt);
-    } else {
-        p.setPen(QColor(120, 130, 140));
-        p.drawText(QRect(x0, barTop, x1 - x0, barH), Qt::AlignCenter, "no signal data");
     }
+    f.setPixelSize(13); f.setBold(true); p.setFont(f);
+    p.setPen(QColor(220, 230, 240));
+    p.drawText(QRect(kBarX1 + 8, 0, width() - kBarX1 - 10, height()),
+               Qt::AlignVCenter | Qt::AlignLeft, txt);
 }
 
 } // namespace ttc

@@ -15,8 +15,10 @@ PROBE=$(dirname "$0")/../build/cat_probe
 [ -x "$PROBE" ] || PROBE=/tmp/cat_probe
 
 # Documented control first (proves the group answers queries at all), then
-# candidate letters for notch Center frequency / Width / manual notch state.
+# candidate letters for notch Center frequency / Width / manual notch state,
+# then the NR/NB/auto-notch levels (also undocumented as queries).
 "$PROBE" "$DEV" -burst \
     "?RMNS" \
     "?RMNC" "?RMNW" "?RMNF" "?RMNM" "?RMND" \
+    "?RMNN" "?RMNB" "?RMNA" \
     "?RMN"

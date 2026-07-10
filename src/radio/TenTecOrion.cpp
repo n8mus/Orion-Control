@@ -100,10 +100,38 @@ void TenTecOrion::setAutoNotch(Rx rx, int level) {
     send(QByteArray("*R") + rxLetter(rx) + "NA" + QByteArray::number(clampi(level, 0, 9)));
 }
 
+void TenTecOrion::setNotchCenter(Rx rx, int hz) {
+    send(QByteArray("*R") + rxLetter(rx) + "NC" + QByteArray::number(clampi(hz, 20, 4000)));
+}
+
+void TenTecOrion::setNotchWidth(Rx rx, int hz) {
+    send(QByteArray("*R") + rxLetter(rx) + "NW" + QByteArray::number(clampi(hz, 10, 300)));
+}
+
+void TenTecOrion::setNotchEngaged(Rx rx, bool on) {
+    send(QByteArray("*R") + rxLetter(rx) + "NM" + (on ? "1" : "0"));
+}
+
+void TenTecOrion::setSaf(Rx rx, bool on) {
+    send(QByteArray("*R") + rxLetter(rx) + "NS" + (on ? "1" : "0"));
+}
+
 void TenTecOrion::querySMeter()          { send("?S"); }
 void TenTecOrion::queryAgc(Rx rx)        { send(QByteArray("?R") + rxLetter(rx) + "A"); }
 void TenTecOrion::queryRfGain(Rx rx)     { send(QByteArray("?R") + rxLetter(rx) + "G"); }
 void TenTecOrion::queryAttenuator(Rx rx) { send(QByteArray("?R") + rxLetter(rx) + "T"); }
+
+void TenTecOrion::queryNotch(Rx rx) {
+    send(QByteArray("?R") + rxLetter(rx) + "NC");
+    send(QByteArray("?R") + rxLetter(rx) + "NW");
+    send(QByteArray("?R") + rxLetter(rx) + "NM");
+}
+
+void TenTecOrion::queryDspLevels(Rx rx) {
+    send(QByteArray("?R") + rxLetter(rx) + "NN");
+    send(QByteArray("?R") + rxLetter(rx) + "NB");
+    send(QByteArray("?R") + rxLetter(rx) + "NA");
+}
 
 void TenTecOrion::queryFrequency(Rx rx) {
     const char v = (rx == Rx::Main) ? 'A' : 'B';
@@ -188,6 +216,24 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit rfGainReported(rx, static_cast<int>(v));
         else if (line[3] == 'T' && line.size() >= 5 && line[4] >= '0' && line[4] <= '3')
             emit attenReported(rx, line[4] - '0');
+        else if (line[3] == 'N' && line.size() >= 6) {  // @R.N<C/W/M/S/N/B/A><val>
+            const char sub = line[4];
+            const bool num = parseLeadingInt(line.mid(5), v);
+            if (sub == 'C' && num && v >= 20 && v <= 4000)
+                emit notchCenterReported(rx, static_cast<int>(v));
+            else if (sub == 'W' && num && v >= 10 && v <= 300)
+                emit notchWidthReported(rx, static_cast<int>(v));
+            else if (sub == 'M' && num && (v == 0 || v == 1))
+                emit notchEngagedReported(rx, v == 1);
+            else if (sub == 'S' && num && (v == 0 || v == 1))
+                emit safReported(rx, v == 1);
+            else if (sub == 'N' && num && v >= 0 && v <= 9)
+                emit nrReported(rx, static_cast<int>(v));
+            else if (sub == 'B' && num && v >= 0 && v <= 9)
+                emit nbReported(rx, static_cast<int>(v));
+            else if (sub == 'A' && num && v >= 0 && v <= 9)
+                emit autoNotchReported(rx, static_cast<int>(v));
+        }
     }
 }
 

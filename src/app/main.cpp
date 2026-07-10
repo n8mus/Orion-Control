@@ -6,7 +6,8 @@
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-    QApplication::setApplicationName("Ten-Tec SDR Console");
+    QApplication::setOrganizationName("n8mus");     // QSettings (band memories etc.)
+    QApplication::setApplicationName("tentec-console");
     ttc::MainWindow w;
     w.resize(1000, 560);
     w.show();

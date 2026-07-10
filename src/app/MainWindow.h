@@ -8,6 +8,7 @@ class QTimer;
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
+#include "ui/FrequencyDisplay.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
 #include "dsp/SpectrumComputer.h"
@@ -30,11 +31,16 @@ private:
     void refreshNotchOverlay();        // radio notch (audio Hz) -> RF-offset marker
     void sendPendingFilter();          // coalesced drag-to-filter serial writes
     void sendPendingNotch();           // coalesced drag-to-notch serial writes
+    void tuneAbsolute(uint64_t hz);    // every tune path funnels through here
+    void applyMode(Mode m);            // user mode change (button or band memory)
+    void saveBandMemory();             // stash centerHz_/rigMode_ under curBand_
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;
+    FrequencyDisplay* freqDisp_ = nullptr;
+    int curBand_ = -1;                         // index into kBands, -1 = none
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;

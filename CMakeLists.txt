@@ -18,6 +18,7 @@ option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
 add_executable(tentec-console
   src/app/main.cpp
   src/app/MainWindow.cpp        src/app/MainWindow.h
+  src/app/Bands.h
   src/radio/RadioController.h
   src/radio/SerialPort.cpp      src/radio/SerialPort.h
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
@@ -25,6 +26,7 @@ add_executable(tentec-console
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/SMeterWidget.cpp       src/ui/SMeterWidget.h
   src/ui/ControlPanel.cpp       src/ui/ControlPanel.h
+  src/ui/FrequencyDisplay.cpp   src/ui/FrequencyDisplay.h
   src/dsp/Fft.cpp               src/dsp/Fft.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h

@@ -21,6 +21,7 @@ public:
     explicit ControlPanel(QWidget* parent = nullptr);
 
 signals:
+    void bandSelected(int bandIdx);       // index into kBands (app/Bands.h)
     void modeSelected(Mode m);
     void agcSelected(char agc);           // 'F','M','S','P','O'
     void attenSelected(int step);         // 0..3 = off/6/12/18 dB
@@ -32,6 +33,7 @@ signals:
     void hwNbToggled(bool on);            // hardware noise blanker
 
 public slots:
+    void showBand(int bandIdx);           // -1 = out of every band
     void showMode(Mode m);
     void showAgc(char agc);
     void showAtten(int step);
@@ -47,6 +49,7 @@ public slots:
 private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);
 
+    QButtonGroup* bandGroup_  = nullptr;
     QButtonGroup* modeGroup_  = nullptr;
     QButtonGroup* agcGroup_   = nullptr;
     QButtonGroup* attenGroup_ = nullptr;

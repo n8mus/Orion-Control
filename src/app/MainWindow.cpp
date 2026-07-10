@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/MainWindow.h"
+#include "app/Bands.h"
 
+#include <QSettings>
 #include <QStatusBar>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -22,6 +24,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     pan_->setPassband(-1200, 1200);
     smeter_ = new SMeterWidget(this);
     panel_  = new ControlPanel(this);
+    freqDisp_ = new FrequencyDisplay(this);
+    freqDisp_->setFrequency(centerHz_);
+    curBand_ = bandIndexOf(centerHz_);
+    panel_->showBand(curBand_);
 
     // S-meter above the panadapter, control sidebar on the right.
     auto* central = new QWidget(this);
@@ -39,9 +45,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     strip.setColor(QPalette::Window, QColor(12, 16, 22));
     topStrip->setPalette(strip);
     auto* topLay = new QHBoxLayout(topStrip);
-    topLay->setContentsMargins(0, 0, 0, 0);
+    topLay->setContentsMargins(0, 0, 10, 0);
     topLay->addWidget(smeter_);
     topLay->addStretch(1);
+    topLay->addWidget(freqDisp_);
     left->addWidget(topStrip);
     left->addWidget(pan_, 1);
     lay->addLayout(left, 1);
@@ -168,16 +175,29 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     // Control surface -> radio. Sets are fire-and-forget; polling confirms.
-    connect(panel_, &ControlPanel::modeSelected, this, [this](Mode m) {
-        radio_.setMode(Rx::Main, m);
-        rigMode_ = m;
-        rigctld_.cacheMode(m);
-        refreshPassbandOverlay();
-        // The Orion recalls its per-mode stored filter on a mode change —
-        // fetch it as soon as the firmware has settled instead of waiting
-        // for the slow poll slot.
-        QTimer::singleShot(400, this, [this] { radio_.queryFilter(Rx::Main); });
+    connect(panel_, &ControlPanel::modeSelected, this,
+            [this](Mode m) { applyMode(m); });
+
+    // Band buttons: per-band last-frequency/mode memory (QSettings), seeded
+    // from the kBands defaults on first use.
+    connect(panel_, &ControlPanel::bandSelected, this, [this](int idx) {
+        if (idx < 0 || idx >= kBandCount) return;
+        saveBandMemory();                           // remember where we were
+        QSettings s;
+        const QString key = QString("band/%1/").arg(kBands[idx].label);
+        const uint64_t f =
+            s.value(key + "freq", QVariant::fromValue<qulonglong>(kBands[idx].defaultHz))
+                .toULongLong();
+        const Mode m = static_cast<Mode>(
+            s.value(key + "mode", static_cast<int>(kBands[idx].defaultMode)).toInt());
+        applyMode(m);
+        panel_->showMode(m);
+        tuneAbsolute(f);
     });
+
+    // Frequency readout edits (digit wheel/click or type-in) tune the radio.
+    connect(freqDisp_, &FrequencyDisplay::frequencyEdited, this,
+            [this](uint64_t hz) { tuneAbsolute(hz); });
     connect(panel_, &ControlPanel::agcSelected, this,
             [this](char a) { radio_.setAgc(Rx::Main, a); });
     connect(panel_, &ControlPanel::attenSelected, this,
@@ -219,6 +239,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     if (hz != pendingHz_) { pendingHz_ = hz; return; }
                     centerHz_ = hz;
                     rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
+                    freqDisp_->setFrequency(hz);
+                    curBand_ = bandIndexOf(hz);      // dial crossed a band edge?
+                    panel_->showBand(curBand_);
 #ifdef HAVE_SDRPLAY
                     sdr_.setCenterFrequency(static_cast<double>(hz));
 #endif
@@ -322,6 +345,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    saveBandMemory();                            // remember this band across runs
 #ifdef HAVE_SDRPLAY
     // Stop the SDRplay streaming thread (Uninit drains callbacks) BEFORE the
     // spectrum_/dsp members it references are destroyed. Without this, member
@@ -331,16 +355,42 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::onTuneRequested(int offsetHz) {
-    const uint64_t f = centerHz_ + offsetHz;
+    tuneAbsolute(centerHz_ + offsetHz);
+}
+
+void MainWindow::tuneAbsolute(uint64_t f) {
+    f = std::clamp<uint64_t>(f, 100000, 60000000);
     radio_.setFrequencyHz(Rx::Main, f);
     rigctld_.cacheFrequency(f);
-    centerHz_ = f;                              // recenter view on the clicked signal
+    centerHz_ = f;                              // recenter view on the new frequency
     pendingHz_ = f;
     sinceTune_.restart();                       // hold off dial-follow while it settles
+    freqDisp_->setFrequency(f);
+    curBand_ = bandIndexOf(f);
+    panel_->showBand(curBand_);
 #ifdef HAVE_SDRPLAY
     sdr_.setCenterFrequency(static_cast<double>(f));
 #endif
-    statusBar()->showMessage(QString("tune -> %1 Hz").arg(f));
+    statusBar()->showMessage(QString("tune -> %1 MHz").arg(f / 1e6, 0, 'f', 6));
+}
+
+void MainWindow::applyMode(Mode m) {
+    radio_.setMode(Rx::Main, m);
+    rigMode_ = m;
+    rigctld_.cacheMode(m);
+    refreshPassbandOverlay();
+    refreshNotchOverlay();
+    // The Orion recalls its per-mode stored filter on a mode change — fetch it
+    // as soon as the firmware has settled instead of waiting for the slow poll.
+    QTimer::singleShot(400, this, [this] { radio_.queryFilter(Rx::Main); });
+}
+
+void MainWindow::saveBandMemory() {
+    if (curBand_ < 0 || curBand_ >= kBandCount) return;
+    QSettings s;
+    const QString key = QString("band/%1/").arg(kBands[curBand_].label);
+    s.setValue(key + "freq", QVariant::fromValue<qulonglong>(centerHz_));
+    s.setValue(key + "mode", static_cast<int>(rigMode_));
 }
 
 // PBT sign in RF space: positive PBT conventionally shifts the passband toward

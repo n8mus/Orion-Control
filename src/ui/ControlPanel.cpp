@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui/ControlPanel.h"
+#include "app/Bands.h"
 
 #include <QButtonGroup>
 #include <QGridLayout>
@@ -69,6 +70,23 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(8, 4, 8, 8);
     lay->setSpacing(4);
+
+    // --- Band ------------------------------------------------------------
+    auto* bandBox = makeGroup("BAND");
+    auto* bandGrid = new QGridLayout(bandBox);
+    bandGrid->setContentsMargins(0, 4, 0, 0);
+    bandGrid->setSpacing(3);
+    bandGroup_ = new QButtonGroup(this);
+    bandGroup_->setExclusive(true);
+    for (int i = 0; i < kBandCount; ++i) {
+        auto* b = makeButton(kBands[i].label);
+        b->setMinimumHeight(22);
+        bandGroup_->addButton(b, i);
+        bandGrid->addWidget(b, i / 4, i % 4);
+    }
+    connect(bandGroup_, &QButtonGroup::idClicked, this,
+            [this](int id) { emit bandSelected(id); });
+    lay->addWidget(bandBox);
 
     // --- Mode ------------------------------------------------------------
     auto* modeBox = makeGroup("MODE");
@@ -204,6 +222,20 @@ QWidget* ControlPanel::makeDspRow(const QString& name, QSlider*& slider, QLabel*
     row->addWidget(slider);
     row->addWidget(value);
     return box;
+}
+
+void ControlPanel::showBand(int bandIdx) {
+    QSignalBlocker block(bandGroup_);
+    if (bandIdx < 0 || bandIdx >= kBandCount) {
+        // Out of every ham band: uncheck whatever is lit.
+        if (auto* b = bandGroup_->checkedButton()) {
+            bandGroup_->setExclusive(false);
+            b->setChecked(false);
+            bandGroup_->setExclusive(true);
+        }
+        return;
+    }
+    if (auto* b = bandGroup_->button(bandIdx)) b->setChecked(true);
 }
 
 void ControlPanel::showMode(Mode m) {

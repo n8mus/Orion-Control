@@ -23,6 +23,8 @@ add_executable(tentec-console
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/net/RigctldServer.cpp     src/net/RigctldServer.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
+  src/dsp/Fft.cpp               src/dsp/Fft.h
+  src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
 )
 target_include_directories(tentec-console PRIVATE src)

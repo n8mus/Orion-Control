@@ -9,8 +9,8 @@ The flagship feature: **drag a passband edge on the panadapter and the radio's D
 filter follows** (continuous on the Orion; stepped on the Omni VII — a hardware limit).
 
 > Status: **early**. Real and verified against live hardware: the Orion CAT driver,
-> the `rigctld` interop server, and **RSP2 IQ streaming** (SDRplay API v3.15). Still to
-> do: wire the IQ → FFT → panadapter display, then the WDSP DSP path. See
+> the `rigctld` interop server, RSP2 IQ streaming (SDRplay API v3.15), and a **live
+> FFT panadapter**. Still to do: the WDSP DSP/demod path and RX audio. See
 > [docs/architecture.md](docs/architecture.md) for the plan,
 > [docs/phase0-latency.md](docs/phase0-latency.md) and
 > [docs/phase0-sdr.md](docs/phase0-sdr.md) for the measured Phase-0 results.
@@ -44,9 +44,10 @@ cmake --build build
   real IQ from the RSP2 via SDRplay API v3.15, verified live at 1.94 MS/s.
   `tools/sdr_probe` is a headless smoke test. Gain defaults tuned for the hot
   shared-antenna feed (gRdB 40 / LNAstate 6).
-- **Panadapter widget** (`src/ui/PanadapterWidget.*`) — placeholder spectrum with
-  the flagship interactions wired: click-to-tune and drag-passband-edge signals.
-  (IQ → FFT → display wiring is the next step.)
+- **Live panadapter** (`src/dsp/*`, `src/ui/PanadapterWidget.*`) — RSP2 IQ →
+  windowed FFT → power spectrum, marshaled to the GUI thread and drawn as a live
+  250 kHz panadapter centered on the dial. Click-to-tune recenters; the
+  passband-edge-drag overlay maps to the radio filter. Verified headless end-to-end.
 
 ## Layout
 

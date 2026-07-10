@@ -28,6 +28,12 @@ public:
     // usual: raise LNAstate (0..8 on RSP2) and gRdB (20..59) to clear ADC overload.
     void setGain(int gRdB, int lnaState) { gRdB_ = gRdB; lnaState_ = lnaState; }
 
+    // Decimation reduces the effective sample rate / panadapter span
+    // (fs / factor). factor 1 = off. Set before start(). Effective span in Hz is
+    // sampleRate/factor; analog BW is narrowed to match to avoid aliasing.
+    void setDecimation(int factor) { decim_ = factor < 1 ? 1 : factor; }
+    int  decimation() const { return decim_; }
+
     std::string lastError() const { return err_; }
 
 private:
@@ -44,6 +50,7 @@ private:
     bool antennaB_  = false;
     int  gRdB_      = 40;   // tuned for the hot shared-antenna feed (see docs/phase0-sdr.md)
     int  lnaState_  = 6;
+    int  decim_     = 1;
 
     sdrplay_api_DeviceT       device_{};
     sdrplay_api_DeviceParamsT* params_ = nullptr;

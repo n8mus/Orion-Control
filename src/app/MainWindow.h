@@ -4,6 +4,10 @@
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "ui/PanadapterWidget.h"
+#ifdef HAVE_SDRPLAY
+#include "sdr/SdrPlaySource.h"
+#include "dsp/SpectrumComputer.h"
+#endif
 
 namespace ttc {
 
@@ -11,6 +15,7 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    ~MainWindow() override;
 
 private slots:
     void onTuneRequested(int offsetHz);
@@ -20,7 +25,11 @@ private:
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
     PanadapterWidget* pan_ = nullptr;
-    uint64_t centerHz_ = 14200000;
+    uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
+#ifdef HAVE_SDRPLAY
+    SdrPlaySource    sdr_;
+    SpectrumComputer spectrum_{2048};
+#endif
 };
 
 } // namespace ttc

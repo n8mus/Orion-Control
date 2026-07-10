@@ -59,12 +59,19 @@ bool SdrPlaySource::start(double centerHz, double sampleRate) {
     params_->devParams->fsFreq.fsHz          = sampleRate;
     auto* rx = params_->rxChannelA;
     rx->tunerParams.rfFreq.rfHz              = centerHz;
-    rx->tunerParams.bwType                   = sdrplay_api_BW_1_536;
     rx->tunerParams.ifType                   = sdrplay_api_IF_Zero;
     rx->tunerParams.gain.gRdB                = gRdB_;
     rx->tunerParams.gain.LNAstate            = static_cast<unsigned char>(lnaState_);
     rx->ctrlParams.agc.enable                = sdrplay_api_AGC_DISABLE;
-    rx->ctrlParams.decimation.enable         = 0;
+    if (decim_ > 1) {                        // narrow span + matching analog BW
+        rx->ctrlParams.decimation.enable          = 1;
+        rx->ctrlParams.decimation.decimationFactor = static_cast<unsigned char>(decim_);
+        rx->tunerParams.bwType = (sampleRate / decim_ <= 300000.0)
+                                     ? sdrplay_api_BW_0_200 : sdrplay_api_BW_1_536;
+    } else {
+        rx->ctrlParams.decimation.enable = 0;
+        rx->tunerParams.bwType           = sdrplay_api_BW_1_536;
+    }
     rx->rsp2TunerParams.antennaSel =
         antennaB_ ? sdrplay_api_Rsp2_ANTENNA_B : sdrplay_api_Rsp2_ANTENNA_A;
 

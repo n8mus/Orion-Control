@@ -39,7 +39,22 @@ stream. `setCenterFrequency` uses `Update(Tuner_A, Update_Tuner_Frf)`. The strea
 callback normalizes short I/Q by 1/32768 into `std::complex<float>` and runs on the
 SDRplay thread — GUI consumers must marshal to the UI thread (queued signal).
 
+## Display path (done + verified)
+
+IQ → `SpectrumComputer` (Hann window → radix-2 `Fft` → power dB → fftshift →
+temporal smoothing, throttled to ~20 fps) → marshaled to the GUI thread via
+`QMetaObject::invokeMethod(..., QueuedConnection)` → `PanadapterWidget::setSpectrum`.
+Displayed span is decimated to 250 kHz (`setDecimation(8)`), centered on the dial.
+
+Verified headless (`QT_QPA_PLATFORM=offscreen TTC_SELFTEST=5 ./tentec-console`):
+live 2048-bin frames, ~40 dB SNR (peak −74 dB over a −115 dB floor), clean exit.
+
+**Concurrency note (fixed):** the SDRplay callback runs on its own thread and
+references `spectrum_`. Member teardown order would free the DSP members before
+`sdr_` stops, causing a use-after-free in `Fft::forward` at shutdown. `~MainWindow`
+now calls `sdr_.stop()` first (Uninit drains callbacks) before those members die.
+
 ## Next
 
-Wire the IQ callback → FFT → `PanadapterWidget::setSpectrum` (marshaled to the GUI
-thread) so the spectrum renders live around the Orion's dial.
+FFT → WDSP demod for the operator's SDR RX audio, and align the panadapter
+filter-drag overlay with the live spectrum (zoom to the passband for editing).

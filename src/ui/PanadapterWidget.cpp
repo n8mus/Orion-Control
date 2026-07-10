@@ -27,6 +27,14 @@ void PanadapterWidget::setSpanHz(int spanHz) {
     update();
 }
 
+int PanadapterWidget::minViewSpanHz() const { return kMinViewSpanHz; }
+
+void PanadapterWidget::setViewSpanHz(int spanHz) {
+    // Slider-driven zoom: no viewSpanChanged emit, or the slider would loop.
+    viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, fullSpanHz_);
+    update();
+}
+
 void PanadapterWidget::setPassband(int loHz, int hiHz) {
     if (drag_ != Drag::None) return;               // never fight an active edge drag
     pbLoHz_ = std::min(loHz, hiHz);
@@ -182,7 +190,8 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
 
     // Span readout + separator line.
     p.setPen(QColor(200, 200, 200, 160));
-    p.drawText(6, 14, QString("span %1 kHz   wheel: tune  shift: fine  ctrl: zoom")
+    p.drawText(6, 14, QString("span %1 kHz   wheel: tune (shift fine)  edge: cut  "
+                              "shift+edge: bw  body: pbt")
                           .arg(viewSpanHz_ / 1000.0, 0, 'f', viewSpanHz_ < 20000 ? 1 : 0));
     p.setPen(QColor(255, 255, 255, 40));
     p.drawLine(0, hSpec, width(), hSpec);
@@ -212,39 +221,77 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
 void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     const int x = e->pos().x();
     const int edgeTol = 6;
+    dragStartX_  = x;
+    dragStartLo_ = pbLoHz_;
+    dragStartHi_ = pbHiHz_;
     // The notch is the narrowest target — give it priority over the passband
     // edges it may sit on top of.
     if (overNotch(x)) {
         drag_ = Drag::Notch;
         return;
     }
-    if (std::abs(x - hzToX(pbLoHz_)) <= edgeTol)      drag_ = Drag::LoEdge;
-    else if (std::abs(x - hzToX(pbHiHz_)) <= edgeTol) drag_ = Drag::HiEdge;
-    if (drag_ != Drag::None) {
+    const bool onLo = std::abs(x - hzToX(pbLoHz_)) <= edgeTol;
+    const bool onHi = std::abs(x - hzToX(pbHiHz_)) <= edgeTol;
+    if (onLo || onHi) {
+        // Shift+edge = symmetric width change (pure bandwidth, like the BW
+        // knob); plain edge = hi/lo-cut (width + center).
+        if (e->modifiers() & Qt::ShiftModifier) drag_ = Drag::SymEdge;
+        else                                    drag_ = onLo ? Drag::LoEdge : Drag::HiEdge;
         emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
         return;
     }
-    {
-        drag_ = Drag::None;
-        emit tuneRequested(xToHz(x));               // click-to-tune
+    if (x > hzToX(pbLoHz_) && x < hzToX(pbHiHz_)) {
+        // Inside the passband: could become a body drag (pure PBT slide) or,
+        // if released without moving, a click-to-tune. Decide on first move.
+        drag_ = Drag::BodyPending;
+        return;
     }
+    drag_ = Drag::None;
+    emit tuneRequested(xToHz(x));                   // click-to-tune
 }
 
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     if (drag_ == Drag::None) return;
-    const int hz = xToHz(e->pos().x());
+    const int x = e->pos().x();
+    const int hz = xToHz(x);
     if (drag_ == Drag::Notch) {
         notchRfHz_ = hz;
         update();
         emit notchDragged(notchRfHz_);              // drag-to-notch
         return;
     }
-    if (drag_ == Drag::LoEdge) pbLoHz_ = std::min(hz, pbHiHz_ - 50);
-    else                       pbHiHz_ = std::max(hz, pbLoHz_ + 50);
+    if (drag_ == Drag::BodyPending) {
+        if (std::abs(x - dragStartX_) < 4) return;  // still just a click
+        drag_ = Drag::Body;
+        emit passbandEditBegan(dragStartLo_, dragStartHi_);
+    }
+    if (drag_ == Drag::Body) {
+        // Slide the whole passband: width constant -> the consumer's delta
+        // decomposition sends pure PBT.
+        const int delta = hz - xToHz(dragStartX_);
+        pbLoHz_ = dragStartLo_ + delta;
+        pbHiHz_ = dragStartHi_ + delta;
+    } else if (drag_ == Drag::SymEdge) {
+        // Mirror both edges about the grab-time center: center constant ->
+        // pure bandwidth, PBT untouched (matches the front-panel BW knob).
+        const int center = (dragStartLo_ + dragStartHi_) / 2;
+        const int half = std::max(25, std::abs(hz - center));
+        pbLoHz_ = center - half;
+        pbHiHz_ = center + half;
+    } else if (drag_ == Drag::LoEdge) {
+        pbLoHz_ = std::min(hz, pbHiHz_ - 50);
+    } else {
+        pbHiHz_ = std::max(hz, pbLoHz_ + 50);
+    }
     update();
     emit passbandChanged(pbLoHz_, pbHiHz_);         // drag-to-filter
 }
 
-void PanadapterWidget::mouseReleaseEvent(QMouseEvent*) { drag_ = Drag::None; }
+void PanadapterWidget::mouseReleaseEvent(QMouseEvent* e) {
+    // A press inside the passband that never moved is a click-to-tune.
+    if (drag_ == Drag::BodyPending)
+        emit tuneRequested(xToHz(e->pos().x()));
+    drag_ = Drag::None;
+}
 
 } // namespace ttc

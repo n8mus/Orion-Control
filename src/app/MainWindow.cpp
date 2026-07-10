@@ -3,12 +3,14 @@
 #include "app/Bands.h"
 
 #include <QSettings>
+#include <QSlider>
 #include <QStatusBar>
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QTimer>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -54,8 +56,42 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     auto* topLay = new QHBoxLayout(topStrip);
     topLay->setContentsMargins(0, 0, 10, 0);
     topLay->addWidget(smeter_);
+    // Zoom slider (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel
+    // on the panadapter still works and keeps the slider in sync.
+    auto* zoomLbl = new QLabel("ZOOM", topStrip);
+    zoomLbl->setStyleSheet("color: #8fa3b8; font-size: 10px; font-weight: bold;");
+    auto* zoom = new QSlider(Qt::Horizontal, topStrip);
+    zoom->setRange(0, 100);
+    zoom->setFixedWidth(140);
+    zoom->setStyleSheet(
+        "QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }"
+        "QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px;"
+        " background: #6aa5d8; }");
+    topLay->addSpacing(16);
+    topLay->addWidget(zoomLbl);
+    topLay->addWidget(zoom);
     topLay->addStretch(1);
     topLay->addWidget(freqDisp_);
+
+    auto spanFromSlider = [this](int v) {
+        const double ratio = double(pan_->minViewSpanHz()) / pan_->fullSpanHz();
+        return static_cast<int>(std::lround(pan_->fullSpanHz() * std::pow(ratio, v / 100.0)));
+    };
+    auto sliderFromSpan = [this](int spanHz) {
+        const double ratio = double(pan_->minViewSpanHz()) / pan_->fullSpanHz();
+        const double f = std::log(double(spanHz) / pan_->fullSpanHz()) / std::log(ratio);
+        return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
+    };
+    connect(zoom, &QSlider::valueChanged, this, [this, spanFromSlider](int v) {
+        pan_->setViewSpanHz(spanFromSlider(v));
+        statusBar()->showMessage(
+            QString("zoom -> span %1 kHz").arg(pan_->viewSpanHz() / 1000.0, 0, 'f', 1));
+    });
+    connect(pan_, &PanadapterWidget::viewSpanChanged, this,
+            [zoom, sliderFromSpan](int spanHz) {
+                QSignalBlocker block(zoom);
+                zoom->setValue(sliderFromSpan(spanHz));
+            });
     left->addWidget(topStrip);
     left->addWidget(pan_, 1);
     lay->addLayout(left, 1);

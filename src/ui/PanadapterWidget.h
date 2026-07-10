@@ -19,6 +19,10 @@ public:
     explicit PanadapterWidget(QWidget* parent = nullptr);
 
     void setSpanHz(int spanHz);                    // full captured span
+    void setViewSpanHz(int spanHz);                // zoom (slider); no signal re-emit
+    int  viewSpanHz() const { return viewSpanHz_; }
+    int  fullSpanHz() const { return fullSpanHz_; }
+    int  minViewSpanHz() const;
     void setPassband(int loHz, int hiHz);          // offsets from center, in Hz
     // Manual-notch marker, in display (RF-offset) space; caller maps the
     // radio's audio-Hz notch through the mode sideband. Ignored mid-drag.
@@ -50,6 +54,10 @@ private:
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
 
+    // Drag-gesture bookkeeping (symmetric-BW and body-drag PBT).
+    int dragStartX_  = 0;
+    int dragStartLo_ = 0, dragStartHi_ = 0;
+
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
     int pbLoHz_ = -1200;
@@ -61,7 +69,13 @@ private:
     std::vector<float> spectrum_;                  // full span, fftshifted
     QImage waterfall_;                             // width = bins, scrolls down
 
-    enum class Drag { None, LoEdge, HiEdge, Notch } drag_ = Drag::None;
+    enum class Drag {
+        None,
+        LoEdge, HiEdge,     // one-edge drag: hi/lo-cut semantics (bw + pbt)
+        SymEdge,            // Shift+edge: symmetric width, pure bw, pbt kept
+        BodyPending, Body,  // press inside passband; becomes a pure-pbt slide
+        Notch,
+    } drag_ = Drag::None;
 };
 
 } // namespace ttc

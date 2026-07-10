@@ -57,16 +57,34 @@ static void drain(int fd, double window_ms) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 3) { fprintf(stderr, "usage: %s <device> <cmd> [cmd...]\n", argv[0]); return 1; }
+    if (argc < 3) {
+        fprintf(stderr, "usage: %s <device> [-burst] <cmd> [cmd...]\n", argv[0]);
+        return 1;
+    }
+    int burst = argc > 2 && strcmp(argv[2], "-burst") == 0;
+    int first = burst ? 3 : 2;
+
     int fd = open_serial(argv[1]);
     if (fd < 0) return 1;
 
-    for (int i = 2; i < argc; ++i) {
-        char cmd[128];
-        snprintf(cmd, sizeof cmd, "%s\r", argv[i]);
-        printf("-> %s\n", argv[i]);
-        if (write(fd, cmd, strlen(cmd)) < 0) perror("write");
-        drain(fd, 400);            // generous window past the ~110 ms firmware tail
+    if (burst) {
+        // Send everything back-to-back (like the app's startup/poll bursts),
+        // then read: shows whether the radio glues or drops responses.
+        for (int i = first; i < argc; ++i) {
+            char cmd[128];
+            snprintf(cmd, sizeof cmd, "%s\r", argv[i]);
+            printf("-> %s\n", argv[i]);
+            if (write(fd, cmd, strlen(cmd)) < 0) perror("write");
+        }
+        drain(fd, 1200);
+    } else {
+        for (int i = first; i < argc; ++i) {
+            char cmd[128];
+            snprintf(cmd, sizeof cmd, "%s\r", argv[i]);
+            printf("-> %s\n", argv[i]);
+            if (write(fd, cmd, strlen(cmd)) < 0) perror("write");
+            drain(fd, 400);        // generous window past the ~110 ms firmware tail
+        }
     }
     close(fd);
     return 0;

@@ -183,7 +183,11 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     const int edgeTol = 6;
     if (std::abs(x - hzToX(pbLoHz_)) <= edgeTol)      drag_ = Drag::LoEdge;
     else if (std::abs(x - hzToX(pbHiHz_)) <= edgeTol) drag_ = Drag::HiEdge;
-    else {
+    if (drag_ != Drag::None) {
+        emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
+        return;
+    }
+    {
         drag_ = Drag::None;
         emit tuneRequested(xToHz(x));               // click-to-tune
     }

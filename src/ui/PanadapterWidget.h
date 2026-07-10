@@ -25,6 +25,7 @@ public:
 signals:
     void tuneRequested(int offsetHz);              // click-to-tune (offset from center)
     void tuneStepRequested(int steps, bool fine);  // wheel tune; fine = Shift held
+    void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state
     void passbandChanged(int loHz, int hiHz);      // drag-to-filter
     void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
 

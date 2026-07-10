@@ -42,9 +42,14 @@ private:
     int  rigBwHz_  = 2400;
     int  rigPbtHz_ = 0;
 
-    // Coalesced drag-to-filter: keep only the latest edges, send ~25x/sec.
+    // Delta-anchored drag: on edge grab, snapshot the radio's real polled state;
+    // drags send anchor + delta, so no assumed nominal placement can cause jumps.
+    int anchorLoHz_ = 0, anchorHiHz_ = 0;      // overlay edges at drag start
+    int anchorBwHz_ = 2400, anchorPbtHz_ = 0;  // radio state at drag start
+
+    // Coalesced drag-to-filter: keep only the latest values, send ~25x/sec.
     QTimer* filterTx_ = nullptr;
-    int  pendLoHz_ = 0, pendHiHz_ = 0;
+    int  pendBwHz_ = 0, pendPbtHz_ = 0;
     bool filterDirty_ = false;
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;

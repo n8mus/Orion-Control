@@ -26,6 +26,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setCentralWidget(central);
 
     connect(pan_, &PanadapterWidget::tuneRequested,    this, &MainWindow::onTuneRequested);
+    connect(pan_, &PanadapterWidget::passbandEditBegan, this, [this](int lo, int hi) {
+        anchorLoHz_ = lo;  anchorHiHz_ = hi;       // where the overlay was grabbed
+        anchorBwHz_ = rigBwHz_;                    // radio's real state, from polling
+        anchorPbtHz_ = rigPbtHz_;
+        sinceFilterEdit_.restart();
+    });
     connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
     connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
@@ -176,24 +182,28 @@ void MainWindow::onTuneRequested(int offsetHz) {
     statusBar()->showMessage(QString("tune -> %1 Hz").arg(f));
 }
 
-// Where the radio's filter sits relative to the carrier depends on mode:
-// LSB below, USB above, others treated as symmetric. Nominal placement at
-// PBT=0, shifted by PBT. (CW will need sidetone-pitch handling later.)
-static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
-    switch (m) {
-        case Mode::USB: lo = pbt;          hi = pbt + bw;     break;
-        case Mode::LSB: lo = pbt - bw;     hi = pbt;          break;
-        default:        lo = pbt - bw / 2; hi = pbt + bw / 2; break;
-    }
+// PBT sign in RF space: positive PBT conventionally shifts the passband toward
+// higher AUDIO frequencies, which in LSB/CWL means LOWER RF. Measured semantics
+// (set/read-back verified live): *RMP is signed ASCII, *RMF never disturbs PBT.
+// If the ear test says LSB drags move the wrong way, flip here — one line.
+static int pbtRfSign(Mode m) {
+    return (m == Mode::LSB || m == Mode::CWL) ? -1 : +1;
 }
 
-static void rigFromEdges(Mode m, int lo, int hi, int& bw, int& pbt) {
-    bw = hi - lo;
+// Visual placement of the passband relative to the carrier: nominal filter
+// position per mode, shifted by PBT (in RF space). The nominal audio low-cut
+// offset isn't CAT-readable, so this can sit a couple hundred Hz off — harmless,
+// because drags are delta-anchored to the radio's real state, never absolute.
+static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
+    int centerRf;
     switch (m) {
-        case Mode::USB: pbt = lo;            break;
-        case Mode::LSB: pbt = hi;            break;
-        default:        pbt = (hi + lo) / 2; break;
+        case Mode::USB: centerRf = +bw / 2; break;
+        case Mode::LSB: centerRf = -bw / 2; break;
+        default:        centerRf = 0;       break;
     }
+    centerRf += pbtRfSign(m) * pbt;
+    lo = centerRf - bw / 2;
+    hi = centerRf + bw / 2;
 }
 
 void MainWindow::refreshPassbandOverlay() {
@@ -205,25 +215,26 @@ void MainWindow::refreshPassbandOverlay() {
 }
 
 void MainWindow::onPassbandChanged(int loHz, int hiHz) {
-    pendLoHz_ = loHz;
-    pendHiHz_ = hiHz;
+    // Delta from the drag anchor, applied to the radio's real anchored state.
+    const int dWidth  = (hiHz - loHz) - (anchorHiHz_ - anchorLoHz_);
+    const int dCenter = ((hiHz + loHz) - (anchorHiHz_ + anchorLoHz_)) / 2;
+    pendBwHz_  = std::clamp(anchorBwHz_ + dWidth, 100, 6000);
+    pendPbtHz_ = std::clamp(anchorPbtHz_ + pbtRfSign(rigMode_) * dCenter, -8000, 8000);
     filterDirty_ = true;
     sinceFilterEdit_.restart();
     if (!filterTx_->isActive()) filterTx_->start();  // coalesce to ~25 writes/sec
-    statusBar()->showMessage(QString("filter -> lo %1  hi %2  (bw %3 Hz)")
-                                 .arg(loHz).arg(hiHz).arg(hiHz - loHz));
+    statusBar()->showMessage(QString("filter -> bw %1 Hz  pbt %2 Hz")
+                                 .arg(pendBwHz_).arg(pendPbtHz_));
 }
 
 void MainWindow::sendPendingFilter() {
     if (!filterDirty_) return;
     filterDirty_ = false;
-    int bw = 0, pbt = 0;
-    rigFromEdges(rigMode_, pendLoHz_, pendHiHz_, bw, pbt);
-    radio_.setBandwidthHz(Rx::Main, bw);            // -> *RMF
-    radio_.setPbtHz(Rx::Main, pbt);                 // -> *RMP
-    rigBwHz_  = bw;                                 // optimistic; poll will confirm
-    rigPbtHz_ = pbt;
-    rigctld_.cacheBandwidth(bw);
+    radio_.setBandwidthHz(Rx::Main, pendBwHz_);     // -> *RMF
+    radio_.setPbtHz(Rx::Main, pendPbtHz_);          // -> *RMP
+    rigBwHz_  = pendBwHz_;                          // optimistic; poll will confirm
+    rigPbtHz_ = pendPbtHz_;
+    rigctld_.cacheBandwidth(pendBwHz_);
 }
 
 } // namespace ttc

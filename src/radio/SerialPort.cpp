@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
 #include <cerrno>
 #include <cstring>
 
@@ -33,6 +34,11 @@ bool SerialPort::open(const std::string& device, int baud, bool hwHandshake) {
         emit ioError(QStringLiteral("open %1: %2").arg(device.c_str(), std::strerror(errno)));
         return false;
     }
+    // Exclusive access: a second process reading the same tty splits the byte
+    // stream and both see corrupted CAT responses. Fail loudly instead.
+    if (ioctl(fd_, TIOCEXCL) != 0)
+        emit ioError(QStringLiteral("TIOCEXCL %1: %2 (continuing without exclusivity)")
+                         .arg(device.c_str(), std::strerror(errno)));
 
     termios tio{};
     if (tcgetattr(fd_, &tio) != 0) {

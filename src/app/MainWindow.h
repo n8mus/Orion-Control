@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QMainWindow>
+#include <QElapsedTimer>
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "ui/PanadapterWidget.h"
@@ -26,9 +27,12 @@ private:
     RigctldServer    rigctld_{&radio_};
     PanadapterWidget* pan_ = nullptr;
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
+    bool awaitingFreq_ = false;                // one ?AF in flight at a time
+    QElapsedTimer freqQueryAge_;
+    uint64_t pendingHz_ = 0;                   // change must be seen twice (glitch filter)
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
-    SpectrumComputer spectrum_{2048};
+    SpectrumComputer spectrum_{4096};   // 61 Hz/bin at 250 kHz span — survives deep zoom
 #endif
 };
 

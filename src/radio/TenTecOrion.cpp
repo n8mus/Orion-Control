@@ -81,22 +81,40 @@ void TenTecOrion::queryFilter(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "P");
 }
 
+// Parse a leading run of digits (optionally signed), ignoring any trailing junk.
+// Responses occasionally arrive glued together on the wire; toULongLong() would
+// return 0 for the whole line, which upstream must never mistake for a frequency.
+static bool parseLeadingInt(const QByteArray& s, qlonglong& out) {
+    int i = 0, digits = 0;
+    bool neg = false;
+    if (i < s.size() && (s[i] == '-' || s[i] == '+')) { neg = (s[i] == '-'); ++i; }
+    qlonglong v = 0;
+    while (i < s.size() && s[i] >= '0' && s[i] <= '9') { v = v * 10 + (s[i] - '0'); ++i; ++digits; }
+    if (digits == 0) return false;
+    out = neg ? -v : v;
+    return true;
+}
+
 void TenTecOrion::onLine(const QByteArray& line) {
     emit rawLine(line);
     // Responses are '@'-prefixed, e.g. @AF14250000, @RMF2400, @RMP-200.
     if (line.size() < 3 || line[0] != '@') return;
 
+    qlonglong v = 0;
     if (line[1] == 'A' || line[1] == 'B') {          // @AF<hz> / @BF<hz>
-        if (line[2] == 'F') {
+        if (line[2] == 'F' && parseLeadingInt(line.mid(3), v)
+            && v >= 100000 && v <= 60000000) {        // sanity: 100 kHz .. 60 MHz
             Rx rx = (line[1] == 'A') ? Rx::Main : Rx::Sub;
-            emit frequencyReported(rx, line.mid(3).toULongLong());
+            emit frequencyReported(rx, static_cast<uint64_t>(v));
         }
         return;
     }
     if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P]<val>
         Rx rx = (line[2] == 'M') ? Rx::Main : Rx::Sub;
-        if (line[3] == 'F') emit bandwidthReported(rx, line.mid(4).toInt());
-        else if (line[3] == 'P') emit pbtReported(rx, line.mid(4).toInt());
+        if (line[3] == 'F' && parseLeadingInt(line.mid(4), v) && v >= 100 && v <= 6000)
+            emit bandwidthReported(rx, static_cast<int>(v));
+        else if (line[3] == 'P' && parseLeadingInt(line.mid(4), v) && v >= -8000 && v <= 8000)
+            emit pbtReported(rx, static_cast<int>(v));
     }
 }
 

@@ -27,17 +27,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     connect(pan_, &PanadapterWidget::tuneRequested,    this, &MainWindow::onTuneRequested);
     connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
+    connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
+        statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
+    });
 
     // The radio reported its frequency (startup sync or dial-follow poll): keep the
     // rigctld cache and the panadapter center locked to the physical VFO.
     connect(&radio_, &TenTecOrion::frequencyReported, this,
             [this](Rx rx, uint64_t hz) {
                 if (rx != Rx::Main) return;
-                rigctld_.cacheFrequency(hz);
+                awaitingFreq_ = false;               // poll answered; next one may go
                 if (std::getenv("TTC_SELFTEST"))
                     std::fprintf(stderr, "[radio] VFO-A reports %.4f MHz\n", hz / 1e6);
                 if (hz != centerHz_) {
+                    // The Orion occasionally emits a mangled frame that still parses
+                    // as a plausible frequency. Require two consecutive identical
+                    // reads before following a dial change (~200 ms, imperceptible).
+                    if (hz != pendingHz_) { pendingHz_ = hz; return; }
                     centerHz_ = hz;
+                    rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
 #ifdef HAVE_SDRPLAY
                     sdr_.setCenterFrequency(static_cast<double>(hz));
 #endif
@@ -90,9 +98,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     const std::string radioDev = devEnv ? devEnv : "/dev/orion";
     if (radio_.open(radioDev)) {
         radio_.queryFrequency(Rx::Main);            // one-shot sync at startup
+        awaitingFreq_ = true;
+        freqQueryAge_.start();
         auto* poll = new QTimer(this);
         connect(poll, &QTimer::timeout, this, [this] {
-            if (radio_.connected()) radio_.queryFrequency(Rx::Main);
+            if (!radio_.connected()) return;
+            // Only one query in flight: the Orion's response tail runs ~110 ms, and
+            // overlapping queries glue responses together on the wire. Re-arm after
+            // 600 ms anyway in case a response was dropped.
+            if (awaitingFreq_ && freqQueryAge_.elapsed() < 600) return;
+            radio_.queryFrequency(Rx::Main);
+            awaitingFreq_ = true;
+            freqQueryAge_.restart();
         });
         poll->start(200);                            // ~5 Hz dial-follow
     } else {

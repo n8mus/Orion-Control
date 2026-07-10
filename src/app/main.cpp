@@ -8,7 +8,7 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QApplication::setApplicationName("Ten-Tec SDR Console");
     ttc::MainWindow w;
-    w.resize(900, 360);
+    w.resize(1000, 560);
     w.show();
 
     // Headless self-test: TTC_SELFTEST=<seconds> runs the full pipeline then quits

@@ -27,7 +27,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     freqDisp_ = new FrequencyDisplay(this);
     freqDisp_->setFrequency(centerHz_);
     curBand_ = bandIndexOf(centerHz_);
+    if (curBand_ >= 0) {
+        QSettings s;
+        curReg_ = std::clamp(
+            s.value(QString("band/%1/reg").arg(kBands[curBand_].label), 0).toInt(),
+            0, kStackCount - 1);
+    }
     panel_->showBand(curBand_);
+    panel_->showBandStack(curBand_ >= 0 ? curReg_ : -1);
 
     // S-meter above the panadapter, control sidebar on the right.
     auto* central = new QWidget(this);
@@ -178,21 +185,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(panel_, &ControlPanel::modeSelected, this,
             [this](Mode m) { applyMode(m); });
 
-    // Band buttons: per-band last-frequency/mode memory (QSettings), seeded
-    // from the kBands defaults on first use.
+    // Band buttons with Orion-style stack registers: a fresh band recalls its
+    // last-used register; clicking the active band again cycles A->B->C->D.
     connect(panel_, &ControlPanel::bandSelected, this, [this](int idx) {
         if (idx < 0 || idx >= kBandCount) return;
-        saveBandMemory();                           // remember where we were
         QSettings s;
-        const QString key = QString("band/%1/").arg(kBands[idx].label);
-        const uint64_t f =
-            s.value(key + "freq", QVariant::fromValue<qulonglong>(kBands[idx].defaultHz))
-                .toULongLong();
-        const Mode m = static_cast<Mode>(
-            s.value(key + "mode", static_cast<int>(kBands[idx].defaultMode)).toInt());
-        applyMode(m);
-        panel_->showMode(m);
-        tuneAbsolute(f);
+        int reg;
+        if (idx == curBand_) {
+            reg = (curReg_ + 1) % kStackCount;      // same band: next register
+        } else {
+            reg = s.value(QString("band/%1/reg").arg(kBands[idx].label), 0).toInt();
+            reg = std::clamp(reg, 0, kStackCount - 1);
+        }
+        saveBandMemory();                           // stash the outgoing register
+        recallStack(idx, reg);
     });
 
     // Frequency readout edits (digit wheel/click or type-in) tune the radio.
@@ -388,9 +394,45 @@ void MainWindow::applyMode(Mode m) {
 void MainWindow::saveBandMemory() {
     if (curBand_ < 0 || curBand_ >= kBandCount) return;
     QSettings s;
-    const QString key = QString("band/%1/").arg(kBands[curBand_].label);
+    const QString key = QString("band/%1/%2/")
+                            .arg(kBands[curBand_].label).arg(kStackNames[curReg_]);
     s.setValue(key + "freq", QVariant::fromValue<qulonglong>(centerHz_));
     s.setValue(key + "mode", static_cast<int>(rigMode_));
+    s.setValue(key + "bw",   rigBwHz_);
+    s.setValue(key + "pbt",  rigPbtHz_);
+    s.setValue(QString("band/%1/reg").arg(kBands[curBand_].label), curReg_);
+}
+
+void MainWindow::recallStack(int band, int reg) {
+    const StackDef& seed = kBands[band].stack[reg];
+    QSettings s;
+    const QString key = QString("band/%1/%2/")
+                            .arg(kBands[band].label).arg(kStackNames[reg]);
+    const uint64_t f =
+        s.value(key + "freq", QVariant::fromValue<qulonglong>(seed.hz)).toULongLong();
+    const Mode m = static_cast<Mode>(
+        s.value(key + "mode", static_cast<int>(seed.mode)).toInt());
+    const int bw  = std::clamp(s.value(key + "bw",  seed.bwHz).toInt(), 100, 6000);
+    const int pbt = std::clamp(s.value(key + "pbt", seed.pbtHz).toInt(), -8000, 8000);
+
+    curReg_ = reg;                              // before tuneAbsolute sets curBand_
+    applyMode(m);
+    panel_->showMode(m);
+    tuneAbsolute(f);
+    // Override the Orion's own per-mode filter recall with this register's
+    // stored filter. Serial commands land in order, so the *RMF/*RMP sent
+    // after *RMM win; the 400 ms filter re-query then confirms them.
+    radio_.setBandwidthHz(Rx::Main, bw);
+    radio_.setPbtHz(Rx::Main, pbt);
+    rigBwHz_  = bw;
+    rigPbtHz_ = pbt;
+    rigctld_.cacheBandwidth(bw);
+    refreshPassbandOverlay();
+    panel_->showBandStack(reg);
+    s.setValue(QString("band/%1/reg").arg(kBands[band].label), reg);
+    statusBar()->showMessage(QString("band %1m stack %2  ->  %3 MHz")
+                                 .arg(kBands[band].label).arg(kStackNames[reg])
+                                 .arg(f / 1e6, 0, 'f', 4));
 }
 
 // PBT sign in RF space: positive PBT conventionally shifts the passband toward

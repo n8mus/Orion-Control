@@ -34,6 +34,7 @@ signals:
 
 public slots:
     void showBand(int bandIdx);           // -1 = out of every band
+    void showBandStack(int regIdx);       // 0..3 = A..D, -1 = none
     void showMode(Mode m);
     void showAgc(char agc);
     void showAtten(int step);
@@ -50,6 +51,7 @@ private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);
 
     QButtonGroup* bandGroup_  = nullptr;
+    QLabel*       stackLbl_   = nullptr;
     QButtonGroup* modeGroup_  = nullptr;
     QButtonGroup* agcGroup_   = nullptr;
     QButtonGroup* attenGroup_ = nullptr;

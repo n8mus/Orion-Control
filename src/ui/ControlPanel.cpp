@@ -86,6 +86,12 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     }
     connect(bandGroup_, &QButtonGroup::idClicked, this,
             [this](int id) { emit bandSelected(id); });
+    // Band-stack indicator: which of the 4 registers (A-D) is active.
+    // Pressing the active band's button again cycles the stack.
+    stackLbl_ = new QLabel("STACK --");
+    stackLbl_->setStyleSheet("color: #6f87a0; font-size: 10px;");
+    bandGrid->addWidget(stackLbl_, (kBandCount + 3) / 4, 0, 1, 4,
+                        Qt::AlignRight | Qt::AlignVCenter);
     lay->addWidget(bandBox);
 
     // --- Mode ------------------------------------------------------------
@@ -236,6 +242,11 @@ void ControlPanel::showBand(int bandIdx) {
         return;
     }
     if (auto* b = bandGroup_->button(bandIdx)) b->setChecked(true);
+}
+
+void ControlPanel::showBandStack(int regIdx) {
+    if (regIdx < 0 || regIdx >= kStackCount) stackLbl_->setText("STACK --");
+    else stackLbl_->setText(QString("STACK %1").arg(kStackNames[regIdx]));
 }
 
 void ControlPanel::showMode(Mode m) {

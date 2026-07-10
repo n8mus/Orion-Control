@@ -33,7 +33,8 @@ private:
     void sendPendingNotch();           // coalesced drag-to-notch serial writes
     void tuneAbsolute(uint64_t hz);    // every tune path funnels through here
     void applyMode(Mode m);            // user mode change (button or band memory)
-    void saveBandMemory();             // stash centerHz_/rigMode_ under curBand_
+    void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
+    void recallStack(int band, int reg); // recall a band-stack register
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
     PanadapterWidget* pan_ = nullptr;
@@ -41,6 +42,7 @@ private:
     ControlPanel*     panel_  = nullptr;
     FrequencyDisplay* freqDisp_ = nullptr;
     int curBand_ = -1;                         // index into kBands, -1 = none
+    int curReg_  = 0;                          // active stack register (0..3 = A..D)
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;

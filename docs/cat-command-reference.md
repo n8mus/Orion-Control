@@ -1,0 +1,49 @@
+# Ten-Tec CAT command reference
+
+Extracted from the official Ten-Tec programmer's reference guides.
+
+**KEY DESIGN FACT:** Neither radio has a literal Hi-Cut/Lo-Cut command. Both model
+the receive filter as **bandwidth + PBT (passband tuning offset)**. Two dragged
+panadapter edges `(lo, hi)` map bijectively onto the radio:
+
+    width  = hi - lo        -> set filter bandwidth
+    center = (hi + lo) / 2  -> set PBT offset
+
+The driver exposes a single `setPassband(loHz, hiHz)`; each radio's capability
+profile quantizes it. See `src/radio/TenTecOrion.cpp` for the Orion implementation.
+
+## Orion 565/566 (firmware v3) — 57600 8N1, direct RS-232, no HW handshake
+
+`*` = set, `?` = query, `@` = response. All commands CR (0x0D) terminated, ASCII.
+
+| Function            | Command                       | Notes                                   |
+|---------------------|-------------------------------|-----------------------------------------|
+| VFO A/B frequency   | `*AF<hz>` / `*BF<hz>`         | ASCII Hz or MHz; query `?AF`; also 4-byte binary |
+| Relative tune       | `*AS+10` / `*BS-22`          | ± tuning steps                          |
+| Mode (main / sub)   | `*RMM<0-5>` / `*RSM<0-5>`    | 0=USB 1=LSB 2=UCW 3=LCW 4=AM 5=FM        |
+| **Filter bandwidth**| `*RMF<100-6000>` / `*RSF`    | **on-the-fly, 1 Hz resolution**          |
+| **Passband (PBT)**  | `*RMP<±8000>` / `*RSP`       | signed ASCII Hz                          |
+| AGC                 | `*RMA[F/M/S/P]`              | fast/medium/slow/program                 |
+| RF gain / atten     | `*RMG<0-100>` / `*RMT<0/6/12/18dB>` |                                  |
+| Antenna select      | `*KA[ant1][ant2][rxant]`     | note the auxiliary RX antenna port       |
+| Volume / routing    | `*UM/*US/*UB`, `*UC`         | true dual receiver                       |
+
+Set commands are fire-and-forget (no ACK). Queries return `@`-prefixed lines.
+Drag strategy: fire `*RMF`/`*RMP` coalesced to ~20-30/sec; reconcile via periodic query.
+
+## Omni VII 588 — 57600 8N1, **hardware handshaking (RTS/CTS) required**; also Ethernet
+
+Two operating modes: RADIO MODE (subset, compatible with existing programs) and
+REMOTE MODE (full command set + Ethernet control + audio streaming/RIP).
+
+| Function            | Command                       | Notes                                   |
+|---------------------|-------------------------------|-----------------------------------------|
+| VFO A/B frequency   | `*A<4-byte bin>` or `*A14.250`| query `?A`                              |
+| Mode                | `*M<A><B>`                    | ASCII '0'..'6' = AM/USB/LSB/CWU/CWL/FM/FSK |
+| **Passband (PBT)**  | `*P<d1><d0>`                  | 2-byte binary, ±8192 Hz, 0=off           |
+| **RX filter**       | `*W<d0>`                      | d0 = 0..0x24 → one of **37 fixed presets** (14000…200 Hz) |
+| I-F roofing select  | `*C1T<0-5>` / enable `*C1U`   |                                          |
+| Sideband TX BW      | `*C1O`                        | 1000-4000 Hz                             |
+
+Consequence: on the Omni VII the passband drag is **stepped** (snap to nearest of
+37 widths + PBT re-center), not smooth. The Orion is the flagship for the feature.

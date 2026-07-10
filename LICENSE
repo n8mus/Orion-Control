@@ -1,0 +1,18 @@
+Ten-Tec SDR Console
+Copyright (C) 2026 Jon (n8mus) and contributors
+
+This program is free software; you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation; either version 2 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+The full GPL-2.0 text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+
+NOTE ON LICENSING: this project is GPLv2-or-later because it is intended to
+build on the WDSP DSP library and the Thetis/PowerSDR (OpenHPSDR) lineage,
+which are GPLv2. Keeping this license lets us reuse that code directly. This
+constrains any future closed/commercial distribution — a deliberate choice.

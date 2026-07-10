@@ -18,11 +18,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     pan_ = new PanadapterWidget(this);
     pan_->setPassband(-1200, 1200);
+    smeter_ = new SMeterWidget(this);
+    panel_  = new ControlPanel(this);
 
+    // S-meter above the panadapter, control sidebar on the right.
     auto* central = new QWidget(this);
-    auto* lay = new QVBoxLayout(central);
+    auto* lay = new QHBoxLayout(central);
     lay->setContentsMargins(0, 0, 0, 0);
-    lay->addWidget(pan_);
+    lay->setSpacing(0);
+    auto* left = new QVBoxLayout;
+    left->setContentsMargins(0, 0, 0, 0);
+    left->setSpacing(0);
+    left->addWidget(smeter_);
+    left->addWidget(pan_, 1);
+    lay->addLayout(left, 1);
+    lay->addWidget(panel_);
     setCentralWidget(central);
 
     connect(pan_, &PanadapterWidget::tuneRequested,    this, &MainWindow::onTuneRequested);
@@ -53,8 +63,51 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
         if (rx != Rx::Main) return;
         rigctld_.cacheMode(m);                      // clients always see true mode
+        panel_->showMode(m);                        // sidebar mirrors the front panel
         if (m != rigMode_) { rigMode_ = m; refreshPassbandOverlay(); }
     });
+
+    // Radio state -> control surface (front-panel changes reflect on screen).
+    connect(&radio_, &TenTecOrion::sMeterReported, this, [this](int mainRaw, int) {
+        if (std::getenv("TTC_SELFTEST")) {
+            static int n = 0;
+            if (++n % 4 == 1) std::fprintf(stderr, "[radio] S-meter main raw %d\n", mainRaw);
+        }
+        smeter_->setRawLevel(mainRaw);
+    });
+    connect(&radio_, &TenTecOrion::agcReported, this, [this](Rx rx, char a) {
+        if (rx == Rx::Main) panel_->showAgc(a);
+    });
+    connect(&radio_, &TenTecOrion::rfGainReported, this, [this](Rx rx, int g) {
+        if (rx == Rx::Main) panel_->showRfGain(g);
+    });
+    connect(&radio_, &TenTecOrion::attenReported, this, [this](Rx rx, int s) {
+        if (rx == Rx::Main) panel_->showAtten(s);
+    });
+
+    // Control surface -> radio. Sets are fire-and-forget; polling confirms.
+    connect(panel_, &ControlPanel::modeSelected, this, [this](Mode m) {
+        radio_.setMode(Rx::Main, m);
+        rigMode_ = m;
+        rigctld_.cacheMode(m);
+        refreshPassbandOverlay();
+        // The Orion recalls its per-mode stored filter on a mode change —
+        // fetch it as soon as the firmware has settled instead of waiting
+        // for the slow poll slot.
+        QTimer::singleShot(400, this, [this] { radio_.queryFilter(Rx::Main); });
+    });
+    connect(panel_, &ControlPanel::agcSelected, this,
+            [this](char a) { radio_.setAgc(Rx::Main, a); });
+    connect(panel_, &ControlPanel::attenSelected, this,
+            [this](int s) { radio_.setAttenuator(Rx::Main, s); });
+    connect(panel_, &ControlPanel::rfGainChanged, this,
+            [this](int g) { radio_.setRfGain(Rx::Main, g); });
+    connect(panel_, &ControlPanel::nrChanged, this,
+            [this](int v) { radio_.setNoiseReduction(Rx::Main, v); });
+    connect(panel_, &ControlPanel::nbChanged, this,
+            [this](int v) { radio_.setNoiseBlanker(Rx::Main, v); });
+    connect(panel_, &ControlPanel::autoNotchChanged, this,
+            [this](int v) { radio_.setAutoNotch(Rx::Main, v); });
     connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {
         if (rx != Rx::Main) return;
         rigctld_.cacheBandwidth(bw);
@@ -138,16 +191,38 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryFrequency(Rx::Main);            // one-shot sync at startup
         radio_.queryMode(Rx::Main);
         radio_.queryFilter(Rx::Main);
+        radio_.queryAgc(Rx::Main);                  // sync the control sidebar
+        radio_.queryRfGain(Rx::Main);
+        radio_.queryAttenuator(Rx::Main);
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);
         connect(poll, &QTimer::timeout, this, [this] {
             if (!radio_.connected()) return;
             ++pollTick_;
-            // Interleave slower mode/filter polls between the ~3 Hz frequency polls
-            // so the overlay tracks front-panel mode/BW/PBT changes too.
-            if (pollTick_ % 5 == 2) { radio_.queryMode(Rx::Main);   return; }
-            if (pollTick_ % 5 == 4) { radio_.queryFilter(Rx::Main); return; }
+            // 1 s rotation at 200 ms/tick, sized to the Orion's ~100 ms UART
+            // servicing cycle: 2 Hz S-meter, 2 Hz frequency, mode and filter
+            // alternating at 0.5 Hz each. Every 5 s one S-meter slot is lent
+            // to the AGC/RF-gain/attenuator round-robin so front-panel knob
+            // changes eventually reflect in the sidebar.
+            const int phase = pollTick_ % 5;
+            if (phase == 1 || phase == 3) {
+                if (pollTick_ % 25 == 3) {
+                    switch ((pollTick_ / 25) % 3) {
+                        case 0:  radio_.queryAgc(Rx::Main);        break;
+                        case 1:  radio_.queryRfGain(Rx::Main);     break;
+                        default: radio_.queryAttenuator(Rx::Main); break;
+                    }
+                } else {
+                    radio_.querySMeter();
+                }
+                return;
+            }
+            if (phase == 2) {
+                if ((pollTick_ / 5) % 2) radio_.queryMode(Rx::Main);
+                else                     radio_.queryFilter(Rx::Main);
+                return;
+            }
             // Only one ?AF in flight: the Orion's response tail runs ~110 ms. Re-arm
             // after 600 ms anyway in case a response was dropped.
             if (awaitingFreq_ && freqQueryAge_.elapsed() < 600) return;

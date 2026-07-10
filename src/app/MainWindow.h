@@ -6,6 +6,8 @@ class QTimer;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "ui/PanadapterWidget.h"
+#include "ui/SMeterWidget.h"
+#include "ui/ControlPanel.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
 #include "dsp/SpectrumComputer.h"
@@ -29,6 +31,8 @@ private:
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
     PanadapterWidget* pan_ = nullptr;
+    SMeterWidget*     smeter_ = nullptr;
+    ControlPanel*     panel_  = nullptr;
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;

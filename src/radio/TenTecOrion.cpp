@@ -75,6 +75,36 @@ void TenTecOrion::setPassband(Rx rx, int loEdgeHz, int hiEdgeHz) {
     setPbtHz(rx, center);
 }
 
+void TenTecOrion::setAgc(Rx rx, char agc) {
+    if (agc != 'F' && agc != 'M' && agc != 'S' && agc != 'P' && agc != 'O') return;
+    send(QByteArray("*R") + rxLetter(rx) + "A" + agc);
+}
+
+void TenTecOrion::setRfGain(Rx rx, int gain) {
+    send(QByteArray("*R") + rxLetter(rx) + "G" + QByteArray::number(clampi(gain, 0, 100)));
+}
+
+void TenTecOrion::setAttenuator(Rx rx, int step) {
+    send(QByteArray("*R") + rxLetter(rx) + "T" + QByteArray::number(clampi(step, 0, 3)));
+}
+
+void TenTecOrion::setNoiseReduction(Rx rx, int level) {
+    send(QByteArray("*R") + rxLetter(rx) + "NN" + QByteArray::number(clampi(level, 0, 9)));
+}
+
+void TenTecOrion::setNoiseBlanker(Rx rx, int level) {
+    send(QByteArray("*R") + rxLetter(rx) + "NB" + QByteArray::number(clampi(level, 0, 9)));
+}
+
+void TenTecOrion::setAutoNotch(Rx rx, int level) {
+    send(QByteArray("*R") + rxLetter(rx) + "NA" + QByteArray::number(clampi(level, 0, 9)));
+}
+
+void TenTecOrion::querySMeter()          { send("?S"); }
+void TenTecOrion::queryAgc(Rx rx)        { send(QByteArray("?R") + rxLetter(rx) + "A"); }
+void TenTecOrion::queryRfGain(Rx rx)     { send(QByteArray("?R") + rxLetter(rx) + "G"); }
+void TenTecOrion::queryAttenuator(Rx rx) { send(QByteArray("?R") + rxLetter(rx) + "T"); }
+
 void TenTecOrion::queryFrequency(Rx rx) {
     const char v = (rx == Rx::Main) ? 'A' : 'B';
     send(QByteArray("?") + v + "F");
@@ -119,7 +149,26 @@ void TenTecOrion::onLine(const QByteArray& line) {
         }
         return;
     }
-    if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M]<val>
+    if (line[1] == 'S' && line.size() >= 4) {         // ?S reply
+        if (line[2] == 'R' && line[3] == 'M') {       // RX: @SRM<main>S<sub>
+            qlonglong mainRaw = 0, subRaw = 0;
+            if (parseLeadingInt(line.mid(4), mainRaw) && mainRaw >= 0 && mainRaw <= 300) {
+                const int sPos = line.indexOf('S', 4);
+                if (sPos > 0 && parseLeadingInt(line.mid(sPos + 1), subRaw)
+                    && subRaw >= 0 && subRaw <= 300)
+                    emit sMeterReported(static_cast<int>(mainRaw), static_cast<int>(subRaw));
+            }
+        } else if (line[2] == 'T' && line[3] == 'F') { // TX: @STF<fwd>R<ref>S<swr>
+            const int rPos = line.indexOf('R', 4);
+            const int sPos = (rPos > 0) ? line.indexOf('S', rPos + 1) : -1;
+            if (rPos > 0 && sPos > 0)
+                emit txMeterReported(std::atof(line.mid(4, rPos - 4).constData()),
+                                     std::atof(line.mid(rPos + 1, sPos - rPos - 1).constData()),
+                                     std::atof(line.mid(sPos + 1).constData()));
+        }
+        return;
+    }
+    if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M/A/G/T]<val>
         Rx rx = (line[2] == 'M') ? Rx::Main : Rx::Sub;
         if (line[3] == 'F' && parseLeadingInt(line.mid(4), v) && v >= 100 && v <= 6000)
             emit bandwidthReported(rx, static_cast<int>(v));
@@ -130,6 +179,15 @@ void TenTecOrion::onLine(const QByteArray& line) {
                                           Mode::CWL, Mode::AM,  Mode::FM };
             emit modeReported(rx, modes[line[4] - '0']);
         }
+        else if (line[3] == 'A' && line.size() >= 5) { // AGC letter (P may trail data)
+            const char a = line[4];
+            if (a == 'F' || a == 'M' || a == 'S' || a == 'P' || a == 'O')
+                emit agcReported(rx, a);
+        }
+        else if (line[3] == 'G' && parseLeadingInt(line.mid(4), v) && v >= 0 && v <= 100)
+            emit rfGainReported(rx, static_cast<int>(v));
+        else if (line[3] == 'T' && line.size() >= 5 && line[4] >= '0' && line[4] <= '3')
+            emit attenReported(rx, line[4] - '0');
     }
 }
 

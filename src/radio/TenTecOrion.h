@@ -25,16 +25,37 @@ public:
     void setBandwidthHz(Rx rx, int bwHz) override;
     void setPbtHz(Rx rx, int pbtHz) override;
 
+    // Control-surface knobs. AGC is the radio's own letter code:
+    // 'F'ast 'M'edium 'S'low 'P'rogram 'O'ff. Attenuator steps 0..3 = off/6/12/18 dB.
+    void setAgc(Rx rx, char agc);                 // *R<M/S>A<F/M/S/P/O>
+    void setRfGain(Rx rx, int gain);              // *R<M/S>G<0-100>
+    void setAttenuator(Rx rx, int step);          // *R<M/S>T<0-3>
+    // DSP helpers share one command group: *R<M/S>N<A/B/N><0-9>, 0 = off.
+    void setNoiseReduction(Rx rx, int level);     // *R<M/S>NN<val>
+    void setNoiseBlanker(Rx rx, int level);       // *R<M/S>NB<val>
+    void setAutoNotch(Rx rx, int level);          // *R<M/S>NA<val>
+
     // Queries (responses arrive asynchronously via the signals below).
     void queryFrequency(Rx rx);
     void queryFilter(Rx rx);
     void queryMode(Rx rx);
+    void querySMeter();                           // ?S -> @SRM<m>S<s> (or @STF.. in TX)
+    void queryAgc(Rx rx);                         // ?R<M/S>A
+    void queryRfGain(Rx rx);                      // ?R<M/S>G
+    void queryAttenuator(Rx rx);                  // ?R<M/S>T
+    // NOTE: rev 1.2 docs give no query for the NR/NB/auto-notch levels — those
+    // controls are write-only from the CAT side.
 
 signals:
     void frequencyReported(Rx rx, uint64_t hz);
     void bandwidthReported(Rx rx, int bwHz);
     void pbtReported(Rx rx, int pbtHz);
     void modeReported(Rx rx, Mode mode);
+    void sMeterReported(int mainRaw, int subRaw); // raw units (hamlib cal table scale)
+    void txMeterReported(double fwdWatts, double refWatts, double swr);
+    void agcReported(Rx rx, char agc);
+    void rfGainReported(Rx rx, int gain);
+    void attenReported(Rx rx, int step);
     void rawLine(const QByteArray& line);
 
 private slots:

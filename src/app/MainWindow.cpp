@@ -5,9 +5,11 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QTimer>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 namespace ttc {
 
@@ -26,10 +28,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pan_, &PanadapterWidget::tuneRequested,    this, &MainWindow::onTuneRequested);
     connect(pan_, &PanadapterWidget::passbandChanged,  this, &MainWindow::onPassbandChanged);
 
-    // Keep the rigctld server's cached frequency in step with the radio.
+    // The radio reported its frequency (startup sync or dial-follow poll): keep the
+    // rigctld cache and the panadapter center locked to the physical VFO.
     connect(&radio_, &TenTecOrion::frequencyReported, this,
             [this](Rx rx, uint64_t hz) {
-                if (rx == Rx::Main) { centerHz_ = hz; rigctld_.cacheFrequency(hz); }
+                if (rx != Rx::Main) return;
+                rigctld_.cacheFrequency(hz);
+                if (std::getenv("TTC_SELFTEST"))
+                    std::fprintf(stderr, "[radio] VFO-A reports %.4f MHz\n", hz / 1e6);
+                if (hz != centerHz_) {
+                    centerHz_ = hz;
+#ifdef HAVE_SDRPLAY
+                    sdr_.setCenterFrequency(static_cast<double>(hz));
+#endif
+                    statusBar()->showMessage(
+                        QString("radio %1 MHz  |  panadapter following").arg(hz / 1e6, 0, 'f', 4));
+                }
             });
 
     // Start the interop seam. Clients (cqrlog/WSJT-X/fldigi/GridTracker) connect here.
@@ -68,6 +82,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage("SDR unavailable: " + QString::fromStdString(sdr_.lastError()));
     }
 #endif
+
+    // Open the Orion so click-to-tune / drag-to-filter actually reach the radio,
+    // and poll its VFO so the panadapter follows the physical dial. Device path
+    // overridable via TTC_RADIO_DEV (default /dev/orion).
+    const char* devEnv = std::getenv("TTC_RADIO_DEV");
+    const std::string radioDev = devEnv ? devEnv : "/dev/orion";
+    if (radio_.open(radioDev)) {
+        radio_.queryFrequency(Rx::Main);            // one-shot sync at startup
+        auto* poll = new QTimer(this);
+        connect(poll, &QTimer::timeout, this, [this] {
+            if (radio_.connected()) radio_.queryFrequency(Rx::Main);
+        });
+        poll->start(200);                            // ~5 Hz dial-follow
+    } else {
+        statusBar()->showMessage("radio: could not open " + QString::fromStdString(radioDev));
+    }
 }
 
 MainWindow::~MainWindow() {

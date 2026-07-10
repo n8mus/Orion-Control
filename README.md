@@ -37,6 +37,9 @@ cmake --build build
 - **Ten-Tec Orion driver** (`src/radio/TenTecOrion.*`) — real CAT encoders for
   frequency, mode, bandwidth (`*RMF`), and PBT (`*RMP`), plus the `setPassband()`
   bandwidth+PBT decomposition. Serial via a POSIX wrapper integrated into the Qt loop.
+  The app opens `/dev/orion` (override with `TTC_RADIO_DEV`) and polls VFO-A at
+  ~5 Hz, so click-to-tune and drag-to-filter command the radio and the panadapter
+  follows the physical dial.
 - **rigctld emulation** (`src/net/RigctldServer.*`) — listens on TCP **4532** so
   cqrlog / WSJT-X / fldigi / GridTracker connect here instead of flrig. Handles
   `f/F/m/M/v/t/\chk_vfo/\dump_state` (partial — see TODOs).

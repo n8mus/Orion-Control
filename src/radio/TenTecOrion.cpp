@@ -104,6 +104,8 @@ static bool parseLeadingInt(const QByteArray& s, qlonglong& out) {
 }
 
 void TenTecOrion::onLine(const QByteArray& line) {
+    if (std::getenv("TTC_TRACE"))
+        std::fprintf(stderr, "[cat<-] %s\n", line.constData());
     emit rawLine(line);
     // Responses are '@'-prefixed, e.g. @AF14250000, @RMF2400, @RMP-200.
     if (line.size() < 3 || line[0] != '@') return;

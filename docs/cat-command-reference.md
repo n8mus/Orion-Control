@@ -46,7 +46,18 @@ existed since the V2 firmware. Verified against Jon's Orion 565 (v3 firmware) wi
 | Manual notch engage | `*RMNM<0/1>` / `?RMNM`        | clean on/off toggle, query-confirmed     |
 | SAF engage          | `*RMNS<0/1>` / `?RMNS`        | documented in V3 addendum; SAF shares CF/W values with notch |
 
-Sub receiver presumably `*RSN<C/W/M/S>` (untested). Out-of-range sets are
+A full `?RMN<A-Z>` letter sweep on the v3 firmware then mapped the whole group:
+
+| Letter | Function                | v3 behavior                                       |
+|--------|-------------------------|---------------------------------------------------|
+| `A`    | auto-notch level 0-9    | as documented; **queryable** (query undocumented) |
+| `B`    | DSP noise blanker 0-9   | as documented; **queryable**                      |
+| `N`    | NR per rev 1.2 docs     | **DEAD on v3** — set silently ignored, query unanswered |
+| `R`    | **noise reduction 0-9** | v3 replacement for `N`; set/read-back verified    |
+| `H`    | hardware NB on/off      | undocumented; accepts only 0/1 (5 rejected) — presumed the IF hardware blanker |
+| `C/W/M/S` | manual notch (above) |                                                   |
+
+Sub receiver presumably `*RSN<same letters>` (untested). Out-of-range sets are
 REJECTED, not clamped — the UI must clamp before sending or the radio ignores
 the command. This unlocks the draggable on-screen notch marker (same pattern
 as the passband drag: `*RMNC` streams the drag, `*RMNW` from a width gesture,

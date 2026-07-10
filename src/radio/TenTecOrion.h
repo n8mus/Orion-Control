@@ -30,10 +30,13 @@ public:
     void setAgc(Rx rx, char agc);                 // *R<M/S>A<F/M/S/P/O>
     void setRfGain(Rx rx, int gain);              // *R<M/S>G<0-100>
     void setAttenuator(Rx rx, int step);          // *R<M/S>T<0-3>
-    // DSP helpers share one command group: *R<M/S>N<A/B/N><0-9>, 0 = off.
-    void setNoiseReduction(Rx rx, int level);     // *R<M/S>NN<val>
-    void setNoiseBlanker(Rx rx, int level);       // *R<M/S>NB<val>
+    // DSP helpers share one command group: *R<M/S>N<x><0-9>, 0 = off.
+    // NOTE: v3 firmware moved NR from documented letter 'N' (dead, silently
+    // ignored) to 'R' — live-probed with set/read-back on Jon's radio.
+    void setNoiseReduction(Rx rx, int level);     // *R<M/S>NR<val>
+    void setNoiseBlanker(Rx rx, int level);       // *R<M/S>NB<val>  (DSP blanker)
     void setAutoNotch(Rx rx, int level);          // *R<M/S>NA<val>
+    void setHardwareNb(Rx rx, bool on);           // *R<M/S>NH<0/1> (undocumented)
 
     // Manual notch — UNDOCUMENTED commands, live-probe verified on the v3
     // firmware (see docs/cat-command-reference.md). The firmware silently
@@ -74,6 +77,7 @@ signals:
     void nrReported(Rx rx, int level);
     void nbReported(Rx rx, int level);
     void autoNotchReported(Rx rx, int level);
+    void hardwareNbReported(Rx rx, bool on);
     void rawLine(const QByteArray& line);
 
 private slots:

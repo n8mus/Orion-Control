@@ -89,7 +89,9 @@ void TenTecOrion::setAttenuator(Rx rx, int step) {
 }
 
 void TenTecOrion::setNoiseReduction(Rx rx, int level) {
-    send(QByteArray("*R") + rxLetter(rx) + "NN" + QByteArray::number(clampi(level, 0, 9)));
+    // Rev 1.2 documents *R.NN for NR, but v3 firmware silently ignores it —
+    // live probe found NR moved to letter 'R' (set/read-back verified).
+    send(QByteArray("*R") + rxLetter(rx) + "NR" + QByteArray::number(clampi(level, 0, 9)));
 }
 
 void TenTecOrion::setNoiseBlanker(Rx rx, int level) {
@@ -127,8 +129,12 @@ void TenTecOrion::queryNotch(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "NM");
 }
 
+void TenTecOrion::setHardwareNb(Rx rx, bool on) {
+    send(QByteArray("*R") + rxLetter(rx) + "NH" + (on ? "1" : "0"));
+}
+
 void TenTecOrion::queryDspLevels(Rx rx) {
-    send(QByteArray("?R") + rxLetter(rx) + "NN");
+    send(QByteArray("?R") + rxLetter(rx) + "NR");   // v3 NR letter (NN is dead)
     send(QByteArray("?R") + rxLetter(rx) + "NB");
     send(QByteArray("?R") + rxLetter(rx) + "NA");
 }
@@ -227,12 +233,14 @@ void TenTecOrion::onLine(const QByteArray& line) {
                 emit notchEngagedReported(rx, v == 1);
             else if (sub == 'S' && num && (v == 0 || v == 1))
                 emit safReported(rx, v == 1);
-            else if (sub == 'N' && num && v >= 0 && v <= 9)
-                emit nrReported(rx, static_cast<int>(v));
+            else if ((sub == 'R' || sub == 'N') && num && v >= 0 && v <= 9)
+                emit nrReported(rx, static_cast<int>(v));   // 'R' on v3, 'N' pre-v3
             else if (sub == 'B' && num && v >= 0 && v <= 9)
                 emit nbReported(rx, static_cast<int>(v));
             else if (sub == 'A' && num && v >= 0 && v <= 9)
                 emit autoNotchReported(rx, static_cast<int>(v));
+            else if (sub == 'H' && num && (v == 0 || v == 1))
+                emit hardwareNbReported(rx, v == 1);
         }
     }
 }

@@ -52,6 +52,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
     connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
         if (rx != Rx::Main) return;
+        rigctld_.cacheMode(m);                      // clients always see true mode
         if (m != rigMode_) { rigMode_ = m; refreshPassbandOverlay(); }
     });
     connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {

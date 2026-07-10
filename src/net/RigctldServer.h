@@ -26,6 +26,7 @@ public slots:
     // Fed from the radio driver so `f`/`m` queries answer from cached state.
     void cacheFrequency(uint64_t hz) { freqHz_ = hz; }
     void cacheBandwidth(int bwHz)    { bwHz_ = bwHz; }
+    void cacheMode(Mode m)           { mode_ = m; }
 
 signals:
     void clientConnected(const QString& peer);

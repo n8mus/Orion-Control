@@ -8,10 +8,12 @@ cqrlog and GridTracker working unchanged.
 The flagship feature: **drag a passband edge on the panadapter and the radio's DSP
 filter follows** (continuous on the Orion; stepped on the Omni VII — a hardware limit).
 
-> Status: **skeleton**. The Orion CAT encoders and the `rigctld` interop server are
-> real; the panadapter DSP/IQ path is stubbed pending the WDSP/SDRplay work (Phase 2).
-> See [docs/architecture.md](docs/architecture.md) for the full plan and
-> [docs/cat-command-reference.md](docs/cat-command-reference.md) for the protocol.
+> Status: **early**. Real and verified against live hardware: the Orion CAT driver,
+> the `rigctld` interop server, and **RSP2 IQ streaming** (SDRplay API v3.15). Still to
+> do: wire the IQ → FFT → panadapter display, then the WDSP DSP path. See
+> [docs/architecture.md](docs/architecture.md) for the plan,
+> [docs/phase0-latency.md](docs/phase0-latency.md) and
+> [docs/phase0-sdr.md](docs/phase0-sdr.md) for the measured Phase-0 results.
 
 ## Build (Linux / Arch)
 
@@ -38,8 +40,13 @@ cmake --build build
 - **rigctld emulation** (`src/net/RigctldServer.*`) — listens on TCP **4532** so
   cqrlog / WSJT-X / fldigi / GridTracker connect here instead of flrig. Handles
   `f/F/m/M/v/t/\chk_vfo/\dump_state` (partial — see TODOs).
+- **SDRplay RSP2 streaming** (`src/sdr/SdrPlaySource.*`, `-DBUILD_SDRPLAY=ON`) —
+  real IQ from the RSP2 via SDRplay API v3.15, verified live at 1.94 MS/s.
+  `tools/sdr_probe` is a headless smoke test. Gain defaults tuned for the hot
+  shared-antenna feed (gRdB 40 / LNAstate 6).
 - **Panadapter widget** (`src/ui/PanadapterWidget.*`) — placeholder spectrum with
   the flagship interactions wired: click-to-tune and drag-passband-edge signals.
+  (IQ → FFT → display wiring is the next step.)
 
 ## Layout
 

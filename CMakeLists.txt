@@ -33,6 +33,11 @@ if(BUILD_SDRPLAY)
   target_compile_definitions(tentec-console PRIVATE HAVE_SDRPLAY)
   target_link_libraries(tentec-console PRIVATE sdrplay_api)
   message(STATUS "SDRplay RSP source: ENABLED")
+
+  # Headless streaming smoke test.
+  add_executable(sdr_probe tools/sdr_probe.cpp src/sdr/SdrPlaySource.cpp)
+  target_include_directories(sdr_probe PRIVATE src)
+  target_link_libraries(sdr_probe PRIVATE sdrplay_api)
 else()
   message(STATUS "SDRplay RSP source: disabled (-DBUILD_SDRPLAY=ON to enable)")
 endif()

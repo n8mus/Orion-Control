@@ -51,6 +51,8 @@ public:
     void setPtt(bool on);                         // *TK key / *TU unkey
     void setTxPower(int pct);                     // *TP<0-100> (percent of 100 W)
     void setMicGain(int pct);                     // *TM<0-100>
+    void setSpeechProc(int level);                // *TS<0-9> (0 = off)
+    void setAuxInputGain(int pct);                // *TI<0-100> (rear line input)
     void setMonitor(int pct);                     // *TO<0-100> (TX audio monitor)
     void setAfVolume(int pct);                    // *UM<0-100> (main RX volume)
     void setTunerEnabled(bool on);                // *TT<0/1> (internal tuner)
@@ -67,7 +69,8 @@ public:
     void queryPreamp(Rx rx);                      // ?R<M/S>E
     void queryNotch(Rx rx);                       // ?R.NC / ?R.NW / ?R.NM (undocumented)
     void queryTxPower();                          // ?TP
-    void queryTxAudio();                          // ?TM / ?TO / ?UM (volume query speculative)
+    void queryTxAudio();                          // ?TM / ?TS / ?TO / ?UM (some speculative)
+    void queryAuxInputGain();                     // ?TI (undocumented query)
     void queryTuner();                            // ?TT
     // Speculative: NR/NB/AN level queries appear in no document, but neither
     // did the notch ones and the radio answered those. Unanswered queries are
@@ -95,6 +98,8 @@ signals:
     void hardwareNbReported(Rx rx, bool on);
     void txPowerReported(int pct);
     void micGainReported(int pct);
+    void speechProcReported(int level);
+    void auxInputGainReported(int pct);
     void monitorReported(int pct);
     void afVolumeReported(int pct);
     void tunerReported(bool on);

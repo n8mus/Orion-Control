@@ -256,6 +256,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QSettings().setValue("tune/power", w);
     });
     txBar_->setTuneLevel(QSettings().value("tune/power", 20).toInt());
+
+    // Digital/voice audio switch ([vendor]-style): line-in for digital, mic for voice.
+    {
+        QSettings s;
+        lastMicGain_    = s.value("audio/voiceMic", 51).toInt();
+        lastSpeechProc_ = s.value("audio/voiceSpeech", 2).toInt();
+    }
+    connect(txBar_, &TxBar::digitalModeToggled, this,
+            [this](bool on) { setDigitalMode(on); });
     connect(txBar_, &TxBar::ampModeChanged, this, [this](bool on, int limit) {
         QSettings s;
         s.setValue("amp/enabled", on);
@@ -282,8 +291,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         txBar_->showTxPower(p);
     });
-    connect(&radio_, &TenTecOrion::micGainReported, this,
-            [this](int p) { txBar_->showMicGain(p); });
+    connect(&radio_, &TenTecOrion::micGainReported, this, [this](int p) {
+        txBar_->showMicGain(p);
+        if (!digital_) lastMicGain_ = p;            // learn the voice mic setting
+    });
+    connect(&radio_, &TenTecOrion::speechProcReported, this, [this](int l) {
+        if (!digital_) lastSpeechProc_ = l;         // learn the voice speech-proc
+    });
     connect(&radio_, &TenTecOrion::monitorReported, this,
             [this](int p) { txBar_->showMonitor(p); });
     connect(&radio_, &TenTecOrion::afVolumeReported, this,
@@ -468,6 +482,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryNotch(Rx::Main);                // syncs notch center/width/engage
         radio_.queryTxPower();                      // syncs the TX bar
         radio_.queryTxAudio();
+        radio_.queryAuxInputGain();
         radio_.queryTuner();
         awaitingFreq_ = true;
         freqQueryAge_.start();
@@ -584,6 +599,36 @@ void MainWindow::stopManualTune() {
     txBar_->showTxPower(preTunePwr_);
     txBar_->showTuneActive(false);
     statusBar()->showMessage("TUNE: carrier off, power and mode restored");
+}
+
+// [vendor]-style digital/voice audio switch. The Orion has no MIC/LINE/BOTH CAT
+// command, so the radio's input source is set to BOTH once (front panel) and
+// we swap between front-mic and rear line-input purely by their gains:
+//   digital: mic 0, speech proc off, aux/line 100
+//   voice:   aux/line 0, mic + speech proc restored to the learned values
+// Voice settings are snapshotted (and persisted) the moment we go digital, so
+// whatever you actually run for SSB is what comes back.
+void MainWindow::setDigitalMode(bool on) {
+    if (on == digital_) return;
+    if (on) {
+        QSettings s;                                // remember the voice setup
+        s.setValue("audio/voiceMic", lastMicGain_);
+        s.setValue("audio/voiceSpeech", lastSpeechProc_);
+        digital_ = true;                            // (gates the "learn" slots)
+        radio_.setMicGain(0);
+        radio_.setSpeechProc(0);
+        radio_.setAuxInputGain(100);
+        statusBar()->showMessage("DIGITAL: line-in 100, mic/speech off");
+    } else {
+        digital_ = false;
+        radio_.setAuxInputGain(0);
+        radio_.setMicGain(lastMicGain_);
+        radio_.setSpeechProc(lastSpeechProc_);
+        txBar_->showMicGain(lastMicGain_);
+        statusBar()->showMessage(QString("VOICE: mic %1, speech %2, line-in off")
+                                     .arg(lastMicGain_).arg(lastSpeechProc_));
+    }
+    txBar_->showDigitalMode(on);
 }
 
 void MainWindow::saveBandMemory() {

@@ -134,6 +134,8 @@ void TenTecOrion::setSaf(Rx rx, bool on) {
 void TenTecOrion::setPtt(bool on)        { send(on ? "*TK" : "*TU"); }
 void TenTecOrion::setTxPower(int pct)    { send("*TP" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setMicGain(int pct)    { send("*TM" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setSpeechProc(int lvl) { send("*TS" + QByteArray::number(clampi(lvl, 0, 9))); }
+void TenTecOrion::setAuxInputGain(int p) { send("*TI" + QByteArray::number(clampi(p, 0, 100))); }
 void TenTecOrion::setMonitor(int pct)    { send("*TO" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setAfVolume(int pct) {
     // Docs claim 0-100 but the real scale is a byte: *UM100 lands at ~40% of
@@ -145,8 +147,10 @@ void TenTecOrion::startTune()            { send("*TTT"); }
 
 void TenTecOrion::queryTxPower()         { send("?TP"); }
 void TenTecOrion::queryTuner()           { send("?TT"); }
+void TenTecOrion::queryAuxInputGain()    { send("?TI"); }
 void TenTecOrion::queryTxAudio() {
     send("?TM");
+    send("?TS");
     send("?TO");
     send("?UM");                                   // volume query is speculative
 }
@@ -250,6 +254,10 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit txPowerReported(static_cast<int>(v));
         else if (line[2] == 'M' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
             emit micGainReported(static_cast<int>(v));
+        else if (line[2] == 'S' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 9)
+            emit speechProcReported(static_cast<int>(v));
+        else if (line[2] == 'I' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit auxInputGainReported(static_cast<int>(v));
         else if (line[2] == 'O' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
             emit monitorReported(static_cast<int>(v));
         else if (line[2] == 'T' && (line[3] == '0' || line[3] == '1'))

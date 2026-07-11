@@ -28,6 +28,7 @@ signals:
     void tuneToggled(bool on);                    // manual tune carrier on/off
     void tuneLevelChanged(int watts);
     void tunerEnableToggled(bool on);
+    void digitalModeToggled(bool on);             // DIG: line-in for digital vs mic for voice
     void micGainChanged(int pct);
     void monitorChanged(int pct);
     void afVolumeChanged(int pct);
@@ -41,6 +42,7 @@ public slots:
     void showMonitor(int pct);
     void showAfVolume(int pct);
     void showTuner(bool on);
+    void showDigitalMode(bool on);
 
 private:
     QSlider* makeSlider(const QString& name, QLabel*& value,
@@ -53,6 +55,7 @@ private:
     QSlider* af_  = nullptr;   QLabel* afVal_  = nullptr;
     QPushButton* ampBtn_   = nullptr;
     QSpinBox*    ampLimit_ = nullptr;
+    QPushButton* digBtn_   = nullptr;
     QPushButton* tuneBtn_  = nullptr;
     QSpinBox*    tuneLvl_  = nullptr;
     QPushButton* tunerBtn_ = nullptr;

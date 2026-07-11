@@ -36,6 +36,7 @@ private:
     void applyMode(Mode m);            // user mode change (button or band memory)
     void startManualTune();            // steady carrier for amp/external tuner
     void stopManualTune();
+    void setDigitalMode(bool on);      // line-in for digital vs mic for voice
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
     void recallStack(int band, int reg); // recall a band-stack register
     TenTecOrion      radio_;
@@ -56,6 +57,12 @@ private:
     Mode preTuneMode_ = Mode::USB;
     int  preTunePwr_  = 50;
     QTimer* tuneTimeout_ = nullptr;            // safety: carrier auto-drops
+
+    // Digital/voice audio switching ([vendor]-style). Voice settings are learned
+    // from the radio when entering digital, and persisted (defaults 51/2).
+    bool digital_       = false;
+    int  lastMicGain_   = 51;                  // most recent polled values, used
+    int  lastSpeechProc_ = 2;                  // to snapshot voice settings
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;

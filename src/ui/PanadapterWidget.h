@@ -20,6 +20,7 @@ struct DisplaySettings {
     int   wfSpeed   = 2;        // FFT frames per waterfall row; 1 = fastest
     bool  fillTrace = true;     // KE9NS-style gradient fill under the trace
     bool  peakHold  = false;    // slow-decay peak trace
+    float split     = 0.42f;    // spectrum/waterfall divider position (0..1)
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:
@@ -62,6 +63,9 @@ signals:
     void notchWidthAdjustRequested(int steps);     // wheel over the notch marker
     void pbtZeroRequested();                       // double-click a passband edge
     void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
+    // In-widget edits (dB-axis drag, range wheel, divider drag) changed ds_;
+    // owner persists and syncs the DISPLAY panel.
+    void displaySettingsEdited(const DisplaySettings& s);
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -79,14 +83,20 @@ private:
     void   pushWaterfallRow(const std::vector<float>& db);
     void   renderWfLine(const float* src, QRgb* dst, int w, int binLo, int binHi) const;
     void   ensureWaterfallImage(int w, int h, int binLo, int binHi);
-    void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines + absolute-freq labels
+    void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines, spectrum area only
+    void   drawScaleBand(QPainter& p, int hSpec);  // freq scale strip on the divider
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
+    bool   inScaleBand(int y) const;               // over the draggable divider strip
+    bool   inDbAxis(int x, int y) const;           // over the draggable dB scale
 
     // Drag-gesture bookkeeping (symmetric-BW and body-drag PBT).
     int dragStartX_  = 0;
+    int dragStartY_  = 0;
     int dragStartLo_ = 0, dragStartHi_ = 0;
+    float dragStartRef_   = 0.0f;                  // refDb at dB-axis grab
+    float dragStartSplit_ = 0.42f;                 // split at divider grab
 
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
@@ -123,6 +133,8 @@ private:
         SymEdge,            // Shift+edge: symmetric width, pure bw, pbt kept
         BodyPending, Body,  // press inside passband; becomes a pure-pbt slide
         Notch,
+        Divider,            // drag the freq-scale band: move the wf split
+        DbAxis,             // drag the left dB scale: shift ref level
     } drag_ = Drag::None;
 };
 

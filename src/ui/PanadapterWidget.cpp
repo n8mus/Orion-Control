@@ -14,7 +14,8 @@ namespace ttc {
 namespace {
 constexpr int   kWfHistRows   = 1024;    // raw dB rows kept for re-render on zoom
 constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
-constexpr float kSpectrumFrac  = 0.42f;  // top 42% spectrum, rest waterfall
+constexpr int   kScaleBandH    = 16;     // freq-scale strip between spectrum and wf
+constexpr int   kDbAxisW       = 40;     // grab width of the left dB scale
 constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
 constexpr float kNoRow         = -300.0f;
 
@@ -97,6 +98,7 @@ void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
     ds_ = s;
     ds_.avgFrames = std::max(1, ds_.avgFrames);
     ds_.wfSpeed   = std::max(1, ds_.wfSpeed);
+    ds_.split     = std::clamp(ds_.split, 0.15f, 0.85f);
     dbMax_ = ds_.refDb;
     dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
     if (scaleChanged) {
@@ -129,7 +131,16 @@ bool PanadapterWidget::overNotch(int x) const {
 }
 
 int PanadapterWidget::spectrumHeight() const {
-    return static_cast<int>(height() * kSpectrumFrac);
+    return static_cast<int>((height() - kScaleBandH) * ds_.split);
+}
+
+bool PanadapterWidget::inScaleBand(int y) const {
+    const int hSpec = spectrumHeight();
+    return y >= hSpec - 2 && y < hSpec + kScaleBandH + 2;
+}
+
+bool PanadapterWidget::inDbAxis(int x, int y) const {
+    return x < kDbAxisW && y < spectrumHeight() - 2;
 }
 
 QRgb PanadapterWidget::mapColor(float t) const {
@@ -253,28 +264,55 @@ int PanadapterWidget::xToHz(int x) const {
 }
 
 void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
-    const double step = niceStep(viewSpanHz_);
-    QFont f = p.font();
-    f.setPixelSize(10);
-    p.setFont(f);
     if (centerHz_ == 0) {                          // no dial info: plain grid only
         p.setPen(QColor(255, 255, 255, 22));
         for (int i = 1; i < 10; ++i)
             p.drawLine(width() * i / 10, 0, width() * i / 10, hSpec);
         return;
     }
-    // Gridlines on absolute "nice" frequencies; labels in MHz with just enough
-    // decimals for the step (PowerSDR-style in-panadapter frequency scale).
+    // Gridlines on absolute "nice" frequencies (labels live on the scale band).
+    const double step = niceStep(viewSpanHz_);
+    const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
+    const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
+    p.setPen(QColor(255, 255, 255, 26));
+    for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
+        const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+        p.drawLine(x, 0, x, hSpec);
+    }
+}
+
+// KE9NS/PowerSDR-style frequency scale: a dedicated strip between the spectrum
+// and the waterfall with ticks + MHz labels. The strip is also the split
+// handle — drag it up/down to resize spectrum vs waterfall.
+void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
+    p.fillRect(QRect(0, hSpec, width(), kScaleBandH), QColor(20, 27, 36));
+    p.setPen(QColor(255, 255, 255, 50));
+    p.drawLine(0, hSpec, width(), hSpec);
+    p.drawLine(0, hSpec + kScaleBandH - 1, width(), hSpec + kScaleBandH - 1);
+    if (centerHz_ == 0) return;
+    const double step = niceStep(viewSpanHz_);
     const int decimals = std::clamp(
         static_cast<int>(std::ceil(std::log10(1e6 / step))), 1, 6);
     const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
     const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    p.setFont(f);
+    // Minor ticks every step/5 when there's room for them.
+    const double minor = step / 5.0;
+    if (hzToX(static_cast<int>(minor)) - hzToX(0) > 8) {
+        p.setPen(QColor(160, 175, 190, 110));
+        for (double fq = std::ceil(f0 / minor) * minor; fq <= f1; fq += minor) {
+            const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+            p.drawLine(x, hSpec, x, hSpec + 3);
+        }
+    }
     for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
         const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
-        p.setPen(QColor(255, 255, 255, 26));
-        p.drawLine(x, 0, x, hSpec);
-        p.setPen(QColor(190, 205, 220, 150));
-        p.drawText(x + 3, hSpec - 5, QString::number(fq / 1e6, 'f', decimals));
+        p.setPen(QColor(200, 215, 230, 200));
+        p.drawLine(x, hSpec, x, hSpec + 5);
+        p.drawText(x + 3, hSpec + kScaleBandH - 4,
+                   QString::number(fq / 1e6, 'f', decimals));
     }
 }
 
@@ -283,13 +321,14 @@ void PanadapterWidget::drawDbScale(QPainter& p, int hSpec) {
     f.setPixelSize(9);
     p.setFont(f);
     const float range = dbMax_ - dbMin_;
-    for (int db = static_cast<int>(std::ceil(dbMin_ / 20.0f)) * 20;
-         db < static_cast<int>(dbMax_); db += 20) {
+    const int step = range > 80.0f ? 20 : 10;      // KE9NS-density when zoomed in
+    for (int db = static_cast<int>(std::ceil(dbMin_ / step)) * step;
+         db < static_cast<int>(dbMax_); db += step) {
         const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
-        if (y < 20 || y > hSpec - 16) continue;    // keep clear of the text rows
-        p.setPen(QColor(255, 255, 255, 16));
+        if (y < 20 || y > hSpec - 6) continue;     // keep clear of the text row
+        p.setPen(QColor(255, 255, 255, 18));
         p.drawLine(0, y, width(), y);
-        p.setPen(QColor(150, 165, 180, 130));
+        p.setPen(QColor(165, 180, 195, 160));
         p.drawText(4, y - 2, QString::number(db));
     }
 }
@@ -310,13 +349,14 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         binHi = std::clamp(binHi, binLo + 2, n);
     }
 
-    // Waterfall (lower area): re-render from raw history, 1 row = 1 pixel line.
-    if (wfBins_ >= 2 && n >= 2) {
-        ensureWaterfallImage(width(), height() - hSpec, binLo, binHi);
-        if (!wfImg_.isNull()) p.drawImage(0, hSpec, wfImg_);
+    // Waterfall (below the scale band): raw history, 1 row = 1 pixel line.
+    const int wfTop = hSpec + kScaleBandH;
+    if (wfBins_ >= 2 && n >= 2 && height() > wfTop) {
+        ensureWaterfallImage(width(), height() - wfTop, binLo, binHi);
+        if (!wfImg_.isNull()) p.drawImage(0, wfTop, wfImg_);
     }
 
-    // Background: frequency grid with absolute labels, then the dB scale.
+    // Background: frequency gridlines, then the (draggable) dB scale.
     drawFreqGrid(p, hSpec);
     drawDbScale(p, hSpec);
 
@@ -373,7 +413,9 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.drawText(xnC + 3, hSpec - 6, "N");
     }
 
-    // Center (tuned) marker, full height.
+    // Frequency scale band on the divider (after the tints, so it stays clean),
+    // then the center (tuned) marker crossing everything.
+    drawScaleBand(p, hSpec);
     p.setPen(QColor(200, 80, 80));
     p.drawLine(width() / 2, 0, width() / 2, height());
 
@@ -400,18 +442,29 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
     }
 
-    // Span readout + separator line.
+    // Span readout (the scale band draws its own separators).
     p.setPen(QColor(200, 200, 200, 160));
     p.drawText(6, 14, QString("span %1 kHz   wheel: tune (shift fine)  edge: cut  "
                               "shift+edge: bw  body: pbt")
                           .arg(viewSpanHz_ / 1000.0, 0, 'f', viewSpanHz_ < 20000 ? 1 : 0));
-    p.setPen(QColor(255, 255, 255, 40));
-    p.drawLine(0, hSpec, width(), hSpec);
 }
 
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {
     const double steps = e->angleDelta().y() / 120.0;
     if (steps == 0.0) return;
+    // Wheel over the dB axis adjusts the range (contrast): up = tighter/punchier.
+    if (inDbAxis(static_cast<int>(e->position().x()),
+                 static_cast<int>(e->position().y()))) {
+        ds_.rangeDb = std::clamp(ds_.rangeDb - static_cast<float>(steps) * 5.0f,
+                                 30.0f, 120.0f);
+        dbMax_ = ds_.refDb;
+        dbMin_ = ds_.refDb - ds_.rangeDb;
+        wfDirty_ = true;
+        update();
+        emit displaySettingsEdited(ds_);
+        e->accept();
+        return;
+    }
     if (e->modifiers() & Qt::ControlModifier) {     // Ctrl+wheel = zoom
         const double factor = std::pow(1.25, -steps);
         viewSpanHz_ = std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
@@ -432,14 +485,29 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
 
 void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     const int x = e->pos().x();
+    const int y = e->pos().y();
     const int edgeTol = 6;
     dragStartX_  = x;
+    dragStartY_  = y;
     dragStartLo_ = pbLoHz_;
     dragStartHi_ = pbHiHz_;
+    // The frequency-scale band IS the split handle (KE9NS-style).
+    if (inScaleBand(y)) {
+        drag_ = Drag::Divider;
+        dragStartSplit_ = ds_.split;
+        return;
+    }
     // The notch is the narrowest target — give it priority over the passband
     // edges it may sit on top of.
     if (overNotch(x)) {
         drag_ = Drag::Notch;
+        return;
+    }
+    // Left dB scale: vertical drag shifts the reference level (grid drag in
+    // PowerSDR). Checked after the notch but before the passband edges.
+    if (inDbAxis(x, y)) {
+        drag_ = Drag::DbAxis;
+        dragStartRef_ = ds_.refDb;
         return;
     }
     const bool onLo = std::abs(x - hzToX(pbLoHz_)) <= edgeTol;
@@ -463,9 +531,39 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
 }
 
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
-    if (drag_ == Drag::None) return;
+    if (drag_ == Drag::None) {
+        // Hover feedback for the two vertical-drag targets.
+        const int hx = e->pos().x(), hy = e->pos().y();
+        if (inScaleBand(hy) || inDbAxis(hx, hy)) setCursor(Qt::SizeVerCursor);
+        else                                     unsetCursor();
+        return;
+    }
     const int x = e->pos().x();
     const int hz = xToHz(x);
+    if (drag_ == Drag::Divider) {
+        // Move the spectrum/waterfall split; the waterfall re-renders from raw
+        // history at the new height, so nothing smears.
+        const int usable = std::max(1, height() - kScaleBandH);
+        ds_.split = std::clamp(
+            dragStartSplit_ + static_cast<float>(e->pos().y() - dragStartY_) / usable,
+            0.15f, 0.85f);
+        update();
+        emit displaySettingsEdited(ds_);
+        return;
+    }
+    if (drag_ == Drag::DbAxis) {
+        // Drag the scale down = numbers slide down = ref level rises.
+        const int hSpec = std::max(1, spectrumHeight());
+        const float dDb = static_cast<float>(e->pos().y() - dragStartY_)
+                          * ds_.rangeDb / hSpec;
+        ds_.refDb = std::clamp(dragStartRef_ + dDb, -100.0f, -20.0f);
+        dbMax_ = ds_.refDb;
+        dbMin_ = ds_.refDb - ds_.rangeDb;
+        wfDirty_ = true;
+        update();
+        emit displaySettingsEdited(ds_);
+        return;
+    }
     if (drag_ == Drag::Notch) {
         notchRfHz_ = hz;
         update();

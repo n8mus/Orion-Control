@@ -37,6 +37,7 @@ private:
     QComboBox* pal_    = nullptr;
     QCheckBox* fill_   = nullptr;
     QCheckBox* peak_   = nullptr;
+    float split_ = 0.42f;   // no UI control (dragged in the panadapter); pass through
 };
 
 } // namespace ttc

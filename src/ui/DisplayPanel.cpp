@@ -114,10 +114,12 @@ DisplaySettings DisplayPanel::settings() const {
     s.palette   = pal_->currentIndex();
     s.fillTrace = fill_->isChecked();
     s.peakHold  = peak_->isChecked();
+    s.split     = split_;
     return s;
 }
 
 void DisplayPanel::setSettings(const DisplaySettings& s) {
+    split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
         b6(fill_), b7(peak_);
     ref_->setValue(static_cast<int>(s.refDb));

@@ -118,6 +118,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     dispBtn->setMenu(dispMenu);
     topLay->addSpacing(8);
     topLay->addWidget(dispBtn);
+    auto saveDisplay = [](const DisplaySettings& d) {
+        QSettings s;
+        s.setValue("display/refDb",   d.refDb);
+        s.setValue("display/rangeDb", d.rangeDb);
+        s.setValue("display/palette", d.palette);
+        s.setValue("display/avg",     d.avgFrames);
+        s.setValue("display/wfSpeed", d.wfSpeed);
+        s.setValue("display/fill",    d.fillTrace);
+        s.setValue("display/peak",    d.peakHold);
+        s.setValue("display/split",   d.split);
+    };
     {   // restore persisted display settings before first paint
         QSettings s;
         DisplaySettings d;
@@ -128,20 +139,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         d.wfSpeed   = s.value("display/wfSpeed", d.wfSpeed).toInt();
         d.fillTrace = s.value("display/fill",    d.fillTrace).toBool();
         d.peakHold  = s.value("display/peak",    d.peakHold).toBool();
+        d.split     = s.value("display/split",   d.split).toFloat();
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
     }
     connect(dispPanel, &DisplayPanel::settingsChanged, this,
-            [this](const DisplaySettings& d) {
+            [this, saveDisplay](const DisplaySettings& d) {
                 pan_->setDisplaySettings(d);
-                QSettings s;
-                s.setValue("display/refDb",   d.refDb);
-                s.setValue("display/rangeDb", d.rangeDb);
-                s.setValue("display/palette", d.palette);
-                s.setValue("display/avg",     d.avgFrames);
-                s.setValue("display/wfSpeed", d.wfSpeed);
-                s.setValue("display/fill",    d.fillTrace);
-                s.setValue("display/peak",    d.peakHold);
+                saveDisplay(d);
+            });
+    // In-widget edits (dB-axis drag/wheel, divider drag) flow back the other
+    // way: persist them and keep the DISPLAY panel's sliders in sync.
+    connect(pan_, &PanadapterWidget::displaySettingsEdited, this,
+            [dispPanel, saveDisplay](const DisplaySettings& d) {
+                dispPanel->setSettings(d);
+                saveDisplay(d);
             });
 
 #ifdef HAVE_SDRPLAY

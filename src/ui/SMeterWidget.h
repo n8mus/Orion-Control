@@ -15,17 +15,25 @@ public:
     explicit SMeterWidget(QWidget* parent = nullptr);
 
 public slots:
-    void setRawLevel(int raw);            // raw @SRM units from the radio
+    void setRawLevel(int raw);            // raw @SRM units from the radio (RX)
+    void setTxLevel(double fwdWatts, double refWatts, double swr);  // @STF (TX)
 
 protected:
     void paintEvent(QPaintEvent*) override;
 
 private:
     static double rawToDbS9(int raw);     // piecewise-linear cal table
+    void paintRx(class QPainter& p);
+    void paintTx(class QPainter& p);
+
+    bool tx_ = false;                     // which face the meter shows
     double dbS9_    = -120.0;             // current level, dB relative to S9
     double peakDb_  = -120.0;             // peak-hold marker
     QElapsedTimer sincePeak_;
     bool haveReading_ = false;
+    double fwdW_ = 0.0, refW_ = 0.0, swr_ = 1.0;
+    double peakW_ = 0.0;                  // TX peak hold (watts)
+    QElapsedTimer sinceTxPeak_;
 };
 
 } // namespace ttc

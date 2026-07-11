@@ -198,6 +198,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         smeter_->setRawLevel(mainRaw);
     });
+    connect(&radio_, &TenTecOrion::txMeterReported, this,
+            [this](double fwd, double ref, double swr) {
+                smeter_->setTxLevel(fwd, ref, swr);
+            });
     connect(&radio_, &TenTecOrion::agcReported, this, [this](Rx rx, char a) {
         if (rx == Rx::Main) panel_->showAgc(a);
     });

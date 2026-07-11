@@ -45,6 +45,7 @@ double SMeterWidget::rawToDbS9(int raw) {
 }
 
 void SMeterWidget::setRawLevel(int raw) {
+    tx_ = false;                          // radio answered in receive
     dbS9_ = rawToDbS9(raw);
     haveReading_ = true;
     if (dbS9_ >= peakDb_ || !sincePeak_.isValid()
@@ -55,10 +56,27 @@ void SMeterWidget::setRawLevel(int raw) {
     update();
 }
 
+void SMeterWidget::setTxLevel(double fwdWatts, double refWatts, double swr) {
+    tx_ = true;                           // radio answered in transmit
+    fwdW_ = fwdWatts;
+    refW_ = refWatts;
+    swr_  = swr;
+    if (fwdW_ >= peakW_ || !sinceTxPeak_.isValid()
+        || sinceTxPeak_.elapsed() > kPeakHoldMs) {
+        peakW_ = fwdW_;
+        sinceTxPeak_.restart();
+    }
+    update();
+}
+
 void SMeterWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), QColor(12, 16, 22));
+    if (tx_) paintTx(p);
+    else     paintRx(p);
+}
 
+void SMeterWidget::paintRx(QPainter& p) {
     const int barTop = kLabelH + 2;
     auto dbToX = [&](double db) {
         const double f = (db - kDbMin) / (kDbMax - kDbMin);
@@ -105,6 +123,42 @@ void SMeterWidget::paintEvent(QPaintEvent*) {
     p.setPen(QColor(220, 230, 240));
     p.drawText(QRect(kBarX1 + 8, 0, width() - kBarX1 - 10, height()),
                Qt::AlignVCenter | Qt::AlignLeft, txt);
+}
+
+// TX face: forward-power bar (0..120 W, the Orion is a 100 W radio) with peak
+// hold, plus a SWR readout that goes red when the match is poor.
+void SMeterWidget::paintTx(QPainter& p) {
+    constexpr double kMaxW = 120.0;
+    const int barTop = kLabelH + 2;
+    auto wToX = [&](double w) {
+        return kBarX0 + static_cast<int>(std::clamp(w / kMaxW, 0.0, 1.0)
+                                         * (kBarX1 - kBarX0));
+    };
+
+    p.fillRect(QRect(kBarX0, barTop, kBarX1 - kBarX0, kBarH), QColor(30, 36, 44));
+    p.fillRect(QRect(kBarX0, barTop, wToX(fwdW_) - kBarX0, kBarH), QColor(240, 160, 40));
+    const int xPk = wToX(peakW_);
+    p.fillRect(QRect(xPk - 1, barTop, 2, kBarH), QColor(240, 240, 240));
+
+    // Watts scale in the label row.
+    QFont f = p.font(); f.setPixelSize(9); p.setFont(f);
+    p.setPen(QColor(160, 170, 180));
+    for (int w = 0; w <= 100; w += 25) {
+        const int x = wToX(w);
+        p.drawText(x - 10, 0, 20, kLabelH - 2, Qt::AlignCenter, QString::number(w));
+        p.drawLine(x, kLabelH - 2, x, barTop);
+    }
+
+    // Right-side readout, two lines: "TX 95W" over "SWR 1.2" (red when poor).
+    const QRect rTxt(kBarX1 + 8, 0, width() - kBarX1 - 10, height());
+    f.setPixelSize(12); f.setBold(true); p.setFont(f);
+    p.setPen(QColor(240, 160, 40));
+    p.drawText(rTxt, Qt::AlignTop | Qt::AlignLeft,
+               QString("TX %1W").arg(fwdW_, 0, 'f', 0));
+    f.setPixelSize(10); p.setFont(f);
+    p.setPen(swr_ > 2.5 ? QColor(240, 70, 50) : QColor(180, 200, 220));
+    p.drawText(rTxt, Qt::AlignBottom | Qt::AlignLeft,
+               QString("SWR %1").arg(swr_, 0, 'f', 1));
 }
 
 } // namespace ttc

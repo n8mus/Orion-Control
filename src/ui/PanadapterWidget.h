@@ -25,6 +25,7 @@ struct DisplaySettings {
     float split     = 0.42f;    // spectrum/waterfall divider position (0..1)
     int   background = 0;       // index into backgroundNames()
     bool  showGrid   = true;    // freq/dB gridlines on or off
+    bool  showCall   = true;    // subtle callsign watermark in the spectrum
 };
 
 // A DX-cluster spot to mark on the display (absolute frequency).
@@ -60,6 +61,7 @@ public:
     void setSpectrum(const std::vector<float>& magsDb);
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
+    void setCallsign(const QString& call);         // watermark text (ds_.showCall)
 
     void setDisplaySettings(const DisplaySettings& s);
     const DisplaySettings& displaySettings() const { return ds_; }
@@ -143,6 +145,8 @@ private:
     // (rebuilt each paint) make the labels click-to-tune targets.
     QVector<SpotLabel> spots_;
     QVector<QPair<QRect, qint64>> spotHits_;       // label rect -> spot freq
+
+    QString callsign_;                             // watermark (empty = off)
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.

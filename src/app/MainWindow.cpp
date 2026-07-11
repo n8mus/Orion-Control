@@ -131,7 +131,22 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         s.setValue("display/split",   d.split);
         s.setValue("display/background", d.background);
         s.setValue("display/grid",       d.showGrid);
+        s.setValue("display/callsign",   d.showCall);
     };
+    // Station callsign: drives the watermark and defaults the cluster login.
+    // Editable in the DISPLAY panel (CALL field), persisted immediately.
+    QString stationCall;
+    {
+        QSettings s;
+        stationCall = s.value("station/callsign", "N8EM").toString();
+    }
+    dispPanel->setCallsign(stationCall);
+    pan_->setCallsign(stationCall);
+    connect(dispPanel, &DisplayPanel::callsignChanged, this,
+            [this](const QString& call) {
+                QSettings().setValue("station/callsign", call);
+                pan_->setCallsign(call);
+            });
     {   // restore persisted display settings before first paint
         QSettings s;
         DisplaySettings d;
@@ -145,6 +160,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         d.split     = s.value("display/split",   d.split).toFloat();
         d.background = s.value("display/background", d.background).toInt();
         d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
+        d.showCall   = s.value("display/callsign",   d.showCall).toBool();
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
     }
@@ -181,7 +197,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QSettings s;
         const QString host  = s.value("spots/host", "dxc.ve7cc.net").toString();
         const quint16 port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
-        const QString login = s.value("spots/login", "N8MUS").toString();
+        const QString login = s.value("spots/login", stationCall).toString();
         auto* info = spotsMenu->addAction(QString("source: %1:%2 as %3")
                                               .arg(host).arg(port).arg(login));
         info->setEnabled(false);
@@ -310,6 +326,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             rigMode_ = m;
             refreshPassbandOverlay();
             refreshNotchOverlay();                  // marker side flips with sideband
+            if (bandStamp_) bandStamp_->start();    // keep the stack register current
         }
     });
 
@@ -512,18 +529,28 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QSettings s;
         int reg;
         // Cycle A->B->C->D on repeated presses of the SAME button. Keyed off the
-        // last button pressed, not the radio's current band — an external client
-        // (WSJT-X/cqrlog) moving the VFO must not break the cycle.
+        // last button pressed (syncBandRegister clears it when the dial moves to
+        // another band under us, so a stale press can't trigger a bogus cycle).
         if (idx == lastBandPress_) {
             reg = (curReg_ + 1) % kStackCount;      // same button again: next reg
         } else {
             reg = s.value(QString("band/%1/reg").arg(kBands[idx].label), 0).toInt();
             reg = std::clamp(reg, 0, kStackCount - 1);
         }
-        lastBandPress_ = idx;
         saveBandMemory();                           // stash the outgoing register
         recallStack(idx, reg);
+        lastBandPress_ = idx;                       // after recall (sync resets it)
     });
+
+    // The Orion's CAT set has no way to read its internal band-stack registers,
+    // so the console mirrors them instead: shortly after ANY dial/mode/filter
+    // change settles (front-panel knob or band button, WSJT-X, click-to-tune),
+    // stamp the state into the active register for that band. Our band buttons
+    // then return to the same spot the radio's own band button would.
+    bandStamp_ = new QTimer(this);
+    bandStamp_->setSingleShot(true);
+    bandStamp_->setInterval(1500);
+    connect(bandStamp_, &QTimer::timeout, this, &MainWindow::saveBandMemory);
 
     // Frequency readout edits (digit wheel/click or type-in) tune the radio.
     connect(freqDisp_, &FrequencyDisplay::frequencyEdited, this,
@@ -545,12 +572,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {
         if (rx != Rx::Main) return;
         rigctld_.cacheBandwidth(bw);
-        if (bw != rigBwHz_) { rigBwHz_ = bw; refreshPassbandOverlay(); }
+        if (bw != rigBwHz_) { rigBwHz_ = bw; refreshPassbandOverlay(); bandStamp_->start(); }
     });
     connect(&radio_, &TenTecOrion::pbtReported, this, [this](Rx rx, int pbt) {
         if (rx != Rx::Main) return;
         panel_->showPbt(pbt);
-        if (pbt != rigPbtHz_) { rigPbtHz_ = pbt; refreshPassbandOverlay(); }
+        if (pbt != rigPbtHz_) { rigPbtHz_ = pbt; refreshPassbandOverlay(); bandStamp_->start(); }
     });
 
     // PBT back to the detent: sidebar button or double-click a passband edge.
@@ -589,8 +616,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
                     freqDisp_->setFrequency(hz);
                     pan_->setCenterHz(hz);           // keep grid labels on the dial
-                    curBand_ = bandIndexOf(hz);      // dial crossed a band edge?
-                    panel_->showBand(curBand_);
+                    syncBandRegister();              // mirror the move into the stack
 #ifdef HAVE_SDRPLAY
                     sdr_.setCenterFrequency(static_cast<double>(hz));
 #endif
@@ -726,8 +752,7 @@ void MainWindow::tuneAbsolute(uint64_t f) {
     sinceTune_.restart();                       // hold off dial-follow while it settles
     freqDisp_->setFrequency(f);
     pan_->setCenterHz(f);                       // keep grid labels on the dial
-    curBand_ = bandIndexOf(f);
-    panel_->showBand(curBand_);
+    syncBandRegister();                         // mirror the move into the stack
 #ifdef HAVE_SDRPLAY
     sdr_.setCenterFrequency(static_cast<double>(f));
 #endif
@@ -821,6 +846,38 @@ void MainWindow::saveBandMemory() {
     s.setValue(QString("band/%1/reg").arg(kBands[curBand_].label), curReg_);
 }
 
+// Every frequency change funnels here (dial-follow and tuneAbsolute). Keeps
+// curBand_/curReg_ honest and schedules a debounced stamp so the active stack
+// register always holds "where I last was on this band" — the same semantics
+// as the Orion's own (unreadable-over-CAT) band stack, kept in lockstep.
+void MainWindow::syncBandRegister() {
+    const int idx = bandIndexOf(centerHz_);
+    const bool crossed = (idx != curBand_);
+    if (crossed) {
+        curBand_ = idx;
+        panel_->showBand(idx);
+        lastBandPress_ = -1;                    // band moved under the buttons:
+        if (idx >= 0) {                         // next press recalls, not cycles
+            QSettings s;
+            curReg_ = std::clamp(
+                s.value(QString("band/%1/reg").arg(kBands[idx].label), 0).toInt(),
+                0, kStackCount - 1);
+            // If we landed exactly on a stored register (the radio's band
+            // button recalls the same spot we stamped), adopt its letter.
+            for (int r = 0; r < kStackCount; ++r) {
+                const QString key = QString("band/%1/%2/")
+                                        .arg(kBands[idx].label).arg(kStackNames[r]);
+                const uint64_t f = s.value(key + "freq",
+                    QVariant::fromValue<qulonglong>(kBands[idx].stack[r].hz))
+                    .toULongLong();
+                if (f == centerHz_) { curReg_ = r; break; }
+            }
+        }
+    }
+    panel_->showBandStack(curBand_ >= 0 ? curReg_ : -1);
+    if (curBand_ >= 0 && bandStamp_) bandStamp_->start();
+}
+
 void MainWindow::recallStack(int band, int reg) {
     const StackDef& seed = kBands[band].stack[reg];
     QSettings s;
@@ -833,16 +890,25 @@ void MainWindow::recallStack(int band, int reg) {
     const int bw  = std::clamp(s.value(key + "bw",  seed.bwHz).toInt(), 100, 6000);
     const int pbt = std::clamp(s.value(key + "pbt", seed.pbtHz).toInt(), -8000, 8000);
 
-    curReg_ = reg;                              // before tuneAbsolute sets curBand_
-    applyMode(m);
-    panel_->showMode(m);
-    tuneAbsolute(f);
-    // Override the Orion's own per-mode filter recall with this register's
-    // stored filter. Serial commands land in order, so the *RMF/*RMP sent
-    // after *RMM win; the 400 ms filter re-query then confirms them.
-    radio_.setBandwidthHz(Rx::Main, bw);
-    radio_.setPbtHz(Rx::Main, pbt);
-    rigBwHz_  = bw;
+    // The Orion silently drops CAT commands that arrive while it is busy with
+    // a mode switch (it reconfigures the DSP and recalls the per-mode filter —
+    // set commands have no ACK, so nothing notices). Bursting *RMM then *AF
+    // meant the radio never retuned on a recall while the console's stack
+    // letter cycled anyway. Sequence it instead: frequency first while the
+    // radio is idle, mode once the tune has landed, this register's filter
+    // once the mode switch has settled (overriding the Orion's own per-mode
+    // filter recall; applyMode's 400 ms re-query then confirms it).
+    tuneAbsolute(f);                            // syncs curBand_ (may guess a register)
+    curReg_ = reg;                              // explicit recall wins over the guess
+    QTimer::singleShot(120, this, [this, m] {
+        applyMode(m);
+        panel_->showMode(m);
+    });
+    QTimer::singleShot(450, this, [this, bw, pbt] {
+        radio_.setBandwidthHz(Rx::Main, bw);
+        radio_.setPbtHz(Rx::Main, pbt);
+    });
+    rigBwHz_  = bw;                             // optimistic UI; poll confirms
     rigPbtHz_ = pbt;
     rigctld_.cacheBandwidth(bw);
     panel_->showPbt(pbt);

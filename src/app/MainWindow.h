@@ -39,6 +39,7 @@ private:
     void stopManualTune();
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
+    void syncBandRegister();           // mirror any dial move into the band stack
     void recallStack(int band, int reg); // recall a band-stack register
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
@@ -51,6 +52,7 @@ private:
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)
     int lastBandPress_ = -1;                   // band button last pressed (for cycling)
+    QTimer* bandStamp_ = nullptr;              // debounced stack-register stamping
     QElapsedTimer sinceEnforce_;               // rate-limit amp drive-limit corrections
 
     // Manual tune carrier (TUNE with the internal tuner disabled).

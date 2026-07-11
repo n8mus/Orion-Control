@@ -85,29 +85,19 @@ QImage renderBlueRays(int w, int h) {
     p.fillRect(QRect(0, 0, w, h), base);
     p.setRenderHint(QPainter::Antialiasing, true);
     p.setCompositionMode(QPainter::CompositionMode_Plus);   // additive glow
-    // Deterministic shafts: position/width/slant from a fixed table so the
-    // background never flickers between rebuilds.
-    struct Shaft { float x, wTop, slant, bright; };
-    static const Shaft shafts[] = {
-        {0.08f, 0.030f,  0.06f, 0.9f}, {0.22f, 0.055f, -0.04f, 0.6f},
-        {0.37f, 0.025f,  0.09f, 1.0f}, {0.52f, 0.070f,  0.02f, 0.5f},
-        {0.66f, 0.035f, -0.07f, 0.8f}, {0.80f, 0.050f,  0.05f, 0.7f},
-        {0.92f, 0.028f, -0.03f, 0.9f},
+    // Three rounded pools of light from above (KE9NS look): radial gradients
+    // centered just above the top edge, so each lobe reads as a soft dome
+    // rather than a hard-edged beam. Fixed table = never flickers on rebuild.
+    struct Lamp { float x, r, bright; };
+    static const Lamp lamps[] = {
+        {0.18f, 0.70f, 1.00f}, {0.50f, 0.85f, 0.85f}, {0.82f, 0.65f, 0.95f},
     };
-    for (const Shaft& s : shafts) {
-        const float xt = s.x * w, wt = s.wTop * w;
-        const float xb = xt + s.slant * w, wb = wt * 2.2f;   // widen going down
-        QPainterPath path;
-        path.moveTo(xt - wt / 2, 0);
-        path.lineTo(xt + wt / 2, 0);
-        path.lineTo(xb + wb / 2, h);
-        path.lineTo(xb - wb / 2, h);
-        path.closeSubpath();
-        QLinearGradient g(0, 0, 0, h);
-        g.setColorAt(0.0, QColor(110, 170, 255, int(34 * s.bright)));
-        g.setColorAt(0.7, QColor(80, 140, 220, int(10 * s.bright)));
-        g.setColorAt(1.0, QColor(0, 0, 0, 0));
-        p.fillPath(path, g);
+    for (const Lamp& L : lamps) {
+        QRadialGradient g(QPointF(L.x * w, -0.10 * h), L.r * h);
+        g.setColorAt(0.00, QColor(130, 190, 255, int(150 * L.bright)));
+        g.setColorAt(0.40, QColor(90, 150, 230, int(60 * L.bright)));
+        g.setColorAt(1.00, QColor(0, 0, 0, 0));
+        p.fillRect(QRect(0, 0, w, h), g);
     }
     return img;
 }
@@ -140,29 +130,27 @@ QImage renderWorldMap(int w, int h) {
         const double lon = (360.0 * (x + 0.5) / w - 180.0) * M_PI / 180.0;
         cosDLon[x] = std::cos(lon - subLon);
     }
-    const double loEdge = std::sin(-9.0 * M_PI / 180.0);   // night below this
-    const double hiEdge = std::sin(6.0 * M_PI / 180.0);    // full day above
+    // KE9NS grayline zones (spot.cs SUNANGLE/Darken): flat brightness steps,
+    // not a glow — day above the horizon, a wide dusk/dawn band while the sun
+    // sits 0..6 degrees below (SZA 90..96), dark night core beyond that. The
+    // narrow smoothstep on each boundary just kills aliasing on the edges.
+    const double duskLo = std::sin(-6.0 * M_PI / 180.0);   // night below this
+    auto smooth = [](double lo, double hi, double v) {
+        const double t = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
     for (int y = 0; y < h; ++y) {
         QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
         for (int x = 0; x < w; ++x) {
             const double sinElev = sinLatSinD[y] + cosLatCosD[y] * cosDLon[x];
-            // Strong day/night split so the terminator is obvious at a glance.
-            double day = std::clamp((sinElev - loEdge) / (hiEdge - loEdge), 0.0, 1.0);
-            const int f = static_cast<int>(48 + day * 152);  // 19%..78% brightness
+            const double tDusk = smooth(duskLo - 0.02, duskLo + 0.02, sinElev);
+            const double tDay  = smooth(-0.015, 0.015, sinElev);
+            const double bright = 0.18 + 0.25 * tDusk + 0.35 * tDay;
+            const int f = static_cast<int>(bright * 256.0); // 18%/43%/78%
             const QRgb c = line[x];
-            int r = (qRed(c)   * f) >> 8;
-            int g = (qGreen(c) * f) >> 8;
-            int b = (qBlue(c)  * f) >> 8;
-            // The grayline itself: a soft luminous band centered on the
-            // terminator (solar elevation ~0), where the gray-line DX lives.
-            const double band = 1.0 - std::abs(sinElev) / 0.10;
-            if (band > 0.0) {
-                const int glow = static_cast<int>(band * band * 70);
-                r = std::min(255, r + glow);
-                g = std::min(255, g + glow);
-                b = std::min(255, b + glow / 2);   // warm-gray, not blue
-            }
-            line[x] = qRgb(r, g, b);
+            line[x] = qRgb((qRed(c)   * f) >> 8,
+                           (qGreen(c) * f) >> 8,
+                           (qBlue(c)  * f) >> 8);
         }
     }
     return img;
@@ -216,6 +204,11 @@ void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
     update();
 }
 
+void PanadapterWidget::setCallsign(const QString& call) {
+    callsign_ = call;
+    update();
+}
+
 // KE9NS-style spot markers: a thin vertical line at the spotted frequency
 // with the callsign running down it. Labels are click-to-tune (hit rects
 // collected here, tested in mousePressEvent).
@@ -238,7 +231,7 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
         p.save();
         p.translate(x - 2, 22);
         p.rotate(90);                                    // callsign runs downward
-        p.setPen(QColor(140, 225, 255));
+        p.setPen(QColor(255, 216, 50));
         p.drawText(0, 0, s.call);
         p.restore();
         spotHits_.push_back({QRect(x - 8, 20, 14, std::min(textLen + 6, hSpec - 24)),
@@ -425,10 +418,22 @@ void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
         return;
     }
     // Gridlines on absolute "nice" frequencies (labels live on the scale band).
+    // KE9NS density: fainter minor lines at the scale band's minor-tick step
+    // between the major lines, so the grid reads every 1/5 of a label step.
     const double step = niceStep(viewSpanHz_);
     const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
     const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
-    p.setPen(QColor(255, 255, 255, 26));
+    const double minor = step / 5.0;
+    if (hzToX(static_cast<int>(minor)) - hzToX(0) > 14) {
+        p.setPen(QColor(255, 255, 255, 14));
+        for (double fq = std::ceil(f0 / minor) * minor; fq <= f1; fq += minor) {
+            const qint64 q = static_cast<qint64>(std::llround(fq));
+            if (q % static_cast<qint64>(std::llround(step)) == 0) continue;
+            const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+            p.drawLine(x, 0, x, hSpec);
+        }
+    }
+    p.setPen(QColor(255, 255, 255, 34));
     for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
         const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
         p.drawLine(x, 0, x, hSpec);
@@ -483,15 +488,27 @@ void PanadapterWidget::drawDbScale(QPainter& p, int hSpec) {
     p.setFont(f);
     const float range = dbMax_ - dbMin_;
     const int step = range > 80.0f ? 20 : 10;      // KE9NS-density when zoomed in
+    // Minor lines at half the label step (KE9NS grid density), unlabeled.
+    if (ds_.showGrid) {
+        p.setPen(QColor(255, 255, 255, 12));
+        const int half = step / 2;
+        for (int db = static_cast<int>(std::ceil(dbMin_ / half)) * half;
+             db < static_cast<int>(dbMax_); db += half) {
+            if (db % step == 0) continue;          // majors drawn below
+            const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
+            if (y < 20 || y > hSpec - 6) continue;
+            p.drawLine(0, y, width(), y);
+        }
+    }
     for (int db = static_cast<int>(std::ceil(dbMin_ / step)) * step;
          db < static_cast<int>(dbMax_); db += step) {
         const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
         if (y < 20 || y > hSpec - 6) continue;     // keep clear of the text row
         if (ds_.showGrid) {                        // labels stay (axis is a control)
-            p.setPen(QColor(255, 255, 255, 18));
+            p.setPen(QColor(255, 255, 255, 26));
             p.drawLine(0, y, width(), y);
         }
-        p.setPen(QColor(165, 180, 195, 160));
+        p.setPen(QColor(255, 216, 50, 200));
         p.drawText(4, y - 2, QString::number(db));
     }
 }
@@ -502,6 +519,21 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     p.fillRect(rect(), QColor(12, 16, 22));
     if (ds_.background != 0 && hSpec > 1)          // KE9NS-style backdrop
         p.drawImage(0, 0, backgroundImage(width(), hSpec));
+
+    // Station-callsign watermark: faint gray in the upper left (clear of the
+    // span readout), under everything the display draws on top.
+    if (ds_.showCall && !callsign_.isEmpty() && hSpec > 40) {
+        const QFont saved = p.font();
+        QFont f = saved;
+        f.setPixelSize(std::min(hSpec / 6, width() / 14));
+        f.setBold(true);
+        f.setLetterSpacing(QFont::PercentageSpacing, 112);
+        p.setFont(f);
+        p.setPen(QColor(200, 215, 230, 26));
+        p.drawText(QRect(kDbAxisW + 10, 20, width() - kDbAxisW - 20, hSpec - 24),
+                   Qt::AlignLeft | Qt::AlignTop, callsign_);
+        p.setFont(saved);
+    }
 
     const int n = static_cast<int>(spectrum_.size());
     // Visible bin window: view span centered inside the full captured span.

@@ -6,6 +6,7 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QLineEdit>
 #include <QSignalBlocker>
 #include <algorithm>
 
@@ -27,6 +28,8 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
         " selection-background-color: #2a3644; }"
         "QCheckBox { spacing: 6px; }"
+        "QLineEdit { background: #1c2430; border: 1px solid #2a3644; border-radius: 3px;"
+        " padding: 2px 6px; }"
         "QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }"
         "QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px;"
         " background: #6aa5d8; }");
@@ -87,9 +90,16 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
     grid_ = new QCheckBox("Grid lines", this);
+    call_ = new QCheckBox("Callsign watermark", this);
     g->addWidget(fill_, 6, 0, 1, 3);
     g->addWidget(peak_, 7, 0, 1, 3);
     g->addWidget(grid_, 8, 0, 1, 3);
+    g->addWidget(call_, 9, 0, 1, 3);
+
+    g->addWidget(makeCaption("CALL", this), 10, 0);
+    callEdit_ = new QLineEdit(this);
+    callEdit_->setMaxLength(12);
+    g->addWidget(callEdit_, 10, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -110,6 +120,10 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(fill_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(peak_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(call_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(callEdit_, &QLineEdit::textEdited, this, [this](const QString& t) {
+        emit callsignChanged(t.trimmed().toUpper());
+    });
 
     setSettings(DisplaySettings{});                // defaults until owner restores
 }
@@ -125,6 +139,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.peakHold   = peak_->isChecked();
     s.background = bg_->currentIndex();
     s.showGrid   = grid_->isChecked();
+    s.showCall   = call_->isChecked();
     s.split      = split_;
     return s;
 }
@@ -132,7 +147,7 @@ DisplaySettings DisplayPanel::settings() const {
 void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
-        b6(fill_), b7(peak_), b8(bg_), b9(grid_);
+        b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -144,8 +159,14 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     fill_->setChecked(s.fillTrace);
     peak_->setChecked(s.peakHold);
     grid_->setChecked(s.showGrid);
+    call_->setChecked(s.showCall);
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
+}
+
+void DisplayPanel::setCallsign(const QString& call) {
+    const QSignalBlocker b(callEdit_);
+    callEdit_->setText(call);
 }
 
 void DisplayPanel::emitChanged() {

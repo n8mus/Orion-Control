@@ -65,7 +65,7 @@ double niceStep(double span) {
 } // namespace
 
 QStringList PanadapterWidget::paletteNames() {
-    return {"Enhanced (KE9NS)", "Classic", "Thermal", "Grayscale"};
+    return {"Enhanced", "Classic", "Thermal", "Grayscale"};
 }
 
 QStringList PanadapterWidget::backgroundNames() {

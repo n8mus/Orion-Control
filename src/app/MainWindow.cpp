@@ -798,7 +798,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     txBar_->setTuneLevel(QSettings().value("tune/power", 20).toInt());
 
-    // Digital/voice audio switch ([vendor]-style): line-in for digital, mic for voice.
+    // Digital/voice audio switch: line-in for digital, mic for voice.
     {
         QSettings s;
         lastMicGain_    = s.value("audio/voiceMic", 51).toInt();
@@ -911,7 +911,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         panel_->showMode(m);
     });
 
-    // SAM ([vendor]-style ECSS): the Orion has no true sync-AM, so receive the
+    // SAM (ECSS): the Orion has no true sync-AM, so receive the
     // AM signal in USB with the carrier zero-beaten instead. Engaging swaps
     // to USB + a wide filter; the panadapter wheel drops to 10 Hz (1 Hz with
     // Shift) for the careful zero-beat. Off restores the previous mode/filter.
@@ -1018,7 +1018,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(routing_, &RoutingPanel::vfoAssignmentEdited, this,
             [this, applyVfoColors](char m, char s, char t) {
                 radio_.setVfoAssignment(m, s, t);
-                // [vendor] split setup (no separate split button): the moment a
+                // One-click split setup (no separate split button): the moment a
                 // click puts VFO B on TX or RX, park B above the dial — 5 kHz
                 // in voice, 1 kHz in CW. The radio's own menu copies the mode
                 // to the sub, so only the dial needs setting.
@@ -1570,7 +1570,7 @@ void MainWindow::stopManualTune() {
     statusBar()->showMessage("TUNE: carrier off, power and mode restored");
 }
 
-// [vendor]-style digital/voice audio switch. The Orion has no MIC/LINE/BOTH CAT
+// Digital/voice audio switch. The Orion has no MIC/LINE/BOTH CAT
 // command, so the radio's input source is set to BOTH once (front panel) and
 // we swap between front-mic and rear line-input purely by their gains:
 //   digital: mic 0, speech proc off, aux/line 100
@@ -1844,8 +1844,8 @@ static int pbtRfSign(Mode m) {
 // because drags are delta-anchored to the radio's real state, never absolute.
 static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
     // AM: the indicated bandwidth is the AUDIO width — the RF passband spans
-    // BOTH sidebands, so the true width is twice the number ([vendor] manual,
-    // confirmed live: AM filter values run to 8000 = 16 kHz on the air).
+    // BOTH sidebands, so the true width is twice the number (confirmed live:
+    // AM filter values run to 9000 = 18 kHz on the air).
     const int half = (m == Mode::AM) ? bw : bw / 2;
     int centerRf;
     switch (m) {

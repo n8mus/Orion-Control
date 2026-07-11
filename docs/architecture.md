@@ -2,7 +2,7 @@
 
 A Flex/SmartSDR-style SDR console giving the **Ten-Tec Orion (565/566)** and
 **Omni VII (588)** full computer control plus a panadapter/waterfall fed by an
-**SDRplay RSP2** on the radio's SPARE antenna jack ([vendor] antenna-sharing mod,
+**SDRplay RSP2** on the radio's SPARE antenna jack (receiver antenna-sharing tap,
 TX-isolated). Must not break WSJT-X, fldigi, cqrlog, or GridTracker.
 
 ## Stack (locked decisions)
@@ -36,7 +36,7 @@ presets (stepped).
 - **Phase 3 — Flagship:** click-to-tune + drag-to-filter.
 - **Phase 4 — Interop hardening:** WSJT-X/fldigi (SignaLink) + cqrlog + GridTracker +
   WinKeyer CW, all against :4532 at once.
-- **Phase 5 — [vendor] parity:** bandmap, cluster overlay, 2nd RX, CW Skimmer feed, rotor.
+- **Phase 5 — full control-suite parity:** bandmap, cluster overlay, 2nd RX, CW Skimmer feed, rotor.
 - **Later — macOS / Windows packaging.**
 
 ## Directory layout

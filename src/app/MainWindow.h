@@ -106,14 +106,14 @@ private:
     int  preTunePwr_  = 50;
     QTimer* tuneTimeout_ = nullptr;            // safety: carrier auto-drops
 
-    // SAM pseudo-mode ([vendor] ECSS): USB zero-beaten on an AM carrier, fine
+    // SAM pseudo-mode (ECSS): USB zero-beaten on an AM carrier, fine
     // wheel steps while active; previous mode/filter restored on exit.
     bool samActive_   = false;
     Mode samEngine_   = Mode::USB;            // click the lit button to flip U/L
     Mode preSamMode_  = Mode::AM;
     int  preSamBw_    = 6000;
 
-    // Digital/voice audio switching ([vendor]-style). Voice settings are learned
+    // Digital/voice audio switching. Voice settings are learned
     // from the radio when entering digital, and persisted (defaults 51/2).
     bool digital_       = false;
     int  lastMicGain_   = 51;                  // learned VOICE values (never 0 —

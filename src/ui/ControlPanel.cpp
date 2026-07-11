@@ -109,11 +109,11 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     }
     connect(modeGroup_, &QButtonGroup::idClicked, this,
             [this](int id) { emit modeSelected(kModes[id].mode); });
-    // Row 4, balancing the grid: SAM under AM — [vendor]-style pseudo-sync-AM
+    // Row 4, balancing the grid: SAM under AM — pseudo-sync-AM
     // (ECSS: USB with the carrier zero-beaten; the wheel drops to 10/1 Hz
     // steps while lit). DIG under FM — line-in vs mic audio switch.
     samBtn_ = makeButton("SAM");
-    samBtn_->setToolTip("Synchronous-AM style reception ([vendor] ECSS): switches to USB —\n"
+    samBtn_->setToolTip("Synchronous-AM style reception: switches to a sideband —\n"
                         "zero-beat the AM carrier; wheel steps 10 Hz, 1 Hz with Shift.\n"
                         "Turning it off returns to your previous mode and filter.");
     modeGrid->addWidget(samBtn_, 3, 0);

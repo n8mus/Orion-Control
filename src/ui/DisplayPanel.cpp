@@ -79,10 +79,17 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     pal_->addItems(PanadapterWidget::paletteNames());
     g->addWidget(pal_, 4, 1, 1, 2);
 
+    g->addWidget(makeCaption("BACKGND", this), 5, 0);
+    bg_ = new QComboBox(this);
+    bg_->addItems(PanadapterWidget::backgroundNames());
+    g->addWidget(bg_, 5, 1, 1, 2);
+
     fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
-    g->addWidget(fill_, 5, 0, 1, 3);
-    g->addWidget(peak_, 6, 0, 1, 3);
+    grid_ = new QCheckBox("Grid lines", this);
+    g->addWidget(fill_, 6, 0, 1, 3);
+    g->addWidget(peak_, 7, 0, 1, 3);
+    g->addWidget(grid_, 8, 0, 1, 3);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -99,8 +106,10 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(avg_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(speed_, &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(pal_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
+    connect(bg_,    &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(fill_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(peak_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
 
     setSettings(DisplaySettings{});                // defaults until owner restores
 }
@@ -112,16 +121,18 @@ DisplaySettings DisplayPanel::settings() const {
     s.avgFrames = avg_->currentData().toInt();
     s.wfSpeed   = speed_->currentData().toInt();
     s.palette   = pal_->currentIndex();
-    s.fillTrace = fill_->isChecked();
-    s.peakHold  = peak_->isChecked();
-    s.split     = split_;
+    s.fillTrace  = fill_->isChecked();
+    s.peakHold   = peak_->isChecked();
+    s.background = bg_->currentIndex();
+    s.showGrid   = grid_->isChecked();
+    s.split      = split_;
     return s;
 }
 
 void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
-        b6(fill_), b7(peak_);
+        b6(fill_), b7(peak_), b8(bg_), b9(grid_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -129,8 +140,10 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     const int si = speed_->findData(s.wfSpeed);
     speed_->setCurrentIndex(si >= 0 ? si : 1);
     pal_->setCurrentIndex(std::clamp(s.palette, 0, pal_->count() - 1));
+    bg_->setCurrentIndex(std::clamp(s.background, 0, bg_->count() - 1));
     fill_->setChecked(s.fillTrace);
     peak_->setChecked(s.peakHold);
+    grid_->setChecked(s.showGrid);
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
 }

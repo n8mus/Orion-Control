@@ -5,6 +5,7 @@ project(TenTecSDRConsole VERSION 0.0.1 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
@@ -32,6 +33,7 @@ add_executable(tentec-console
   src/dsp/Fft.cpp               src/dsp/Fft.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
+  resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)

@@ -128,6 +128,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         s.setValue("display/fill",    d.fillTrace);
         s.setValue("display/peak",    d.peakHold);
         s.setValue("display/split",   d.split);
+        s.setValue("display/background", d.background);
+        s.setValue("display/grid",       d.showGrid);
     };
     {   // restore persisted display settings before first paint
         QSettings s;
@@ -140,6 +142,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         d.fillTrace = s.value("display/fill",    d.fillTrace).toBool();
         d.peakHold  = s.value("display/peak",    d.peakHold).toBool();
         d.split     = s.value("display/split",   d.split).toFloat();
+        d.background = s.value("display/background", d.background).toInt();
+        d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
     }

@@ -35,8 +35,10 @@ private:
     QComboBox* avg_    = nullptr;
     QComboBox* speed_  = nullptr;
     QComboBox* pal_    = nullptr;
+    QComboBox* bg_     = nullptr;
     QCheckBox* fill_   = nullptr;
     QCheckBox* peak_   = nullptr;
+    QCheckBox* grid_   = nullptr;
     float split_ = 0.42f;   // no UI control (dragged in the panadapter); pass through
 };
 

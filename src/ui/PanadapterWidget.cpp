@@ -3,6 +3,8 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QLinearGradient>
+#include <QDateTime>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <algorithm>
@@ -64,6 +66,113 @@ double niceStep(double span) {
 
 QStringList PanadapterWidget::paletteNames() {
     return {"Enhanced (KE9NS)", "Classic", "Thermal", "Grayscale"};
+}
+
+QStringList PanadapterWidget::backgroundNames() {
+    return {"Dark", "Blue Rays", "World Map"};
+}
+
+namespace {
+// "Blue with lighting from above" (KE9NS): deep blue vertical gradient plus a
+// few soft light shafts slanting down from the top, rendered once per size.
+QImage renderBlueRays(int w, int h) {
+    QImage img(w, h, QImage::Format_RGB32);
+    QPainter p(&img);
+    QLinearGradient base(0, 0, 0, h);
+    base.setColorAt(0.0, QColor(16, 42, 78));
+    base.setColorAt(0.55, QColor(8, 20, 40));
+    base.setColorAt(1.0, QColor(3, 8, 16));
+    p.fillRect(QRect(0, 0, w, h), base);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setCompositionMode(QPainter::CompositionMode_Plus);   // additive glow
+    // Deterministic shafts: position/width/slant from a fixed table so the
+    // background never flickers between rebuilds.
+    struct Shaft { float x, wTop, slant, bright; };
+    static const Shaft shafts[] = {
+        {0.08f, 0.030f,  0.06f, 0.9f}, {0.22f, 0.055f, -0.04f, 0.6f},
+        {0.37f, 0.025f,  0.09f, 1.0f}, {0.52f, 0.070f,  0.02f, 0.5f},
+        {0.66f, 0.035f, -0.07f, 0.8f}, {0.80f, 0.050f,  0.05f, 0.7f},
+        {0.92f, 0.028f, -0.03f, 0.9f},
+    };
+    for (const Shaft& s : shafts) {
+        const float xt = s.x * w, wt = s.wTop * w;
+        const float xb = xt + s.slant * w, wb = wt * 2.2f;   // widen going down
+        QPainterPath path;
+        path.moveTo(xt - wt / 2, 0);
+        path.lineTo(xt + wt / 2, 0);
+        path.lineTo(xb + wb / 2, h);
+        path.lineTo(xb - wb / 2, h);
+        path.closeSubpath();
+        QLinearGradient g(0, 0, 0, h);
+        g.setColorAt(0.0, QColor(110, 170, 255, int(34 * s.bright)));
+        g.setColorAt(0.7, QColor(80, 140, 220, int(10 * s.bright)));
+        g.setColorAt(1.0, QColor(0, 0, 0, 0));
+        p.fillPath(path, g);
+    }
+    return img;
+}
+
+// World map with live grayline: the bundled equirectangular Blue Marble,
+// darkened for use as a backdrop, with the night side shaded from the
+// current UTC subsolar point (soft twilight band = the grayline).
+QImage renderWorldMap(int w, int h) {
+    static QImage earth;                            // decoded once
+    if (earth.isNull())
+        earth = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
+    if (earth.isNull()) return renderBlueRays(w, h);  // resource missing
+    QImage img = earth.scaled(w, h, Qt::IgnoreAspectRatio,
+                              Qt::SmoothTransformation);
+    // Subsolar point from UTC (declination approx; equation of time ignored —
+    // a display grayline, not an almanac).
+    const QDateTime utc = QDateTime::currentDateTimeUtc();
+    const int doy = utc.date().dayOfYear();
+    const double hours = utc.time().hour() + utc.time().minute() / 60.0;
+    const double decl = 23.44 * std::sin(2.0 * M_PI * (doy - 81) / 365.25)
+                        * M_PI / 180.0;
+    const double subLon = (12.0 - hours) * 15.0 * M_PI / 180.0;
+    std::vector<double> sinLatSinD(h), cosLatCosD(h), cosDLon(w);
+    for (int y = 0; y < h; ++y) {
+        const double lat = (90.0 - 180.0 * (y + 0.5) / h) * M_PI / 180.0;
+        sinLatSinD[y] = std::sin(lat) * std::sin(decl);
+        cosLatCosD[y] = std::cos(lat) * std::cos(decl);
+    }
+    for (int x = 0; x < w; ++x) {
+        const double lon = (360.0 * (x + 0.5) / w - 180.0) * M_PI / 180.0;
+        cosDLon[x] = std::cos(lon - subLon);
+    }
+    for (int y = 0; y < h; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const double sinElev = sinLatSinD[y] + cosLatCosD[y] * cosDLon[x];
+            // Day: dimmed to backdrop level. Night: much darker. The ramp
+            // between +5 and -10 degrees elevation is the grayline itself.
+            double day = (sinElev - std::sin(-10.0 * M_PI / 180.0))
+                         / (std::sin(5.0 * M_PI / 180.0)
+                            - std::sin(-10.0 * M_PI / 180.0));
+            day = std::clamp(day, 0.0, 1.0);
+            const int f = static_cast<int>(64 + day * 96);   // 25%..62% brightness
+            const QRgb c = line[x];
+            line[x] = qRgb((qRed(c) * f) >> 8, (qGreen(c) * f) >> 8,
+                           (qBlue(c) * f) >> 8);
+        }
+    }
+    return img;
+}
+} // namespace
+
+const QImage& PanadapterWidget::backgroundImage(int w, int h) {
+    const qint64 minute = ds_.background == 2
+        ? QDateTime::currentSecsSinceEpoch() / 60 : 0;      // grayline advances
+    if (bgMode_ != ds_.background || bgW_ != w || bgH_ != h
+        || bgMinute_ != minute) {
+        bgCache_ = ds_.background == 2 ? renderWorldMap(w, h)
+                                       : renderBlueRays(w, h);
+        bgMode_ = ds_.background;
+        bgW_ = w;
+        bgH_ = h;
+        bgMinute_ = minute;
+    }
+    return bgCache_;
 }
 
 PanadapterWidget::PanadapterWidget(QWidget* parent) : QWidget(parent) {
@@ -264,6 +373,7 @@ int PanadapterWidget::xToHz(int x) const {
 }
 
 void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
+    if (!ds_.showGrid) return;
     if (centerHz_ == 0) {                          // no dial info: plain grid only
         p.setPen(QColor(255, 255, 255, 22));
         for (int i = 1; i < 10; ++i)
@@ -326,8 +436,10 @@ void PanadapterWidget::drawDbScale(QPainter& p, int hSpec) {
          db < static_cast<int>(dbMax_); db += step) {
         const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
         if (y < 20 || y > hSpec - 6) continue;     // keep clear of the text row
-        p.setPen(QColor(255, 255, 255, 18));
-        p.drawLine(0, y, width(), y);
+        if (ds_.showGrid) {                        // labels stay (axis is a control)
+            p.setPen(QColor(255, 255, 255, 18));
+            p.drawLine(0, y, width(), y);
+        }
         p.setPen(QColor(165, 180, 195, 160));
         p.drawText(4, y - 2, QString::number(db));
     }
@@ -337,6 +449,8 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     QPainter p(this);
     const int hSpec = spectrumHeight();
     p.fillRect(rect(), QColor(12, 16, 22));
+    if (ds_.background != 0 && hSpec > 1)          // KE9NS-style backdrop
+        p.drawImage(0, 0, backgroundImage(width(), hSpec));
 
     const int n = static_cast<int>(spectrum_.size());
     // Visible bin window: view span centered inside the full captured span.
@@ -390,18 +504,19 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // Gamma-compressed so the warm colors arrive partway up the scale, not
     // only at the very top.
     if (!colT.empty() && ds_.fillTrace && hSpec > 1) {
-        if (fillImg_.width() != w || fillImg_.height() != hSpec)
-            fillImg_ = QImage(w, hSpec, QImage::Format_RGB32);
+        // Transparent above the trace so the backdrop (map/rays) shows through.
+        if (fillImg_.width() != w || fillImg_.height() != hSpec
+            || fillImg_.format() != QImage::Format_ARGB32_Premultiplied)
+            fillImg_ = QImage(w, hSpec, QImage::Format_ARGB32_Premultiplied);
         std::vector<int> colY(w);
         for (int x = 0; x < w; ++x)
             colY[x] = static_cast<int>(hSpec * (1.0f - colT[x]));
-        const QRgb bg = qRgb(12, 16, 22);
         for (int y = 0; y < hSpec; ++y) {
             const float t = 1.0f - static_cast<float>(y) / (hSpec - 1);
             const QRgb c = mapColor(std::pow(t, kFillGamma));
             QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
             for (int x = 0; x < w; ++x)
-                line[x] = (y >= colY[x]) ? c : bg;
+                line[x] = (y >= colY[x]) ? c : qRgba(0, 0, 0, 0);
         }
         p.drawImage(0, 0, fillImg_);
     }

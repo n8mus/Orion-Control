@@ -21,6 +21,8 @@ struct DisplaySettings {
     bool  fillTrace = true;     // KE9NS-style gradient fill under the trace
     bool  peakHold  = false;    // slow-decay peak trace
     float split     = 0.42f;    // spectrum/waterfall divider position (0..1)
+    int   background = 0;       // index into backgroundNames()
+    bool  showGrid   = true;    // freq/dB gridlines on or off
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:
@@ -53,6 +55,7 @@ public:
     void setDisplaySettings(const DisplaySettings& s);
     const DisplaySettings& displaySettings() const { return ds_; }
     static QStringList paletteNames();
+    static QStringList backgroundNames();
 
 signals:
     void tuneRequested(int offsetHz);              // click-to-tune (offset from center)
@@ -125,6 +128,13 @@ private:
     int  lastBinLo_ = -1, lastBinHi_ = -1;         // geometry key for wfImg_
     bool wfDirty_ = true;                          // settings changed: full re-render
     QImage fillImg_;                               // level-colored fill (reused buffer)
+
+    // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
+    // mode/size changes — or each minute for the world map's moving grayline.
+    const QImage& backgroundImage(int w, int h);
+    QImage bgCache_;
+    int    bgMode_ = -1, bgW_ = 0, bgH_ = 0;
+    qint64 bgMinute_ = -1;
 
     enum class Drag {
         None,

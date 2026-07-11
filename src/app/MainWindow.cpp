@@ -33,7 +33,7 @@ static int bwMaxFor(Mode m);    // per-mode filter ceiling (AM runs to 8000)
 static constexpr int kLoOffsetHz = 60000;
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("Ten-Tec SDR Console");
+    setWindowTitle("Orion III SDR Console");
 
     pan_ = new PanadapterWidget(this);
     pan_->setPassband(-1200, 1200);

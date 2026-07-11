@@ -1,4 +1,6 @@
-# Ten-Tec SDR Console
+# Orion III SDR Console
+
+*(An independent project, not affiliated with or endorsed by Ten-Tec. "Orion III" is this console's own name — the radios it controls are the Ten-Tec Orion 565/566.)*
 
 A Flex/SmartSDR-style SDR console that gives the **Ten-Tec Orion (565/566)** and
 **Omni VII (588)** full computer control plus a live **panadapter/waterfall** fed by

@@ -110,8 +110,8 @@ QByteArray RigctldServer::handleExtended(const QByteArray& cmd,
     if (name == "chk_vfo") {
         r += "ChkVFO: 0\n";                         // no --vfo mode
     } else if (name == "dump_caps") {
-        r += "Model name:\tTen-Tec Orion Console\n"
-             "Mfg name:\tTen-Tec\n"
+        r += "Model name:\tOrion III SDR Console\n"
+             "Mfg name:\tN8EM\n"
              "Backend version:\t1.0\n"
              "Rig type:\tTransceiver\n"
              "Can set Frequency:\tY\n"

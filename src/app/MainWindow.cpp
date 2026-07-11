@@ -1277,6 +1277,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     };
     connect(panel_, &ControlPanel::pbtZeroRequested, this, zeroPbt);
     connect(pan_, &PanadapterWidget::pbtZeroRequested, this, zeroPbt);
+    // Same detent snap for VFO B (double-click a B filter edge): the sub
+    // PBT drifts just like the main's when working its filter edges.
+    connect(pan_, &PanadapterWidget::vfoBPbtZeroRequested, this, [this] {
+        sfTx_->stop();                              // drop any stale pending PBT
+        subFilterDirty_ = false;
+        radio_.setPbtHz(Rx::Sub, 0);
+        subPbtHz_ = 0;
+        sinceSubFilterEdit_.invalidate();           // explicit action: redraw now
+        pushVfoB();
+        statusBar()->showMessage("VFO B PBT -> 0");
+    });
     // Sidebar PBT slider: deliberate shifts (already coalesced in the panel).
     connect(panel_, &ControlPanel::pbtChanged, this, [this](int hz) {
         radio_.setPbtHz(Rx::Main, hz);

@@ -107,7 +107,8 @@ signals:
     void passbandChanged(int loHz, int hiHz);      // drag-to-filter
     void notchDragged(int rfOffsetHz);             // notch marker slid (streamed)
     void notchWidthAdjustRequested(int steps);     // wheel over the notch marker
-    void pbtZeroRequested();                       // double-click a passband edge
+    void pbtZeroRequested();                       // double-click an A passband edge
+    void vfoBPbtZeroRequested();                   // double-click a B passband edge
     void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
     void vfoADragged(uint64_t hz);                 // A dial line slid (absolute target)
     void vfoBDragged(int rfOffsetHz);              // B slid (streamed, offset from center)

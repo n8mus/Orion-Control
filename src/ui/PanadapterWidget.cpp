@@ -1109,14 +1109,26 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
 }
 
 void PanadapterWidget::mouseDoubleClickEvent(QMouseEvent* e) {
-    // Double-click either filter edge: snap PBT back to center (bandwidth
-    // kept). The first click only armed an edge drag, so nothing else fired.
+    // Double-click either filter edge: snap that VFO's PBT back to center
+    // (bandwidth kept). The first click only armed an edge drag, so nothing
+    // else fired. A's edges win when the passbands overlap.
     const int x = e->pos().x();
     const int edgeTol = 6;
-    if (!overNotch(x) && (std::abs(x - hzToX(pbLoHz_)) <= edgeTol
-                          || std::abs(x - hzToX(pbHiHz_)) <= edgeTol)) {
+    if (overNotch(x)) return;
+    if (std::abs(x - hzToX(pbLoHz_)) <= edgeTol
+        || std::abs(x - hzToX(pbHiHz_)) <= edgeTol) {
         drag_ = Drag::None;                        // cancel the armed drag
         emit pbtZeroRequested();
+        return;
+    }
+    if (vfoBVisible_ && vfoBHz_ && centerHz_) {
+        const int bOff = static_cast<int>(static_cast<qint64>(vfoBHz_)
+                                          - static_cast<qint64>(centerHz_));
+        if (std::abs(x - hzToX(bOff + vfoBLo_)) <= edgeTol
+            || std::abs(x - hzToX(bOff + vfoBHi_)) <= edgeTol) {
+            drag_ = Drag::None;
+            emit vfoBPbtZeroRequested();
+        }
     }
 }
 

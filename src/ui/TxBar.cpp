@@ -68,14 +68,27 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
 
     lay->addSpacing(8);
     tuneBtn_ = new QPushButton("TUNE");
+    tuneBtn_->setCheckable(true);                  // latches while the carrier is up
     tuneBtn_->setFocusPolicy(Qt::NoFocus);
+    tuneBtn_->setToolTip("Steady carrier at the set watts for tuning the amp or an "
+                         "external tuner (runs the internal tuner cycle if TUNER is on)");
+    tuneLvl_ = new QSpinBox;
+    tuneLvl_->setRange(5, 100);
+    tuneLvl_->setValue(20);
+    tuneLvl_->setSuffix("W");
+    tuneLvl_->setFocusPolicy(Qt::ClickFocus);
+    tuneLvl_->setToolTip("Manual tune carrier power");
     tunerBtn_ = new QPushButton("TUNER");
     tunerBtn_->setCheckable(true);
     tunerBtn_->setFocusPolicy(Qt::NoFocus);
     tunerBtn_->setToolTip("Enable the internal tuner (leave off with an external tuner)");
     lay->addWidget(tuneBtn_);
+    lay->addWidget(tuneLvl_);
     lay->addWidget(tunerBtn_);
-    connect(tuneBtn_, &QPushButton::clicked, this, [this] { emit tuneRequested(); });
+    connect(tuneBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit tuneToggled(on); });
+    connect(tuneLvl_, &QSpinBox::valueChanged, this,
+            [this](int w) { emit tuneLevelChanged(w); });
     connect(tunerBtn_, &QPushButton::toggled, this,
             [this](bool on) { emit tunerEnableToggled(on); });
 
@@ -121,6 +134,17 @@ QSlider* TxBar::makeSlider(const QString&, QLabel*& value, QTimer*& tx, int& pen
 
 bool TxBar::ampMode() const { return ampBtn_->isChecked(); }
 int  TxBar::ampLimit() const { return ampLimit_->value(); }
+int  TxBar::tuneLevel() const { return tuneLvl_->value(); }
+
+void TxBar::setTuneLevel(int watts) {
+    QSignalBlocker block(tuneLvl_);
+    tuneLvl_->setValue(std::clamp(watts, 5, 100));
+}
+
+void TxBar::showTuneActive(bool on) {
+    QSignalBlocker block(tuneBtn_);
+    tuneBtn_->setChecked(on);
+}
 
 void TxBar::applyPowerCap() {
     const int cap = ampBtn_->isChecked() ? ampLimit_->value() : 100;

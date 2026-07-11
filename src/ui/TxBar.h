@@ -20,11 +20,13 @@ public:
 
     bool ampMode() const;
     int  ampLimit() const;
+    int  tuneLevel() const;                       // carrier watts for manual tune
 
 signals:
     void txPowerChanged(int pct);
     void ampModeChanged(bool on, int limitPct);   // toggle or limit spin
-    void tuneRequested();
+    void tuneToggled(bool on);                    // manual tune carrier on/off
+    void tuneLevelChanged(int watts);
     void tunerEnableToggled(bool on);
     void micGainChanged(int pct);
     void monitorChanged(int pct);
@@ -32,6 +34,8 @@ signals:
 
 public slots:
     void setAmpMode(bool on, int limitPct);       // restore from settings
+    void setTuneLevel(int watts);                 // restore from settings
+    void showTuneActive(bool on);                 // reflect/force the TUNE latch
     void showTxPower(int pct);
     void showMicGain(int pct);
     void showMonitor(int pct);
@@ -50,6 +54,7 @@ private:
     QPushButton* ampBtn_   = nullptr;
     QSpinBox*    ampLimit_ = nullptr;
     QPushButton* tuneBtn_  = nullptr;
+    QSpinBox*    tuneLvl_  = nullptr;
     QPushButton* tunerBtn_ = nullptr;
     QTimer* pwrTx_ = nullptr;  int pendPwr_ = -1;
     QTimer* micTx_ = nullptr;  int pendMic_ = -1;

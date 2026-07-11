@@ -126,7 +126,11 @@ void TenTecOrion::setPtt(bool on)        { send(on ? "*TK" : "*TU"); }
 void TenTecOrion::setTxPower(int pct)    { send("*TP" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setMicGain(int pct)    { send("*TM" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setMonitor(int pct)    { send("*TO" + QByteArray::number(clampi(pct, 0, 100))); }
-void TenTecOrion::setAfVolume(int pct)   { send("*UM" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setAfVolume(int pct) {
+    // Docs claim 0-100 but the real scale is a byte: *UM100 lands at ~40% of
+    // max audio (100/255), measured on the v3 radio. Map percent -> 0-255.
+    send("*UM" + QByteArray::number(clampi(pct, 0, 100) * 255 / 100));
+}
 void TenTecOrion::setTunerEnabled(bool on) { send(on ? "*TT1" : "*TT0"); }
 void TenTecOrion::startTune()            { send("*TTT"); }
 
@@ -245,8 +249,8 @@ void TenTecOrion::onLine(const QByteArray& line) {
     }
     if (line[1] == 'U' && line.size() >= 4) {         // audio group @U<M/B><val>
         if ((line[2] == 'M' || line[2] == 'B')
-            && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
-            emit afVolumeReported(static_cast<int>(v));
+            && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 255)
+            emit afVolumeReported(static_cast<int>(v * 100 / 255));  // byte -> percent
         return;
     }
     if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M/A/G/T]<val>

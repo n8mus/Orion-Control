@@ -34,6 +34,8 @@ private:
     void sendPendingNotch();           // coalesced drag-to-notch serial writes
     void tuneAbsolute(uint64_t hz);    // every tune path funnels through here
     void applyMode(Mode m);            // user mode change (button or band memory)
+    void startManualTune();            // steady carrier for amp/external tuner
+    void stopManualTune();
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
     void recallStack(int band, int reg); // recall a band-stack register
     TenTecOrion      radio_;
@@ -46,6 +48,14 @@ private:
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)
     QElapsedTimer sinceEnforce_;               // rate-limit amp drive-limit corrections
+
+    // Manual tune carrier (TUNE with the internal tuner disabled).
+    bool tuning_      = false;
+    bool tunerOn_     = false;                 // internal tuner enable, from polling
+    int  lastTxPwr_   = 50;                    // radio's PWR, for restore after tune
+    Mode preTuneMode_ = Mode::USB;
+    int  preTunePwr_  = 50;
+    QTimer* tuneTimeout_ = nullptr;            // safety: carrier auto-drops
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;

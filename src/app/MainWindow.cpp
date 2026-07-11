@@ -232,12 +232,30 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this](int p) { radio_.setMonitor(p); });
     connect(txBar_, &TxBar::afVolumeChanged, this,
             [this](int p) { radio_.setAfVolume(p); });
-    connect(txBar_, &TxBar::tunerEnableToggled, this,
-            [this](bool on) { radio_.setTunerEnabled(on); });
-    connect(txBar_, &TxBar::tuneRequested, this, [this] {
-        radio_.startTune();
-        statusBar()->showMessage("tuner: tune cycle started");
+    connect(txBar_, &TxBar::tunerEnableToggled, this, [this](bool on) {
+        tunerOn_ = on;
+        radio_.setTunerEnabled(on);
     });
+    tuneTimeout_ = new QTimer(this);
+    tuneTimeout_->setSingleShot(true);
+    tuneTimeout_->setInterval(15000);              // carrier never outlives 15 s
+    connect(tuneTimeout_, &QTimer::timeout, this, &MainWindow::stopManualTune);
+    connect(txBar_, &TxBar::tuneToggled, this, [this](bool on) {
+        if (!on) { stopManualTune(); return; }
+        if (tunerOn_) {
+            // Internal tuner enabled: the radio runs its own cycle (*TTT
+            // generates its own carrier and drops it when matched).
+            radio_.startTune();
+            statusBar()->showMessage("internal tuner: tune cycle started");
+            txBar_->showTuneActive(false);         // momentary in this mode
+            return;
+        }
+        startManualTune();
+    });
+    connect(txBar_, &TxBar::tuneLevelChanged, this, [](int w) {
+        QSettings().setValue("tune/power", w);
+    });
+    txBar_->setTuneLevel(QSettings().value("tune/power", 20).toInt());
     connect(txBar_, &TxBar::ampModeChanged, this, [this](bool on, int limit) {
         QSettings s;
         s.setValue("amp/enabled", on);
@@ -247,6 +265,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                     : "amp mode off");
     });
     connect(&radio_, &TenTecOrion::txPowerReported, this, [this](int p) {
+        lastTxPwr_ = p;                             // for restore after manual tune
+        if (tuning_) return;                        // don't fight the tune carrier
         // Amp protection, slow path: the periodic ?TP poll catches a front-
         // panel PWR change above the limit even when not transmitting.
         if (txBar_->ampMode() && p > txBar_->ampLimit()) {
@@ -268,8 +288,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this](int p) { txBar_->showMonitor(p); });
     connect(&radio_, &TenTecOrion::afVolumeReported, this,
             [this](int p) { txBar_->showAfVolume(p); });
-    connect(&radio_, &TenTecOrion::tunerReported, this,
-            [this](bool on) { txBar_->showTuner(on); });
+    connect(&radio_, &TenTecOrion::tunerReported, this, [this](bool on) {
+        tunerOn_ = on;
+        txBar_->showTuner(on);
+    });
 
     // rigctld PTT (WSJT-X / fldigi keying through :4532). The 't' reply
     // tracks the radio's true T/R state via the metering replies.
@@ -491,6 +513,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    stopManualTune();                            // never leave a carrier up
     saveBandMemory();                            // remember this band across runs
 #ifdef HAVE_SDRPLAY
     // Stop the SDRplay streaming thread (Uninit drains callbacks) BEFORE the
@@ -529,6 +552,36 @@ void MainWindow::applyMode(Mode m) {
     // The Orion recalls its per-mode stored filter on a mode change — fetch it
     // as soon as the firmware has settled instead of waiting for the slow poll.
     QTimer::singleShot(400, this, [this] { radio_.queryFilter(Rx::Main); });
+}
+
+// Manual tune: the CAT set has no "tune button" command (*TTT needs the
+// internal tuner enabled), so reproduce it: steady carrier at the set watts
+// via FM mode + key, with the previous power/mode restored afterwards.
+void MainWindow::startManualTune() {
+    if (tuning_) return;
+    tuning_ = true;
+    preTunePwr_  = lastTxPwr_;
+    preTuneMode_ = rigMode_;
+    int level = txBar_->tuneLevel();
+    if (txBar_->ampMode()) level = std::min(level, txBar_->ampLimit());
+    radio_.setTxPower(level);
+    if (rigMode_ != Mode::FM) radio_.setMode(Rx::Main, Mode::FM);
+    radio_.setPtt(true);
+    tuneTimeout_->start();
+    statusBar()->showMessage(
+        QString("TUNE: %1 W carrier — click again to stop (auto-stop 15 s)").arg(level));
+}
+
+void MainWindow::stopManualTune() {
+    if (!tuning_) return;
+    tuning_ = false;
+    tuneTimeout_->stop();
+    radio_.setPtt(false);                          // drop the carrier FIRST
+    if (preTuneMode_ != Mode::FM) applyMode(preTuneMode_);
+    radio_.setTxPower(preTunePwr_);
+    txBar_->showTxPower(preTunePwr_);
+    txBar_->showTuneActive(false);
+    statusBar()->showMessage("TUNE: carrier off, power and mode restored");
 }
 
 void MainWindow::saveBandMemory() {

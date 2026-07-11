@@ -24,6 +24,7 @@ add_executable(tentec-console
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/net/RigctldServer.cpp     src/net/RigctldServer.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
+  src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/SMeterWidget.cpp       src/ui/SMeterWidget.h
   src/ui/ControlPanel.cpp       src/ui/ControlPanel.h
   src/ui/FrequencyDisplay.cpp   src/ui/FrequencyDisplay.h

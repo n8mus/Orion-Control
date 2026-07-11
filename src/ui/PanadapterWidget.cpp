@@ -2,6 +2,7 @@
 #include "ui/PanadapterWidget.h"
 
 #include <QPainter>
+#include <QPainterPath>
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <algorithm>
@@ -11,14 +12,62 @@
 namespace ttc {
 
 namespace {
-constexpr int   kWaterfallRows = 220;
+constexpr int   kWfHistRows   = 1024;    // raw dB rows kept for re-render on zoom
 constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
 constexpr float kSpectrumFrac  = 0.42f;  // top 42% spectrum, rest waterfall
+constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
+constexpr float kNoRow         = -300.0f;
+
+// Color palettes. All stops interpolate linearly; t=0 is the scale bottom
+// (noise floor), t=1 the top. "Enhanced" is the vivid KE9NS-PowerSDR-style
+// ramp — signals climb through blue/cyan/green into yellow/orange/red so
+// strength reads as color, not just height.
+struct Stop { float t; int r, g, b; };
+const Stop kEnhanced[] = {
+    {0.00f,   0,   0,   0}, {0.12f,  25,   0,  60}, {0.25f,   0,  30, 160},
+    {0.40f,   0, 120, 230}, {0.52f,   0, 200, 180}, {0.62f,  40, 210,  50},
+    {0.72f, 230, 230,  40}, {0.82f, 255, 140,  20}, {0.92f, 255,  40,  30},
+    {1.00f, 255, 255, 255},
+};
+const Stop kClassic[] = {
+    {0.00f,   0,   0,   0}, {0.20f,   0,   0, 120}, {0.40f,   0, 160, 200},
+    {0.60f,   0, 200,  80}, {0.75f, 230, 220,  40}, {0.90f, 240,  60,  30},
+    {1.00f, 255, 255, 255},
+};
+const Stop kThermal[] = {
+    {0.00f,   0,   0,   0}, {0.30f,  90,   0,  10}, {0.55f, 200,  40,   0},
+    {0.75f, 255, 150,   0}, {0.90f, 255, 230,  60}, {1.00f, 255, 255, 255},
+};
+const Stop kGray[] = {
+    {0.00f,   0,   0,   0}, {1.00f, 255, 255, 255},
+};
+struct Palette { const Stop* stops; size_t n; };
+const Palette kPalettes[] = {
+    {kEnhanced, std::size(kEnhanced)},
+    {kClassic,  std::size(kClassic)},
+    {kThermal,  std::size(kThermal)},
+    {kGray,     std::size(kGray)},
+};
+
+// A "nice" grid step (1/2/5 x 10^k) giving ~8 divisions across the view.
+double niceStep(double span) {
+    const double raw = span / 8.0;
+    const double mag = std::pow(10.0, std::floor(std::log10(raw)));
+    for (double m : {1.0, 2.0, 5.0, 10.0})
+        if (raw <= m * mag) return m * mag;
+    return 10.0 * mag;
+}
 } // namespace
+
+QStringList PanadapterWidget::paletteNames() {
+    return {"Enhanced (KE9NS)", "Classic", "Thermal", "Grayscale"};
+}
 
 PanadapterWidget::PanadapterWidget(QWidget* parent) : QWidget(parent) {
     setMinimumSize(640, 320);
     setMouseTracking(true);
+    dbMax_ = ds_.refDb;
+    dbMin_ = ds_.refDb - ds_.rangeDb;
 }
 
 void PanadapterWidget::setSpanHz(int spanHz) {
@@ -32,6 +81,28 @@ int PanadapterWidget::minViewSpanHz() const { return kMinViewSpanHz; }
 void PanadapterWidget::setViewSpanHz(int spanHz) {
     // Slider-driven zoom: no viewSpanChanged emit, or the slider would loop.
     viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, fullSpanHz_);
+    update();
+}
+
+void PanadapterWidget::setCenterHz(uint64_t hz) {
+    if (hz == centerHz_) return;
+    centerHz_ = hz;
+    update();
+}
+
+void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
+    const bool scaleChanged = s.refDb != ds_.refDb || s.rangeDb != ds_.rangeDb
+                              || s.palette != ds_.palette;
+    if (s.peakHold && !ds_.peakHold) peaks_ = avg_;   // fresh start, no stale peaks
+    ds_ = s;
+    ds_.avgFrames = std::max(1, ds_.avgFrames);
+    ds_.wfSpeed   = std::max(1, ds_.wfSpeed);
+    dbMax_ = ds_.refDb;
+    dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
+    if (scaleChanged) {
+        wfDirty_ = true;       // history re-renders in the new scale/palette
+        gradPal_ = -1;         // fill gradient rebuilds too
+    }
     update();
 }
 
@@ -61,19 +132,14 @@ int PanadapterWidget::spectrumHeight() const {
     return static_cast<int>(height() * kSpectrumFrac);
 }
 
-// Simple SDR palette: black -> deep blue -> cyan -> green -> yellow -> red -> white.
-QRgb PanadapterWidget::colormap(float t) {
-    struct Stop { float t; int r, g, b; };
-    static const Stop stops[] = {
-        {0.00f,   0,   0,   0}, {0.20f,   0,   0, 120}, {0.40f,   0, 160, 200},
-        {0.60f,   0, 200,  80}, {0.75f, 230, 220,  40}, {0.90f, 240,  60,  30},
-        {1.00f, 255, 255, 255},
-    };
+QRgb PanadapterWidget::mapColor(float t) const {
+    const Palette& pal =
+        kPalettes[std::clamp(ds_.palette, 0, int(std::size(kPalettes)) - 1)];
     t = std::clamp(t, 0.0f, 1.0f);
-    for (size_t i = 1; i < std::size(stops); ++i) {
-        if (t <= stops[i].t) {
-            const auto& a = stops[i - 1];
-            const auto& b = stops[i];
+    for (size_t i = 1; i < pal.n; ++i) {
+        if (t <= pal.stops[i].t) {
+            const Stop& a = pal.stops[i - 1];
+            const Stop& b = pal.stops[i];
             const float f = (t - a.t) / (b.t - a.t);
             return qRgb(int(a.r + f * (b.r - a.r)),
                         int(a.g + f * (b.g - a.g)),
@@ -83,26 +149,96 @@ QRgb PanadapterWidget::colormap(float t) {
     return qRgb(255, 255, 255);
 }
 
-void PanadapterWidget::appendWaterfallRow(const std::vector<float>& db) {
+void PanadapterWidget::pushWaterfallRow(const std::vector<float>& db) {
     const int n = static_cast<int>(db.size());
     if (n < 2) return;
-    if (waterfall_.width() != n) {                 // (re)init on bin-count change
-        waterfall_ = QImage(n, kWaterfallRows, QImage::Format_RGB32);
-        waterfall_.fill(Qt::black);
+    if (wfBins_ != n) {                            // bin-count change: reset history
+        wfBins_ = n;
+        wfHist_.assign(static_cast<size_t>(kWfHistRows) * n, kNoRow);
+        wfHead_ = wfCount_ = wfPending_ = 0;
+        wfDirty_ = true;
     }
-    // Scroll one row down, then paint the newest row across the top.
-    const int bpl = waterfall_.bytesPerLine();
-    std::memmove(waterfall_.bits() + bpl, waterfall_.bits(),
-                 static_cast<size_t>(bpl) * (kWaterfallRows - 1));
-    QRgb* row = reinterpret_cast<QRgb*>(waterfall_.scanLine(0));
-    const float range = dbMax_ - dbMin_;
-    for (int i = 0; i < n; ++i)
-        row[i] = colormap((db[i] - dbMin_) / range);
+    std::memcpy(&wfHist_[static_cast<size_t>(wfHead_) * n], db.data(),
+                sizeof(float) * n);
+    wfHead_ = (wfHead_ + 1) % kWfHistRows;
+    wfCount_ = std::min(wfCount_ + 1, kWfHistRows);
+    ++wfPending_;
+}
+
+// Crisp column mapping: each pixel column takes the MAX of its bin range, so
+// narrow signals never vanish on wide spans and nothing is smoothed away.
+void PanadapterWidget::renderWfLine(const float* src, QRgb* dst, int w,
+                                    int binLo, int binHi) const {
+    const int nv = binHi - binLo;
+    const float invRange = 1.0f / (dbMax_ - dbMin_);
+    for (int j = 0; j < w; ++j) {
+        int b0 = binLo + static_cast<int>(static_cast<int64_t>(j) * nv / w);
+        int b1 = binLo + static_cast<int>(static_cast<int64_t>(j + 1) * nv / w);
+        if (b1 <= b0) b1 = b0 + 1;
+        float m = src[b0];
+        for (int b = b0 + 1; b < b1; ++b) m = std::max(m, src[b]);
+        dst[j] = mapColor((m - dbMin_) * invRange);
+    }
+}
+
+void PanadapterWidget::ensureWaterfallImage(int w, int h, int binLo, int binHi) {
+    if (w < 1 || h < 1 || wfBins_ < 2) return;
+    const bool geomChanged = wfImg_.width() != w || wfImg_.height() != h
+                             || binLo != lastBinLo_ || binHi != lastBinHi_;
+    auto histRow = [this](int back) {
+        return &wfHist_[static_cast<size_t>(
+            ((wfHead_ - 1 - back) % kWfHistRows + kWfHistRows) % kWfHistRows) * wfBins_];
+    };
+    if (geomChanged || wfDirty_) {                 // full re-render from history
+        wfImg_ = QImage(w, h, QImage::Format_RGB32);
+        for (int y = 0; y < h; ++y) {
+            QRgb* line = reinterpret_cast<QRgb*>(wfImg_.scanLine(y));
+            if (y < wfCount_) renderWfLine(histRow(y), line, w, binLo, binHi);
+            else              std::fill(line, line + w, qRgb(0, 0, 0));
+        }
+        lastBinLo_ = binLo;
+        lastBinHi_ = binHi;
+        wfDirty_ = false;
+    } else if (wfPending_ > 0) {                   // scroll + render only new rows
+        const int rows = std::min(wfPending_, h);
+        const int bpl = wfImg_.bytesPerLine();
+        std::memmove(wfImg_.bits() + static_cast<size_t>(bpl) * rows, wfImg_.bits(),
+                     static_cast<size_t>(bpl) * (h - rows));
+        for (int y = 0; y < rows; ++y)
+            renderWfLine(histRow(y), reinterpret_cast<QRgb*>(wfImg_.scanLine(y)),
+                         w, binLo, binHi);
+    }
+    wfPending_ = 0;
 }
 
 void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
+    const size_t n = magsDb.size();
     spectrum_ = magsDb;
-    appendWaterfallRow(magsDb);
+    if (avg_.size() != n) {                        // bin count changed: hard reset
+        avg_ = magsDb;
+        peaks_ = magsDb;
+    } else {
+        const float a = 1.0f / ds_.avgFrames;      // EMA; avgFrames==1 -> raw
+        for (size_t i = 0; i < n; ++i) {
+            avg_[i] += (magsDb[i] - avg_[i]) * a;
+            if (ds_.peakHold)
+                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb, avg_[i]);
+        }
+    }
+    // Waterfall speed: max-merge wfSpeed frames into one committed row, so slow
+    // scroll keeps every blip instead of dropping frames.
+    if (wfAccum_.size() != n) {
+        wfAccum_ = magsDb;
+        wfAccumN_ = 1;
+    } else {
+        for (size_t i = 0; i < n; ++i) wfAccum_[i] = std::max(wfAccum_[i], magsDb[i]);
+        ++wfAccumN_;
+    }
+    if (wfAccumN_ >= ds_.wfSpeed) {
+        pushWaterfallRow(wfAccum_);
+        std::fill(wfAccum_.begin(), wfAccum_.end(), kNoRow);
+        wfAccumN_ = 0;
+    }
     update();
 }
 
@@ -114,6 +250,48 @@ int PanadapterWidget::hzToX(int hz) const {
 int PanadapterWidget::xToHz(int x) const {
     const double frac = static_cast<double>(x) / std::max(1, width());
     return static_cast<int>(std::lround(frac * viewSpanHz_ - viewSpanHz_ / 2.0));
+}
+
+void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
+    const double step = niceStep(viewSpanHz_);
+    QFont f = p.font();
+    f.setPixelSize(10);
+    p.setFont(f);
+    if (centerHz_ == 0) {                          // no dial info: plain grid only
+        p.setPen(QColor(255, 255, 255, 22));
+        for (int i = 1; i < 10; ++i)
+            p.drawLine(width() * i / 10, 0, width() * i / 10, hSpec);
+        return;
+    }
+    // Gridlines on absolute "nice" frequencies; labels in MHz with just enough
+    // decimals for the step (PowerSDR-style in-panadapter frequency scale).
+    const int decimals = std::clamp(
+        static_cast<int>(std::ceil(std::log10(1e6 / step))), 1, 6);
+    const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
+    const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
+    for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
+        const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
+        p.setPen(QColor(255, 255, 255, 26));
+        p.drawLine(x, 0, x, hSpec);
+        p.setPen(QColor(190, 205, 220, 150));
+        p.drawText(x + 3, hSpec - 5, QString::number(fq / 1e6, 'f', decimals));
+    }
+}
+
+void PanadapterWidget::drawDbScale(QPainter& p, int hSpec) {
+    QFont f = p.font();
+    f.setPixelSize(9);
+    p.setFont(f);
+    const float range = dbMax_ - dbMin_;
+    for (int db = static_cast<int>(std::ceil(dbMin_ / 20.0f)) * 20;
+         db < static_cast<int>(dbMax_); db += 20) {
+        const int y = static_cast<int>(hSpec * (1.0f - (db - dbMin_) / range));
+        if (y < 20 || y > hSpec - 16) continue;    // keep clear of the text rows
+        p.setPen(QColor(255, 255, 255, 16));
+        p.drawLine(0, y, width(), y);
+        p.setPen(QColor(150, 165, 180, 130));
+        p.drawText(4, y - 2, QString::number(db));
+    }
 }
 
 void PanadapterWidget::paintEvent(QPaintEvent*) {
@@ -132,18 +310,49 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         binHi = std::clamp(binHi, binLo + 2, n);
     }
 
-    // Waterfall (lower area): draw the visible bin window scaled to the widget.
-    if (!waterfall_.isNull() && n >= 2) {
-        const QRect src(binLo, 0, binHi - binLo, waterfall_.height());
-        const QRect dst(0, hSpec, width(), height() - hSpec);
-        p.drawImage(dst, waterfall_, src);
+    // Waterfall (lower area): re-render from raw history, 1 row = 1 pixel line.
+    if (wfBins_ >= 2 && n >= 2) {
+        ensureWaterfallImage(width(), height() - hSpec, binLo, binHi);
+        if (!wfImg_.isNull()) p.drawImage(0, hSpec, wfImg_);
     }
 
-    // Frequency gridlines every viewSpan/10, spectrum area only.
-    p.setPen(QColor(255, 255, 255, 22));
-    for (int i = 1; i < 10; ++i) {
-        const int x = width() * i / 10;
-        p.drawLine(x, 0, x, hSpec);
+    // Background: frequency grid with absolute labels, then the dB scale.
+    drawFreqGrid(p, hSpec);
+    drawDbScale(p, hSpec);
+
+    // KE9NS-style fill: the area under the trace is painted with the same
+    // palette as the waterfall, mapped to the dB axis — strong signals rise
+    // into yellow/orange/red while the floor stays deep blue.
+    const float range = dbMax_ - dbMin_;
+    QPainterPath tracePath;
+    if (n >= 2) {
+        const int nv = binHi - binLo;
+        for (int i = 0; i < nv; ++i) {
+            const double x = static_cast<double>(i) / (nv - 1) * width();
+            const float t = (avg_[binLo + i] - dbMin_) / range;
+            const double y = hSpec * (1.0 - std::clamp(t, 0.0f, 1.0f));
+            if (i == 0) tracePath.moveTo(x, y);
+            else        tracePath.lineTo(x, y);
+        }
+        if (ds_.fillTrace) {
+            if (gradStrip_.height() != hSpec || gradPal_ != ds_.palette) {
+                gradStrip_ = QImage(1, std::max(1, hSpec), QImage::Format_RGB32);
+                for (int y = 0; y < gradStrip_.height(); ++y) {
+                    const float t = 1.0f - static_cast<float>(y)
+                                           / std::max(1, gradStrip_.height() - 1);
+                    gradStrip_.setPixel(0, y, mapColor(t));
+                }
+                gradPal_ = ds_.palette;
+            }
+            QPainterPath fillPath = tracePath;
+            fillPath.lineTo(width(), hSpec);
+            fillPath.lineTo(0, hSpec);
+            fillPath.closeSubpath();
+            p.save();
+            p.setClipPath(fillPath);
+            p.drawImage(QRect(0, 0, width(), hSpec), gradStrip_);
+            p.restore();
+        }
     }
 
     // Passband highlight across spectrum AND waterfall (SmartSDR-style).
@@ -168,20 +377,23 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     p.setPen(QColor(200, 80, 80));
     p.drawLine(width() / 2, 0, width() / 2, height());
 
-    // Spectrum trace over the visible bin window.
+    // Peak-hold trace (under the live trace), then the spectrum trace itself.
     if (n >= 2) {
-        p.setPen(QColor(120, 220, 140));
-        const float range = dbMax_ - dbMin_;
-        QPointF prev;
-        const int nv = binHi - binLo;
-        for (int i = 0; i < nv; ++i) {
-            const double x = static_cast<double>(i) / (nv - 1) * width();
-            const float t = (spectrum_[binLo + i] - dbMin_) / range;
-            const double y = hSpec * (1.0 - std::clamp(t, 0.0f, 1.0f));
-            QPointF pt(x, y);
-            if (i) p.drawLine(prev, pt);
-            prev = pt;
+        if (ds_.peakHold && peaks_.size() == spectrum_.size()) {
+            p.setPen(QColor(235, 235, 245, 150));
+            const int nv = binHi - binLo;
+            QPointF prev;
+            for (int i = 0; i < nv; ++i) {
+                const double x = static_cast<double>(i) / (nv - 1) * width();
+                const float t = (peaks_[binLo + i] - dbMin_) / range;
+                const double y = hSpec * (1.0 - std::clamp(t, 0.0f, 1.0f));
+                QPointF pt(x, y);
+                if (i) p.drawLine(prev, pt);
+                prev = pt;
+            }
         }
+        p.setPen(QColor(210, 245, 215));
+        p.drawPath(tracePath);
     } else {
         p.setPen(QColor(120, 220, 140));
         p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,

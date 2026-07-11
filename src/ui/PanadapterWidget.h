@@ -2,9 +2,25 @@
 #pragma once
 #include <QWidget>
 #include <QImage>
+#include <QStringList>
+#include <cstdint>
 #include <vector>
 
 namespace ttc {
+
+// User-adjustable display parameters (KE9NS/Flex-style), persisted by the
+// owner and applied via setDisplaySettings. refDb is the top of the spectrum
+// scale; refDb - rangeDb is the bottom (contrast). One shared scale drives
+// the trace, the gradient fill and the waterfall so colors always agree.
+struct DisplaySettings {
+    float refDb     = -55.0f;   // top of scale, dB
+    float rangeDb   =  70.0f;   // scale height, dB (contrast)
+    int   palette   = 0;        // index into paletteNames()
+    int   avgFrames = 4;        // spectrum EMA length; 1 = off
+    int   wfSpeed   = 2;        // FFT frames per waterfall row; 1 = fastest
+    bool  fillTrace = true;     // KE9NS-style gradient fill under the trace
+    bool  peakHold  = false;    // slow-decay peak trace
+};
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:
 //   * click a signal        -> tuneRequested(offsetHz)
@@ -13,6 +29,9 @@ namespace ttc {
 // Data model: setSpectrum receives the FULL captured span (fftshifted dB bins);
 // the view renders a zoomable sub-window centered on the dial. All mouse math
 // goes through hzToX/xToHz, so zoom applies to every interaction automatically.
+// The waterfall keeps raw dB rows (not pixels) so zoom/resize/palette changes
+// re-render history crisply — each display row maps pixel columns to bins with
+// a max-pick, never smooth image scaling.
 class PanadapterWidget : public QWidget {
     Q_OBJECT
 public:
@@ -28,6 +47,11 @@ public:
     // radio's audio-Hz notch through the mode sideband. Ignored mid-drag.
     void setNotch(bool on, int rfOffsetHz, int widthHz);
     void setSpectrum(const std::vector<float>& magsDb);
+    void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
+
+    void setDisplaySettings(const DisplaySettings& s);
+    const DisplaySettings& displaySettings() const { return ds_; }
+    static QStringList paletteNames();
 
 signals:
     void tuneRequested(int offsetHz);              // click-to-tune (offset from center)
@@ -51,8 +75,12 @@ private:
     int    hzToX(int hz) const;
     int    xToHz(int x) const;
     int    spectrumHeight() const;                 // top area; waterfall below
-    void   appendWaterfallRow(const std::vector<float>& db);
-    static QRgb colormap(float t);                 // t in [0,1]
+    QRgb   mapColor(float t) const;                // t in [0,1], current palette
+    void   pushWaterfallRow(const std::vector<float>& db);
+    void   renderWfLine(const float* src, QRgb* dst, int w, int binLo, int binHi) const;
+    void   ensureWaterfallImage(int w, int h, int binLo, int binHi);
+    void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines + absolute-freq labels
+    void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
 
@@ -62,14 +90,32 @@ private:
 
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
+    uint64_t centerHz_ = 0;                        // 0 = unknown, labels skipped
     int pbLoHz_ = -1200;
     int pbHiHz_ = 1200;
     bool notchOn_     = false;
     int  notchRfHz_   = 0;                         // marker center, RF offset
     int  notchWidthHz_ = 0;
-    float dbMin_ = -125.0f, dbMax_ = -55.0f;       // display dB range
-    std::vector<float> spectrum_;                  // full span, fftshifted
-    QImage waterfall_;                             // width = bins, scrolls down
+
+    DisplaySettings ds_;
+    float dbMin_ = -125.0f, dbMax_ = -55.0f;       // derived from ds_ (ref/range)
+
+    std::vector<float> spectrum_;                  // latest raw frame, full span
+    std::vector<float> avg_;                       // EMA of spectrum_ (the trace)
+    std::vector<float> peaks_;                     // slow-decay peak-hold trace
+
+    // Waterfall: ring buffer of raw dB rows + a pixel-resolution rendered image.
+    // New rows render incrementally; zoom/resize/settings force a full rebuild.
+    std::vector<float> wfHist_;                    // kWfHistRows x wfBins_, ring
+    int  wfBins_ = 0, wfHead_ = 0, wfCount_ = 0;
+    int  wfPending_ = 0;                           // rows added since last render
+    std::vector<float> wfAccum_;                   // max-merge across wfSpeed frames
+    int  wfAccumN_ = 0;
+    QImage wfImg_;                                 // rendered, 1 row = 1 pixel line
+    int  lastBinLo_ = -1, lastBinHi_ = -1;         // geometry key for wfImg_
+    bool wfDirty_ = true;                          // settings changed: full re-render
+    QImage gradStrip_;                             // 1 x hSpec fill gradient (cached)
+    int  gradPal_ = -1;                            // palette the strip was built for
 
     enum class Drag {
         None,

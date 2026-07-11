@@ -12,6 +12,8 @@
 #include <QToolButton>
 #include <QMenu>
 #include <QActionGroup>
+#include <QWidgetAction>
+#include "ui/DisplayPanel.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -27,6 +29,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     pan_ = new PanadapterWidget(this);
     pan_->setPassband(-1200, 1200);
+    pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
     smeter_ = new SMeterWidget(this);
     panel_  = new ControlPanel(this);
     freqDisp_ = new FrequencyDisplay(this);
@@ -94,6 +97,51 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [zoom, sliderFromSpan](int spanHz) {
                 QSignalBlocker block(zoom);
                 zoom->setValue(sliderFromSpan(spanHz));
+            });
+
+    // "DISPLAY" dropdown: Flex/KE9NS-style viewer settings (ref level, range,
+    // averaging, waterfall speed, palette, fill, peak hold), applied live and
+    // persisted. Sits in a QWidgetAction so the popup stays open while dragging.
+    auto* dispBtn = new QToolButton(topStrip);
+    dispBtn->setText("DISPLAY ▾");
+    dispBtn->setPopupMode(QToolButton::InstantPopup);
+    dispBtn->setFocusPolicy(Qt::NoFocus);
+    dispBtn->setStyleSheet(
+        "QToolButton { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;"
+        " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+        "QToolButton::menu-indicator { image: none; }");
+    auto* dispMenu = new QMenu(dispBtn);
+    auto* dispPanel = new DisplayPanel(dispMenu);
+    auto* dispAction = new QWidgetAction(dispMenu);
+    dispAction->setDefaultWidget(dispPanel);
+    dispMenu->addAction(dispAction);
+    dispBtn->setMenu(dispMenu);
+    topLay->addSpacing(8);
+    topLay->addWidget(dispBtn);
+    {   // restore persisted display settings before first paint
+        QSettings s;
+        DisplaySettings d;
+        d.refDb     = s.value("display/refDb",   d.refDb).toFloat();
+        d.rangeDb   = s.value("display/rangeDb", d.rangeDb).toFloat();
+        d.palette   = s.value("display/palette", d.palette).toInt();
+        d.avgFrames = s.value("display/avg",     d.avgFrames).toInt();
+        d.wfSpeed   = s.value("display/wfSpeed", d.wfSpeed).toInt();
+        d.fillTrace = s.value("display/fill",    d.fillTrace).toBool();
+        d.peakHold  = s.value("display/peak",    d.peakHold).toBool();
+        dispPanel->setSettings(d);
+        pan_->setDisplaySettings(d);
+    }
+    connect(dispPanel, &DisplayPanel::settingsChanged, this,
+            [this](const DisplaySettings& d) {
+                pan_->setDisplaySettings(d);
+                QSettings s;
+                s.setValue("display/refDb",   d.refDb);
+                s.setValue("display/rangeDb", d.rangeDb);
+                s.setValue("display/palette", d.palette);
+                s.setValue("display/avg",     d.avgFrames);
+                s.setValue("display/wfSpeed", d.wfSpeed);
+                s.setValue("display/fill",    d.fillTrace);
+                s.setValue("display/peak",    d.peakHold);
             });
 
 #ifdef HAVE_SDRPLAY
@@ -474,6 +522,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     centerHz_ = hz;
                     rigctld_.cacheFrequency(hz);     // cache only debounce-confirmed values
                     freqDisp_->setFrequency(hz);
+                    pan_->setCenterHz(hz);           // keep grid labels on the dial
                     curBand_ = bandIndexOf(hz);      // dial crossed a band edge?
                     panel_->showBand(curBand_);
 #ifdef HAVE_SDRPLAY
@@ -610,6 +659,7 @@ void MainWindow::tuneAbsolute(uint64_t f) {
     pendingHz_ = f;
     sinceTune_.restart();                       // hold off dial-follow while it settles
     freqDisp_->setFrequency(f);
+    pan_->setCenterHz(f);                       // keep grid labels on the dial
     curBand_ = bandIndexOf(f);
     panel_->showBand(curBand_);
 #ifdef HAVE_SDRPLAY

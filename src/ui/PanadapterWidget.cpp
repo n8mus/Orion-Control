@@ -410,12 +410,11 @@ void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
     p.drawLine(0, hSpec + kScaleBandH - 1, width(), hSpec + kScaleBandH - 1);
     if (centerHz_ == 0) return;
     const double step = niceStep(viewSpanHz_);
-    const int decimals = std::clamp(
-        static_cast<int>(std::ceil(std::log10(1e6 / step))), 1, 6);
     const double f0 = static_cast<double>(centerHz_) - viewSpanHz_ / 2.0;
     const double f1 = static_cast<double>(centerHz_) + viewSpanHz_ / 2.0;
     QFont f = p.font();
     f.setPixelSize(10);
+    f.setBold(true);
     p.setFont(f);
     // Minor ticks every step/5 when there's room for them.
     const double minor = step / 5.0;
@@ -426,12 +425,20 @@ void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
             p.drawLine(x, hSpec, x, hSpec + 3);
         }
     }
+    // KE9NS-style labels: yellow, MHz.kkk.h format (e.g. 7.280.0 — the last
+    // digit is hundreds of Hz).
     for (double fq = std::ceil(f0 / step) * step; fq <= f1; fq += step) {
         const int x = hzToX(static_cast<int>(std::lround(fq - double(centerHz_))));
         p.setPen(QColor(200, 215, 230, 200));
         p.drawLine(x, hSpec, x, hSpec + 5);
+        const qint64 hz  = static_cast<qint64>(std::llround(fq));
+        const qint64 mhz = hz / 1000000;
+        const int    khz = static_cast<int>((hz / 1000) % 1000);
+        const int    hun = static_cast<int>((hz % 1000) / 100);
+        p.setPen(QColor(255, 216, 50));
         p.drawText(x + 3, hSpec + kScaleBandH - 4,
-                   QString::number(fq / 1e6, 'f', decimals));
+                   QString("%1.%2.%3").arg(mhz)
+                       .arg(khz, 3, 10, QLatin1Char('0')).arg(hun));
     }
 }
 

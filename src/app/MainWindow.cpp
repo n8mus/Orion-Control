@@ -412,8 +412,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 }
             });
 
-    // Start the interop seam. Clients (cqrlog/WSJT-X/fldigi/GridTracker) connect here.
-    const bool listening = rigctld_.listen(4532);
+    // Start the interop seam. Clients (cqrlog/WSJT-X/fldigi/GridTracker) connect
+    // here. TTC_RIGCTLD_PORT overrides for side-by-side protocol testing.
+    const char* rcpEnv = std::getenv("TTC_RIGCTLD_PORT");
+    const bool listening = rigctld_.listen(rcpEnv ? quint16(atoi(rcpEnv)) : 4532);
     statusBar()->showMessage(
         listening ? "rigctld emulation on :4532  |  radio: not connected (wire /dev/orion)"
                   : "FAILED to bind :4532 (already in use? stop flrig/rigctld)");

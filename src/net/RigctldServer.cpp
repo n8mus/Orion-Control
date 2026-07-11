@@ -222,14 +222,61 @@ QByteArray RigctldServer::handleLine(const QByteArray& line) {
         default: break;
     }
 
-    if (line.startsWith("\\chk_vfo")) return "CHKVFO 0\n";
+    // Modern (4.x) rigctld answers a bare protocol-version digit here; hamlib
+    // 4.7 netrigctl_open chokes on the old "CHKVFO 0" form.
+    if (line.startsWith("\\chk_vfo")) return "0\n";
     if (line.startsWith("\\dump_state")) {
-        // Minimal protocol-1 dump_state. TODO: advertise real Ten-Tec caps.
-        return "0\n2\n2\n150000.000000 56000000.000000 0x1ff -1 -1 0x10000003 0x3\n"
-               "0 0 0 0 0 0 0\n0 0 0 0 0 0 0\n0x1ff 1\n0x1ff 0\n0 0\n"
-               "0x1e 2400\n0x2 500\n0x1 8000\n0 0\n9990\n0\n0\n0\n0\n0\n0\n";
+        // Mirrors the structure a real rigctld 4.7.1 emits (protocol 1, ends
+        // with key=value lines and "done") — hamlib reads this field-by-field
+        // at connect and hangs if anything is missing. Mode mask 0xaf =
+        // AM|CW|USB|LSB|FM|CWR; VFO mask 0x3 = VFOA|VFOB.
+        return "1\n"                                 // protocol version
+               "2\n"                                 // rig model (NET rigctl)
+               "2\n"                                 // ITU region
+               "100000.000000 60000000.000000 0xaf -1 -1 0x3 0x1\n"   // RX range
+               "0 0 0 0 0 0 0\n"
+               "1800000.000000 54000000.000000 0xaf 5000 100000 0x3 0x1\n"  // TX
+               "0 0 0 0 0 0 0\n"
+               "0xaf 1\n"                            // tuning step: 1 Hz, all modes
+               "0 0\n"
+               "0x2c 2400\n0x82 500\n0xaf 100\n0xaf 6000\n"           // filters
+               "0 0\n"
+               "9990\n"                              // max RIT
+               "9990\n"                              // max XIT
+               "8000\n"                              // max IF shift
+               "0\n"                                 // announces
+               "10\n"                                // preamp list (*RME)
+               "6 12 18\n"                           // attenuator list
+               "0x0\n0x0\n0x0\n0x0\n0x0\n0x0\n"      // get/set func, level, parm
+               "vfo_ops=0x0\n"
+               "ptt_type=0x1\n"
+               "targetable_vfo=0\n"
+               "has_set_vfo=1\n"
+               "has_get_vfo=1\n"
+               "has_set_freq=1\n"
+               "has_get_freq=1\n"
+               "has_set_conf=0\n"
+               "has_get_conf=0\n"
+               "has_power2mW=0\n"
+               "has_mW2power=0\n"
+               "has_get_ant=0\n"
+               "has_set_ant=0\n"
+               "timeout=0\n"
+               "rig_model=2\n"
+               "rigctld_version=Hamlib 4.7.1\n"
+               "done\n";
     }
-    if (c == 'q' || c == 'Q') return QByteArray();  // quit: let socket close
+    if (line.startsWith("\\get_powerstat")) return "1\n";
+    if (line.startsWith("\\set_powerstat")) return "RPRT 0\n";
+    if (c == 's')                                   // get split vfo
+        return "0\nVFOA\n";
+    if (c == 'i')                                   // get split (TX) frequency
+        return QByteArray::number(static_cast<qulonglong>(freqHz_)) + "\n";
+    if (c == 'j' || c == 'z')                       // get RIT / XIT
+        return "0\n";
+    if (c == 'S' || c == 'I' || c == 'J' || c == 'Z')
+        return "RPRT 0\n";                          // split/RIT/XIT sets: accept
+    if (c == 'q' || c == 'Q') return "RPRT 0\n";    // acknowledged; client closes
 
     return "RPRT -11\n";                            // unimplemented
 }

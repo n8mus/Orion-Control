@@ -11,6 +11,7 @@ class QTimer;
 #include "ui/ControlPanel.h"
 #include "ui/FrequencyDisplay.h"
 #include "ui/RoutingPanel.h"
+#include "ui/AudioPanel.h"
 #include "ui/TxBar.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
@@ -52,6 +53,9 @@ private:
     FrequencyDisplay* freqDisp_  = nullptr;   // VFO A (main RX, the panadapter dial)
     FrequencyDisplay* freqDispB_ = nullptr;   // VFO B (sub RX), display + direct set
     RoutingPanel*     routing_   = nullptr;   // VFO/antenna matrix + A/B transfers
+    AudioPanel*       audioPanel_ = nullptr;  // volumes, mutes, output routing
+    int  vol_[2]     = {50, 50};              // last known volumes (A, B)
+    int  preMute_[2] = {50, 50};              // levels to restore on unmute
     uint64_t vfoBHz_ = 7000000;               // last known VFO B dial
     Mode     subMode_ = Mode::LSB;            // sub RX mode (rides with VFO B)
     int      subBwHz_ = 2500, subPbtHz_ = 0;  // sub RX filter (B's overlay width)

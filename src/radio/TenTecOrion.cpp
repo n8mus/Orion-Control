@@ -138,11 +138,22 @@ void TenTecOrion::setMicGain(int pct)    { send("*TM" + QByteArray::number(clamp
 void TenTecOrion::setSpeechProc(int lvl) { send("*TS" + QByteArray::number(clampi(lvl, 0, 9))); }
 void TenTecOrion::setAuxInputGain(int p) { send("*TI" + QByteArray::number(clampi(p, 0, 100))); }
 void TenTecOrion::setMonitor(int pct)    { send("*TO" + QByteArray::number(clampi(pct, 0, 100))); }
-void TenTecOrion::setAfVolume(int pct) {
+void TenTecOrion::setAfVolume(Rx rx, int pct) {
     // Docs claim 0-100 but the real scale is a byte: *UM100 lands at ~40% of
     // max audio (100/255), measured on the v3 radio. Map percent -> 0-255.
-    send("*UM" + QByteArray::number(clampi(pct, 0, 100) * 255 / 100));
+    send(QByteArray("*U") + (rx == Rx::Main ? 'M' : 'S')
+         + QByteArray::number(clampi(pct, 0, 100) * 255 / 100));
 }
+
+void TenTecOrion::queryAfVolume(Rx rx) {
+    send(QByteArray("?U") + (rx == Rx::Main ? 'M' : 'S'));
+}
+
+void TenTecOrion::setAudioRouting(char left, char right, char speaker) {
+    send(QByteArray("*UC") + left + right + speaker);
+}
+
+void TenTecOrion::queryAudioRouting() { send("?UC"); }
 void TenTecOrion::setTunerEnabled(bool on) { send(on ? "*TT1" : "*TT0"); }
 void TenTecOrion::startTune()            { send("*TTT"); }
 
@@ -287,10 +298,27 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit antennaRoutingReported(line[3], line[4], line[5]);
         return;
     }
-    if (line[1] == 'U' && line.size() >= 4) {         // audio group @U<M/B><val>
-        if ((line[2] == 'M' || line[2] == 'B')
-            && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 255)
-            emit afVolumeReported(static_cast<int>(v * 100 / 255));  // byte -> percent
+    if (line[1] == 'U' && line.size() >= 4) {         // audio group @U<M/S/B/C>...
+        if (line[2] == 'C') {                          // @UC<left><right><spk>
+            auto in = [](char c) { return c == 'M' || c == 'S' || c == 'B'; };
+            if (line.size() >= 6 && in(line[3]) && in(line[4]) && in(line[5]))
+                emit audioRoutingReported(line[3], line[4], line[5]);
+            return;
+        }
+        if ((line[2] == 'M' || line[2] == 'S' || line[2] == 'B')
+            && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 255) {
+            const int pct = static_cast<int>(v * 100 / 255);   // byte -> percent
+            if (line[2] != 'S') emit afVolumeReported(Rx::Main, pct);
+            if (line[2] != 'M') emit afVolumeReported(Rx::Sub, pct);
+            // Combined form @UM<m>S<s> (documented "both" response).
+            if (line[2] == 'M') {
+                const int sPos = line.indexOf('S', 3);
+                qlonglong v2 = 0;
+                if (sPos > 0 && parseLeadingInt(line.mid(sPos + 1), v2)
+                    && v2 >= 0 && v2 <= 255)
+                    emit afVolumeReported(Rx::Sub, static_cast<int>(v2 * 100 / 255));
+            }
+        }
         return;
     }
     if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M/A/G/T]<val>

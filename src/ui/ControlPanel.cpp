@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QTimer>
+#include <algorithm>
 #include <QVBoxLayout>
 
 namespace ttc {
@@ -173,12 +174,20 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
         if (!gainTx_->isActive()) gainTx_->start();
     });
 
-    // --- PBT re-center --------------------------------------------------------
-    // Normal edge drags are hi/lo-cut and move PBT; this snaps it back to the
-    // detent (bandwidth kept). Also on double-click of either passband edge.
+    // --- PBT ------------------------------------------------------------------
+    // Slider for deliberate passband-tuning shifts (Ctrl+drag in the passband
+    // does the same by mouse), plus the quick re-center: "PBT 0" snaps back to
+    // the detent (bandwidth kept). Also on double-click of a passband edge.
     auto* pbtBox = makeGroup("PBT");
-    auto* pbtRow = new QHBoxLayout(pbtBox);
-    pbtRow->setContentsMargins(0, 4, 0, 0);
+    auto* pbtCol = new QVBoxLayout(pbtBox);
+    pbtCol->setContentsMargins(0, 4, 0, 0);
+    pbtCol->setSpacing(4);
+    pbt_ = new QSlider(Qt::Horizontal);
+    pbt_->setRange(-2000, 2000);
+    pbt_->setSingleStep(10);
+    pbt_->setPageStep(100);
+    pbtCol->addWidget(pbt_);
+    auto* pbtRow = new QHBoxLayout;
     auto* pbtBtn = new QPushButton("PBT 0");
     pbtBtn->setFocusPolicy(Qt::NoFocus);
     pbtBtn->setMinimumHeight(26);
@@ -186,8 +195,20 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     pbtVal_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     pbtRow->addWidget(pbtBtn);
     pbtRow->addWidget(pbtVal_, 1);
+    pbtCol->addLayout(pbtRow);
     connect(pbtBtn, &QPushButton::clicked, this,
             [this] { emit pbtZeroRequested(); });
+    pbtTx_ = new QTimer(this);
+    pbtTx_->setSingleShot(true);
+    pbtTx_->setInterval(40);
+    connect(pbtTx_, &QTimer::timeout, this, [this] {
+        if (pendPbt_ != -9999) { emit pbtChanged(pendPbt_); pendPbt_ = -9999; }
+    });
+    connect(pbt_, &QSlider::valueChanged, this, [this](int v) {
+        pbtVal_->setText(QString("%1%2 Hz").arg(v > 0 ? "+" : "").arg(v));
+        pendPbt_ = v;
+        if (!pbtTx_->isActive()) pbtTx_->start();
+    });
     lay->addWidget(pbtBox);
 
     // --- DSP: NR / NB / auto-notch -------------------------------------------
@@ -328,6 +349,10 @@ void ControlPanel::showHwNb(bool on) {
 }
 
 void ControlPanel::showPbt(int pbtHz) {
+    {   // slider mirrors radio state without re-emitting; pegs beyond +/-2 kHz
+        QSignalBlocker b(pbt_);
+        pbt_->setValue(std::clamp(pbtHz, -2000, 2000));
+    }
     pbtVal_->setText(QString("%1%2 Hz").arg(pbtHz > 0 ? "+" : "").arg(pbtHz));
     // Make an off-center passband visible at a glance.
     pbtVal_->setStyleSheet(pbtHz == 0 ? "color: #c8d4e0;" : "color: #f0b040;");

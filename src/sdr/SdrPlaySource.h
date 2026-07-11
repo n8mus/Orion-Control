@@ -35,6 +35,10 @@ public:
     // Front-end gain. The shared-antenna feed is hot, so more attenuation than
     // usual: raise LNAstate (0..8 on RSP2) and gRdB (20..59) to clear ADC overload.
     void setGain(int gRdB, int lnaState) { gRdB_ = gRdB; lnaState_ = lnaState; }
+    // Same, but applies immediately while streaming (user gain control).
+    void setGainLive(int gRdB, int lnaState);
+    int  gainReduction() const { return gRdB_; }
+    int  lnaState() const { return lnaState_; }
 
     // Decimation reduces the effective sample rate / panadapter span
     // (fs / factor). factor 1 = off. Set before start(). Effective span in Hz is

@@ -54,7 +54,11 @@ public:
     void setSpeechProc(int level);                // *TS<0-9> (0 = off)
     void setAuxInputGain(int pct);                // *TI<0-100> (rear line input)
     void setMonitor(int pct);                     // *TO<0-100> (TX audio monitor)
-    void setAfVolume(int pct);                    // *UM<0-100> (main RX volume)
+    void setAfVolume(Rx rx, int pct);             // *UM/*US (percent -> 0-255 byte)
+    // Audio routing: what each output carries — left phone, right phone,
+    // speaker; letters 'M' main / 'S' sub / 'B' both. One VFO per ear for
+    // split work = *UCMS<spk>.
+    void setAudioRouting(char left, char right, char speaker);   // *UC
     void setTunerEnabled(bool on);                // *TT<0/1> (internal tuner)
     void startTune();                             // *TTT (tune cycle)
 
@@ -84,6 +88,8 @@ public:
     void queryTxAudio();                          // ?TM / ?TS / ?TO / ?UM (some speculative)
     void queryAuxInputGain();                     // ?TI (undocumented query)
     void queryTuner();                            // ?TT
+    void queryAfVolume(Rx rx);                    // ?UM / ?US
+    void queryAudioRouting();                     // ?UC
     // Speculative: NR/NB/AN level queries appear in no document, but neither
     // did the notch ones and the radio answered those. Unanswered queries are
     // harmless; if replies come back the *Reported signals below fire.
@@ -113,7 +119,8 @@ signals:
     void speechProcReported(int level);
     void auxInputGainReported(int pct);
     void monitorReported(int pct);
-    void afVolumeReported(int pct);
+    void afVolumeReported(Rx rx, int pct);
+    void audioRoutingReported(char left, char right, char speaker);
     void tunerReported(bool on);
     void vfoAssignmentReported(char mainRx, char subRx, char tx);
     void antennaRoutingReported(char ant1, char ant2, char rxAnt);

@@ -63,6 +63,11 @@ bool SdrPlaySource::start(double centerHz, double sampleRate) {
     rx->tunerParams.gain.gRdB                = gRdB_;
     rx->tunerParams.gain.LNAstate            = static_cast<unsigned char>(lnaState_);
     rx->ctrlParams.agc.enable                = sdrplay_api_AGC_DISABLE;
+    // Zero-IF leaves a DC spike parked at the capture center — which is always
+    // the dial, so it "follows" the tuning. Let the API's DC and IQ-imbalance
+    // correction chase it down.
+    rx->ctrlParams.dcOffset.DCenable         = 1;
+    rx->ctrlParams.dcOffset.IQenable         = 1;
     if (decim_ > 1) {                        // narrow span + matching analog BW
         rx->ctrlParams.decimation.enable          = 1;
         rx->ctrlParams.decimation.decimationFactor = static_cast<unsigned char>(decim_);
@@ -89,6 +94,17 @@ bool SdrPlaySource::start(double centerHz, double sampleRate) {
     std::printf("[sdrplay] RSP2 streaming: %.0f Hz @ %.0f Ssps, antenna %c\n",
                 centerHz, sampleRate, antennaB_ ? 'B' : 'A');
     return true;
+}
+
+void SdrPlaySource::setGainLive(int gRdB, int lnaState) {
+    gRdB_ = std::max(20, std::min(59, gRdB));
+    lnaState_ = std::max(0, std::min(8, lnaState));
+    if (!streaming_ || !params_) return;
+    auto* rx = params_->rxChannelA;
+    rx->tunerParams.gain.gRdB     = gRdB_;
+    rx->tunerParams.gain.LNAstate = static_cast<unsigned char>(lnaState_);
+    sdrplay_api_Update(device_.dev, device_.tuner,
+                       sdrplay_api_Update_Tuner_Gr, sdrplay_api_Update_Ext1_None);
 }
 
 void SdrPlaySource::stop() {

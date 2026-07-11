@@ -742,8 +742,8 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
 
     // Span readout (the scale band draws its own separators).
     p.setPen(QColor(200, 200, 200, 160));
-    p.drawText(6, 14, QString("span %1 kHz   wheel: tune (shift fine)  edge: cut  "
-                              "shift+edge: bw  body: pbt")
+    p.drawText(6, 14, QString("span %1 kHz   wheel: tune (shift fine)  drag: tune  "
+                              "edge: bw  shift+edge: cut  ctrl+body: pbt  rclick: VFO B")
                           .arg(viewSpanHz_ / 1000.0, 0, 'f', viewSpanHz_ < 20000 ? 1 : 0));
 }
 
@@ -823,10 +823,11 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     const bool onLo = std::abs(x - hzToX(pbLoHz_)) <= edgeTol;
     const bool onHi = std::abs(x - hzToX(pbHiHz_)) <= edgeTol;
     if (onLo || onHi) {
-        // Shift+edge = symmetric width change (pure bandwidth, like the BW
-        // knob); plain edge = hi/lo-cut (width + center).
-        if (e->modifiers() & Qt::ShiftModifier) drag_ = Drag::SymEdge;
-        else                                    drag_ = onLo ? Drag::LoEdge : Drag::HiEdge;
+        // Plain edge = symmetric width change (pure bandwidth, PBT untouched —
+        // matches the front-panel BW knob and the sub filter's behavior);
+        // Shift+edge = hi/lo-cut (width + center, moves PBT).
+        if (e->modifiers() & Qt::ShiftModifier) drag_ = onLo ? Drag::LoEdge : Drag::HiEdge;
+        else                                    drag_ = Drag::SymEdge;
         emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
         return;
     }
@@ -845,9 +846,12 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
     if (x > hzToX(pbLoHz_) && x < hzToX(pbHiHz_)) {
-        // Inside the passband: could become a body drag (pure PBT slide) or,
-        // if released without moving, a click-to-tune. Decide on first move.
+        // Inside the passband: dragging moves the VFO itself (drag-to-tune);
+        // Ctrl+drag slides the PBT instead. Released without moving it's a
+        // click-to-tune. Decided on first move.
         drag_ = Drag::BodyPending;
+        bodyPbt_ = e->modifiers() & Qt::ControlModifier;
+        dragStartCenter_ = centerHz_;
         return;
     }
     drag_ = Drag::None;
@@ -914,7 +918,15 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     }
     if (drag_ == Drag::BodyPending) {
         if (std::abs(x - dragStartX_) < 4) return;  // still just a click
-        drag_ = Drag::Body;
+        if (!bodyPbt_) {
+            drag_ = Drag::VfoA;                     // drag the VFO, not the filter
+            wheelVfo_ = 'A';
+            const qint64 delta = hz - xToHz(dragStartX_);
+            emit vfoADragged(static_cast<uint64_t>(
+                static_cast<qint64>(dragStartCenter_) + delta));
+            return;                                 // MUST NOT fall into edge math
+        }
+        drag_ = Drag::Body;                         // Ctrl: classic PBT slide
         emit passbandEditBegan(dragStartLo_, dragStartHi_);
     }
     if (drag_ == Drag::Body) {

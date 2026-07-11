@@ -15,38 +15,41 @@ namespace ttc {
 namespace {
 QLabel* makeCaption(const QString& text, QWidget* parent) {
     auto* l = new QLabel(text, parent);
-    l->setStyleSheet("color: #8fa3b8; font-size: 10px; font-weight: bold;");
+    l->setStyleSheet("color: #8fa3b8; font-size: 13px; font-weight: bold;");
     return l;
 }
 } // namespace
 
+// Sized ~150% (like the AUDIO popup): these get adjusted mid-operation, so
+// bigger targets beat compactness.
 DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     setStyleSheet(
-        "QWidget { background: #141b24; color: #c8d4e0; font-size: 11px; }"
+        "QWidget { background: #141b24; color: #c8d4e0; font-size: 14px; }"
         "QComboBox { background: #1c2430; border: 1px solid #2a3644; border-radius: 3px;"
-        " padding: 2px 6px; }"
+        " padding: 4px 8px; }"
         "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
         " selection-background-color: #2a3644; }"
-        "QCheckBox { spacing: 6px; }"
+        "QCheckBox { spacing: 8px; }"
+        "QCheckBox::indicator { width: 17px; height: 17px; }"
         "QLineEdit { background: #1c2430; border: 1px solid #2a3644; border-radius: 3px;"
-        " padding: 2px 6px; }"
-        "QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }"
-        "QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px;"
+        " padding: 4px 8px; }"
+        "QSlider::groove:horizontal { height: 6px; background: #2a3644; border-radius: 3px; }"
+        "QSlider::handle:horizontal { width: 18px; margin: -7px 0; border-radius: 9px;"
         " background: #6aa5d8; }");
 
     auto* g = new QGridLayout(this);
-    g->setContentsMargins(12, 10, 12, 10);
-    g->setHorizontalSpacing(10);
-    g->setVerticalSpacing(8);
+    g->setContentsMargins(16, 14, 16, 14);
+    g->setHorizontalSpacing(12);
+    g->setVerticalSpacing(11);
 
     // Reference level: the dB value at the TOP of the spectrum scale. Lower it
     // to pull weak signals up out of the floor, raise it for strong-signal work.
     g->addWidget(makeCaption("REF LVL", this), 0, 0);
     ref_ = new QSlider(Qt::Horizontal, this);
     ref_->setRange(-100, -20);
-    ref_->setFixedWidth(150);
+    ref_->setFixedWidth(225);
     refVal_ = new QLabel(this);
-    refVal_->setFixedWidth(52);
+    refVal_->setFixedWidth(70);
     g->addWidget(ref_, 0, 1);
     g->addWidget(refVal_, 0, 2);
 
@@ -54,9 +57,9 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(makeCaption("RANGE", this), 1, 0);
     range_ = new QSlider(Qt::Horizontal, this);
     range_->setRange(30, 120);
-    range_->setFixedWidth(150);
+    range_->setFixedWidth(225);
     rangeVal_ = new QLabel(this);
-    rangeVal_->setFixedWidth(52);
+    rangeVal_->setFixedWidth(70);
     g->addWidget(range_, 1, 1);
     g->addWidget(rangeVal_, 1, 2);
 

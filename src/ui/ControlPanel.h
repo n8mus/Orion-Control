@@ -33,6 +33,7 @@ signals:
     void notchToggled(bool on);           // manual notch engage
     void hwNbToggled(bool on);            // hardware noise blanker
     void pbtZeroRequested();              // "PBT 0" button
+    void pbtChanged(int hz);              // slider, coalesced while sliding
 
 public slots:
     void showBand(int bandIdx);           // -1 = out of every band
@@ -67,10 +68,13 @@ private:
     QPushButton* hwNbBtn_  = nullptr;
     QPushButton* preBtn_   = nullptr;
     QLabel* pbtVal_ = nullptr;
+    QSlider* pbt_   = nullptr;
     // Trailing-edge coalescer for slider drags (the Orion's UART services
     // commands on a ~100 ms cycle; raw slider-move rates would flood it).
     QTimer* gainTx_ = nullptr;
     int pendGain_ = -1;
+    QTimer* pbtTx_ = nullptr;
+    int pendPbt_ = -9999;
 };
 
 } // namespace ttc

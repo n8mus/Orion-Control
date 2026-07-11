@@ -167,6 +167,7 @@ private:
     int      vfoBLo_ = -1250, vfoBHi_ = 1250;      // B filter edges (offsets from B)
     qint64   dragStartBOff_ = 0;                   // B offset at grab time
     uint64_t dragStartCenter_ = 0;                 // A dial at grab time
+    bool     bodyPbt_ = false;                     // Ctrl held at body grab -> PBT slide
     char     wheelVfo_ = 'A';                      // wheel follows the last-tuned VFO
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the

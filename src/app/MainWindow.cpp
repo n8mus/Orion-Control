@@ -7,6 +7,8 @@
 #include <QStatusBar>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QGridLayout>
+#include <QComboBox>
 #include <QWidget>
 #include <QTimer>
 #include <QToolButton>
@@ -225,6 +227,62 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     topLay->addSpacing(8);
     topLay->addWidget(spotsBtn);
 
+    // "AUDIO" dropdown: per-receiver volume + mute and the Orion's output
+    // routing (*UC) — including one-VFO-per-ear for split pileups.
+    auto* audioBtn = new QToolButton(topStrip);
+    audioBtn->setText("AUDIO ▾");
+    audioBtn->setPopupMode(QToolButton::InstantPopup);
+    audioBtn->setFocusPolicy(Qt::NoFocus);
+    audioBtn->setStyleSheet(
+        "QToolButton { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;"
+        " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+        "QToolButton::menu-indicator { image: none; }");
+    auto* audioMenu = new QMenu(audioBtn);
+    audioPanel_ = new AudioPanel(audioMenu);
+    auto* audioAction = new QWidgetAction(audioMenu);
+    audioAction->setDefaultWidget(audioPanel_);
+    audioMenu->addAction(audioAction);
+    audioBtn->setMenu(audioMenu);
+    topLay->addSpacing(8);
+    topLay->addWidget(audioBtn);
+
+    // Volume edits (panel sliders or the TX bar's AF, which is main volume).
+    // Editing a muted receiver's volume implicitly unmutes it.
+    auto setVolume = [this](Rx rx, int pct) {
+        const int i = rx == Rx::Main ? 0 : 1;
+        vol_[i] = pct;
+        if (audioPanel_->isMuted(rx)) audioPanel_->showMute(rx, false);
+        radio_.setAfVolume(rx, pct);
+        if (rx == Rx::Main) txBar_->showAfVolume(pct);
+        audioPanel_->showVolume(rx, pct);
+        statusBar()->showMessage(QString("volume %1 -> %2")
+                                     .arg(rx == Rx::Main ? "A" : "B").arg(pct));
+    };
+    connect(audioPanel_, &AudioPanel::volumeEdited, this, setVolume);
+    connect(audioPanel_, &AudioPanel::muteToggled, this, [this](Rx rx, bool on) {
+        const int i = rx == Rx::Main ? 0 : 1;
+        if (on) {
+            preMute_[i] = vol_[i];
+            radio_.setAfVolume(rx, 0);
+        } else {
+            radio_.setAfVolume(rx, preMute_[i]);
+            vol_[i] = preMute_[i];
+            audioPanel_->showVolume(rx, preMute_[i]);
+            if (rx == Rx::Main) txBar_->showAfVolume(preMute_[i]);
+        }
+        statusBar()->showMessage(QString("%1 %2")
+                                     .arg(rx == Rx::Main ? "VFO A audio" : "VFO B audio")
+                                     .arg(on ? "MUTED" : "unmuted"));
+    });
+    connect(audioPanel_, &AudioPanel::routingEdited, this,
+            [this](char l, char r, char s) {
+                radio_.setAudioRouting(l, r, s);
+                statusBar()->showMessage(
+                    QString("audio: phones L=%1 R=%2  speaker=%3").arg(l).arg(r).arg(s));
+            });
+    connect(&radio_, &TenTecOrion::audioRoutingReported, this,
+            [this](char l, char r, char s) { audioPanel_->showRouting(l, r, s); });
+
     auto pushSpots = [this, spotsOn] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked())
@@ -265,6 +323,48 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     sdrMenu->addSeparator();
     auto* bcNotch = sdrMenu->addAction("Broadcast (MW) notch");
     bcNotch->setCheckable(true);
+    sdrMenu->addSeparator();
+
+    // Front-end gain, live-adjustable: too much gain = ADC overload warnings
+    // and a taller DC spike; too little buries weak signals. IF slider shows
+    // gain (right = hotter, mapped to the API's 59..20 dB reduction); LNA is
+    // the coarse attenuator (0 = max gain .. 8 = max attenuation).
+    auto* gainW = new QWidget(sdrMenu);
+    gainW->setStyleSheet(
+        "QWidget { background: #141b24; color: #c8d4e0; font-size: 13px; }"
+        "QLabel[cap=\"1\"] { color: #8fa3b8; font-size: 12px; font-weight: bold; }"
+        "QSlider::groove:horizontal { height: 6px; background: #2a3644; border-radius: 3px; }"
+        "QSlider::handle:horizontal { width: 18px; margin: -7px 0; border-radius: 9px;"
+        " background: #6aa5d8; }"
+        "QComboBox { background: #1c2430; border: 1px solid #2a3644; border-radius: 3px;"
+        " padding: 3px 8px; }"
+        "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
+        " selection-background-color: #2a3644; }");
+    auto* gg = new QGridLayout(gainW);
+    gg->setContentsMargins(14, 10, 14, 10);
+    auto* ifCap = new QLabel("IF GAIN", gainW);
+    ifCap->setProperty("cap", "1");
+    gg->addWidget(ifCap, 0, 0);
+    auto* ifGain = new QSlider(Qt::Horizontal, gainW);
+    ifGain->setRange(20, 59);                       // stored as reduction dB
+    ifGain->setInvertedAppearance(true);            // right = more gain
+    ifGain->setFixedWidth(170);
+    auto* ifVal = new QLabel(gainW);
+    ifVal->setFixedWidth(48);
+    gg->addWidget(ifGain, 0, 1);
+    gg->addWidget(ifVal, 0, 2);
+    auto* lnaCap = new QLabel("LNA", gainW);
+    lnaCap->setProperty("cap", "1");
+    gg->addWidget(lnaCap, 1, 0);
+    auto* lna = new QComboBox(gainW);
+    for (int i = 0; i <= 8; ++i)
+        lna->addItem(QString("%1%2").arg(i).arg(i == 0 ? "  (max gain)"
+                                              : i == 8 ? "  (max attn)" : ""));
+    gg->addWidget(lna, 1, 1, 1, 2);
+    auto* gainAction = new QWidgetAction(sdrMenu);
+    gainAction->setDefaultWidget(gainW);
+    sdrMenu->addAction(gainAction);
+
     sdrBtn->setMenu(sdrMenu);
     topLay->addSpacing(8);
     topLay->addWidget(sdrBtn);
@@ -273,11 +373,29 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QSettings s;
         const bool useB = s.value("sdr/antennaB", false).toBool();
         const bool bcn  = s.value("sdr/broadcastNotch", false).toBool();
+        const int  gr   = std::clamp(s.value("sdr/gRdB", 40).toInt(), 20, 59);
+        const int  ls   = std::clamp(s.value("sdr/lna", 6).toInt(), 0, 8);
         (useB ? antB : antA)->setChecked(true);
         bcNotch->setChecked(bcn);
         sdr_.setAntennaB(useB);
         sdr_.setBroadcastNotch(bcn);
+        sdr_.setGain(gr, ls);
+        const QSignalBlocker b1(ifGain), b2(lna);
+        ifGain->setValue(gr);
+        lna->setCurrentIndex(ls);
+        ifVal->setText(QString("-%1 dB").arg(gr));
     }
+    auto applySdrGain = [this, ifGain, ifVal, lna] {
+        const int gr = ifGain->value(), ls = lna->currentIndex();
+        ifVal->setText(QString("-%1 dB").arg(gr));
+        sdr_.setGainLive(gr, ls);
+        QSettings s;
+        s.setValue("sdr/gRdB", gr);
+        s.setValue("sdr/lna", ls);
+        statusBar()->showMessage(QString("SDR gain: IF -%1 dB  LNA state %2").arg(gr).arg(ls));
+    };
+    connect(ifGain, &QSlider::valueChanged, this, applySdrGain);
+    connect(lna, &QComboBox::currentIndexChanged, this, applySdrGain);
     connect(antA, &QAction::triggered, this, [this] {
         sdr_.setAntennaB(false);
         QSettings().setValue("sdr/antennaB", false);
@@ -447,8 +565,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this](int p) { radio_.setMicGain(p); });
     connect(txBar_, &TxBar::monitorChanged, this,
             [this](int p) { radio_.setMonitor(p); });
-    connect(txBar_, &TxBar::afVolumeChanged, this,
-            [this](int p) { radio_.setAfVolume(p); });
+    connect(txBar_, &TxBar::afVolumeChanged, this, [this](int p) {
+        vol_[0] = p;                               // TX-bar AF = main volume
+        if (audioPanel_->isMuted(Rx::Main)) audioPanel_->showMute(Rx::Main, false);
+        radio_.setAfVolume(Rx::Main, p);
+        audioPanel_->showVolume(Rx::Main, p);
+    });
     connect(txBar_, &TxBar::tunerEnableToggled, this, [this](bool on) {
         tunerOn_ = on;
         radio_.setTunerEnabled(on);
@@ -517,8 +639,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(&radio_, &TenTecOrion::monitorReported, this,
             [this](int p) { txBar_->showMonitor(p); });
-    connect(&radio_, &TenTecOrion::afVolumeReported, this,
-            [this](int p) { txBar_->showAfVolume(p); });
+    connect(&radio_, &TenTecOrion::afVolumeReported, this, [this](Rx rx, int p) {
+        if (audioPanel_->isMuted(rx)) return;      // muted: 0 expected, keep slider
+        vol_[rx == Rx::Main ? 0 : 1] = p;
+        audioPanel_->showVolume(rx, p);
+        if (rx == Rx::Main) txBar_->showAfVolume(p);
+    });
     connect(&radio_, &TenTecOrion::tunerReported, this, [this](bool on) {
         tunerOn_ = on;
         txBar_->showTuner(on);
@@ -781,6 +907,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     };
     connect(panel_, &ControlPanel::pbtZeroRequested, this, zeroPbt);
     connect(pan_, &PanadapterWidget::pbtZeroRequested, this, zeroPbt);
+    // Sidebar PBT slider: deliberate shifts (already coalesced in the panel).
+    connect(panel_, &ControlPanel::pbtChanged, this, [this](int hz) {
+        radio_.setPbtHz(Rx::Main, hz);
+        rigPbtHz_ = hz;
+        sinceFilterEdit_.invalidate();              // explicit action: redraw now
+        refreshPassbandOverlay();
+        sinceFilterEdit_.restart();                 // ...then guard the poll echo
+        statusBar()->showMessage(QString("PBT -> %1%2 Hz")
+                                     .arg(hz > 0 ? "+" : "").arg(hz));
+    });
 
     // The radio reported its frequency (startup sync or dial-follow poll): keep the
     // rigctld cache and the panadapter center locked to the physical VFO.
@@ -880,6 +1016,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryNotch(Rx::Main);                // syncs notch center/width/engage
         radio_.queryTxPower();                      // syncs the TX bar
         radio_.queryTxAudio();
+        radio_.queryAfVolume(Rx::Sub);              // AUDIO panel (?UM in TxAudio)
+        radio_.queryAudioRouting();
+        // The startup burst can flood the Orion's UART servicing and drop a
+        // few query responses — re-ask for the audio state once it settles.
+        QTimer::singleShot(2500, this, [this] {
+            radio_.queryAfVolume(Rx::Main);
+            radio_.queryAfVolume(Rx::Sub);
+            radio_.queryAudioRouting();
+        });
         radio_.queryAuxInputGain();
         radio_.queryTuner();
         awaitingFreq_ = true;
@@ -896,7 +1041,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 8) {
+                    switch ((pollTick_ / 25) % 10) {
                         case 0:  radio_.queryAgc(Rx::Main);        break;
                         case 1:  radio_.queryRfGain(Rx::Main);     break;
                         case 2:  radio_.queryAttenuator(Rx::Main); break;
@@ -904,6 +1049,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                         case 4:  radio_.queryTxPower();            break;
                         case 5:  radio_.queryVfoAssignment();      break;
                         case 6:  radio_.queryAntennaRouting();     break;
+                        case 7:  radio_.queryAfVolume(Rx::Main);   // front-panel knobs
+                                 radio_.queryAfVolume(Rx::Sub);    break;
+                        case 8:  radio_.queryAudioRouting();       break;
                         default: radio_.queryNotch(Rx::Main);      break;
                     }
                 } else {

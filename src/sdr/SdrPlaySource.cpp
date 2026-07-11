@@ -118,12 +118,23 @@ void SdrPlaySource::streamCb(short* xi, short* xq, sdrplay_api_StreamCbParamsT*,
     self->cb_(IqBlock(self->scratch_.begin(), self->scratch_.begin() + numSamples));
 }
 
-void SdrPlaySource::eventCb(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT,
-                            sdrplay_api_EventParamsT*, void*) {
-    if (eventId == sdrplay_api_PowerOverloadChange)
-        std::fprintf(stderr, "[sdrplay] ADC power overload — reduce gain\n");
-    else if (eventId == sdrplay_api_DeviceRemoved)
+void SdrPlaySource::eventCb(sdrplay_api_EventT eventId, sdrplay_api_TunerSelectT tuner,
+                            sdrplay_api_EventParamsT*, void* ctx) {
+    auto* self = static_cast<SdrPlaySource*>(ctx);
+    if (eventId == sdrplay_api_PowerOverloadChange) {
+        // Expected whenever the shared-antenna feed goes hot (own TX): the API
+        // repeats the event until acknowledged, so ack it and log only rarely.
+        if (self)
+            sdrplay_api_Update(self->device_.dev, tuner,
+                               sdrplay_api_Update_Ctrl_OverloadMsgAck,
+                               sdrplay_api_Update_Ext1_None);
+        static int n = 0;
+        if (n++ % 50 == 0)
+            std::fprintf(stderr, "[sdrplay] ADC power overload (own TX?) — "
+                                 "reduce gain if this happens on receive\n");
+    } else if (eventId == sdrplay_api_DeviceRemoved) {
         std::fprintf(stderr, "[sdrplay] device removed\n");
+    }
 }
 
 } // namespace ttc

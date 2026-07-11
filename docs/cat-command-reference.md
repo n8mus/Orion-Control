@@ -31,6 +31,12 @@ profile quantizes it. See `src/radio/TenTecOrion.cpp` for the Orion implementati
 Set commands are fire-and-forget (no ACK). Queries return `@`-prefixed lines.
 Drag strategy: fire `*RMF`/`*RMP` coalesced to ~20-30/sec; reconcile via periodic query.
 
+### TX metering (?S while transmitting) — real v3 format differs from docs
+
+Live trace: `@STF024R004S608` = fwd 024 W, ref 004 W, **SWR as 8.8 fixed point**
+(608/256 = 2.38, matching the SWR computed from those powers). The manual's
+example shows a decimal (`S1.1`); the driver accepts both.
+
 ### Manual notch — UNDOCUMENTED commands, discovered by live probe (2026-07-10)
 
 In no public Ten-Tec document or hamlib. The V3 user-manual addendum (TT 74474)

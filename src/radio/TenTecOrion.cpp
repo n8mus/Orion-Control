@@ -201,10 +201,18 @@ void TenTecOrion::onLine(const QByteArray& line) {
         } else if (line[2] == 'T' && line[3] == 'F') { // TX: @STF<fwd>R<ref>S<swr>
             const int rPos = line.indexOf('R', 4);
             const int sPos = (rPos > 0) ? line.indexOf('S', rPos + 1) : -1;
-            if (rPos > 0 && sPos > 0)
+            if (rPos > 0 && sPos > 0) {
+                // v3 firmware sends SWR as 8.8 fixed point (x256): live trace
+                // "@STF024R004S608" = 24 W fwd, 4 W ref, 608/256 = SWR 2.38,
+                // which matches the SWR computed from those powers. The manual
+                // shows a decimal ("S1.1") — accept that too if a '.' appears.
+                const QByteArray swrField = line.mid(sPos + 1);
+                double swr = std::atof(swrField.constData());
+                if (!swrField.contains('.')) swr /= 256.0;
                 emit txMeterReported(std::atof(line.mid(4, rPos - 4).constData()),
                                      std::atof(line.mid(rPos + 1, sPos - rPos - 1).constData()),
-                                     std::atof(line.mid(sPos + 1).constData()));
+                                     swr);
+            }
         }
         return;
     }

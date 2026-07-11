@@ -140,20 +140,29 @@ QImage renderWorldMap(int w, int h) {
         const double lon = (360.0 * (x + 0.5) / w - 180.0) * M_PI / 180.0;
         cosDLon[x] = std::cos(lon - subLon);
     }
+    const double loEdge = std::sin(-9.0 * M_PI / 180.0);   // night below this
+    const double hiEdge = std::sin(6.0 * M_PI / 180.0);    // full day above
     for (int y = 0; y < h; ++y) {
         QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
         for (int x = 0; x < w; ++x) {
             const double sinElev = sinLatSinD[y] + cosLatCosD[y] * cosDLon[x];
-            // Day: dimmed to backdrop level. Night: much darker. The ramp
-            // between +5 and -10 degrees elevation is the grayline itself.
-            double day = (sinElev - std::sin(-10.0 * M_PI / 180.0))
-                         / (std::sin(5.0 * M_PI / 180.0)
-                            - std::sin(-10.0 * M_PI / 180.0));
-            day = std::clamp(day, 0.0, 1.0);
-            const int f = static_cast<int>(64 + day * 96);   // 25%..62% brightness
+            // Strong day/night split so the terminator is obvious at a glance.
+            double day = std::clamp((sinElev - loEdge) / (hiEdge - loEdge), 0.0, 1.0);
+            const int f = static_cast<int>(48 + day * 152);  // 19%..78% brightness
             const QRgb c = line[x];
-            line[x] = qRgb((qRed(c) * f) >> 8, (qGreen(c) * f) >> 8,
-                           (qBlue(c) * f) >> 8);
+            int r = (qRed(c)   * f) >> 8;
+            int g = (qGreen(c) * f) >> 8;
+            int b = (qBlue(c)  * f) >> 8;
+            // The grayline itself: a soft luminous band centered on the
+            // terminator (solar elevation ~0), where the gray-line DX lives.
+            const double band = 1.0 - std::abs(sinElev) / 0.10;
+            if (band > 0.0) {
+                const int glow = static_cast<int>(band * band * 70);
+                r = std::min(255, r + glow);
+                g = std::min(255, g + glow);
+                b = std::min(255, b + glow / 2);   // warm-gray, not blue
+            }
+            line[x] = qRgb(r, g, b);
         }
     }
     return img;

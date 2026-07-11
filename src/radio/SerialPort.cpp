@@ -94,7 +94,16 @@ void SerialPort::onReadable() {
         if (n < 0) { emit ioError(QStringLiteral("read: %1").arg(std::strerror(errno))); return; }
         break; // n == 0
     }
-    // Ten-Tec responses are terminated by CR (0x0D).
+    // Raw mode (Omni VII): binary payloads may contain 0x0D, so framing is
+    // the driver's job — hand the bytes over untouched.
+    if (rawMode_) {
+        if (!rxBuf_.isEmpty()) {
+            emit bytesReceived(rxBuf_);
+            rxBuf_.clear();
+        }
+        return;
+    }
+    // Line mode (Orion): responses are terminated by CR (0x0D).
     int idx;
     while ((idx = rxBuf_.indexOf('\r')) >= 0) {
         QByteArray line = rxBuf_.left(idx);

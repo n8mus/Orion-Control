@@ -16,6 +16,7 @@ class QToolButton;
 #include "ui/RoutingPanel.h"
 #include "ui/AudioPanel.h"
 #include "ui/TxBar.h"
+#include "radio/TenTecOmni7.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
 #include "dsp/SpectrumComputer.h"
@@ -51,8 +52,8 @@ private:
     void syncBandRegister();           // mirror any dial move into the band stack
     void recallStack(int band, int reg); // recall a band-stack register
     void recall60m(int chan);          // locked US 60 m channel (CH1..CH5)
-    TenTecOrion      radio_;
-    RigctldServer    rigctld_{&radio_};
+    RadioController* radio_;                  // owned (QObject child); see makeRadio
+    RigctldServer    rigctld_;
     SpotClient       spotClient_;                  // DX-cluster telnet feed
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;

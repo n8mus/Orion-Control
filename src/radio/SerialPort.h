@@ -24,9 +24,13 @@ public:
     bool isOpen() const { return fd_ >= 0; }
 
     void write(const QByteArray& data);
+    // Raw mode: emit bytesReceived with unframed chunks instead of CR-split
+    // lines — the Omni VII's binary payloads can contain 0x0D.
+    void setRawMode(bool on) { rawMode_ = on; }
 
 signals:
     void lineReceived(const QByteArray& line);   // one CR-delimited response
+    void bytesReceived(const QByteArray& chunk); // raw mode only
     void ioError(const QString& what);
 
 private slots:
@@ -36,6 +40,7 @@ private:
     int fd_ = -1;
     QSocketNotifier* notifier_ = nullptr;
     QByteArray rxBuf_;
+    bool rawMode_ = false;
 };
 
 } // namespace ttc

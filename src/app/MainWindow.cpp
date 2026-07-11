@@ -32,8 +32,21 @@ static int bwMaxFor(Mode m);    // per-mode filter ceiling (AM runs to 8000)
 // the dial so its zero-IF DC artifact can never sit on the tuned frequency.
 static constexpr int kLoOffsetHz = 60000;
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
-    setWindowTitle("Orion III SDR Console");
+// Radio driver factory: TTC_RADIO env overrides the persisted picker choice.
+// "orion" = Ten-Tec Orion 565/566 (ASCII CAT); "omni8" = Omni VII 588
+// (binary CAT, RTS/CTS) — the console's Omni 8 personality.
+static RadioController* makeRadio(QObject* parent) {
+    QString model = qEnvironmentVariable("TTC_RADIO");
+    if (model.isEmpty()) model = QSettings().value("radio/model", "orion").toString();
+    if (model == "omni8" || model == "omni7")
+        return new TenTecOmni7(parent);
+    return new TenTecOrion(parent);
+}
+
+MainWindow::MainWindow(QWidget* parent)
+    : QMainWindow(parent), radio_(makeRadio(this)), rigctld_(radio_) {
+    setWindowTitle(radio_->caps().dualReceiver ? "Orion III SDR Console"
+                                               : "Omni 8 SDR Console");
 
     pan_ = new PanadapterWidget(this);
     pan_->setPassband(-1200, 1200);
@@ -163,7 +176,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             " color: #fff6e0; }");
         connect(lockBtn_[i], &QToolButton::toggled, this, [this, i](bool on) {
             (i == 0 ? vfoLockA_ : vfoLockB_) = on;
-            radio_.setVfoLock(i == 0 ? 'A' : 'B', on);
+            radio_->setVfoLock(i == 0 ? 'A' : 'B', on);
             pan_->setVfoLocks(vfoLockA_, vfoLockB_);
             statusBar()->showMessage(QString("VFO %1 %2")
                                          .arg(i == 0 ? 'A' : 'B')
@@ -411,7 +424,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         volTx_[i]->setSingleShot(true);
         volTx_[i]->setInterval(60);
         connect(volTx_[i], &QTimer::timeout, this,
-                [this, i, rx] { radio_.setAfVolume(rx, pendVol_[i]); });
+                [this, i, rx] { radio_->setAfVolume(rx, pendVol_[i]); });
         connect(volSl_[i], &QSlider::valueChanged, this, [this, i, rx](int v) {
             volLbl_[i]->setText(QString::number(v));
             vol_[i] = v;
@@ -429,9 +442,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             muted_[i] = on;
             if (on) {
                 preMute_[i] = vol_[i];
-                radio_.setAfVolume(rx, 0);
+                radio_->setAfVolume(rx, 0);
             } else {
-                radio_.setAfVolume(rx, preMute_[i]);
+                radio_->setAfVolume(rx, preMute_[i]);
                 vol_[i] = preMute_[i];
                 const QSignalBlocker b(volSl_[i]);
                 volSl_[i]->setValue(preMute_[i]);
@@ -444,11 +457,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }
     connect(audioPanel_, &AudioPanel::routingEdited, this,
             [this](char l, char r, char s) {
-                radio_.setAudioRouting(l, r, s);
+                radio_->setAudioRouting(l, r, s);
                 statusBar()->showMessage(
                     QString("audio: phones L=%1 R=%2  speaker=%3").arg(l).arg(r).arg(s));
             });
-    connect(&radio_, &TenTecOrion::audioRoutingReported, this,
+    connect(radio_, &RadioController::audioRoutingReported, this,
             [this](char l, char r, char s) { audioPanel_->showRouting(l, r, s); });
 
     auto pushSpots = [this, spotsOn] {
@@ -483,6 +496,28 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         "QToolButton::menu-indicator { image: none; }");
     auto* sdrMenu = new QMenu(sdrBtn);
     styleMenu(sdrMenu);
+    // Radio picker: which driver the console runs. Takes effect on the next
+    // launch (the driver, serial framing, and rigctld identity are built at
+    // startup). TTC_RADIO env still overrides for testing.
+    {
+        auto* radioGroup = new QActionGroup(this);
+        radioGroup->setExclusive(true);
+        auto* rOrion = radioGroup->addAction(sdrMenu->addAction("Radio: Orion III  (565)"));
+        auto* rOmni  = radioGroup->addAction(sdrMenu->addAction("Radio: Omni 8  (588)"));
+        rOrion->setCheckable(true);
+        rOmni->setCheckable(true);
+        const bool isOmni = !radio_->caps().dualReceiver;
+        (isOmni ? rOmni : rOrion)->setChecked(true);
+        connect(rOrion, &QAction::triggered, this, [this] {
+            QSettings().setValue("radio/model", "orion");
+            statusBar()->showMessage("radio: Orion III — restart the console to switch");
+        });
+        connect(rOmni, &QAction::triggered, this, [this] {
+            QSettings().setValue("radio/model", "omni8");
+            statusBar()->showMessage("radio: Omni 8 — restart the console to switch");
+        });
+        sdrMenu->addSeparator();
+    }
     auto* antGroup = new QActionGroup(this);
     antGroup->setExclusive(true);
     auto* antA = antGroup->addAction(sdrMenu->addAction("Antenna A  (Orion)"));
@@ -640,7 +675,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(notchTx_, &QTimer::timeout, this, &MainWindow::sendPendingNotch);
 
     // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
-    connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
+    connect(radio_, &RadioController::modeReported, this, [this](Rx rx, Mode m) {
         if (rx == Rx::Sub) { subMode_ = m; return; }
         rigctld_.cacheMode(m);                      // clients always see true mode
         if (samActive_ && m == samEngine_)          // SAM's engine reporting in:
@@ -676,21 +711,21 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(pan_, &PanadapterWidget::notchWidthAdjustRequested, this, [this](int steps) {
         notchWidth_ = std::clamp(notchWidth_ + steps * 10, 10, 300);
-        radio_.setNotchWidth(Rx::Main, notchWidth_);
+        radio_->setNotchWidth(Rx::Main, notchWidth_);
         sinceNotchEdit_.restart();
         syncNotchUi();
         statusBar()->showMessage(QString("%1 width -> %2 Hz")
                                      .arg(safOn_ ? "SAF" : "notch").arg(notchWidth_));
     });
     connect(panel_, &ControlPanel::notchToggled, this, [this](bool on) {
-        radio_.setNotchEngaged(Rx::Main, on);
+        radio_->setNotchEngaged(Rx::Main, on);
         notchOn_ = on;
         safOn_ = false;                            // NM either steals or stops the engine
         sinceNotchEdit_.restart();
         syncNotchUi();
     });
     connect(panel_, &ControlPanel::safToggled, this, [this](bool on) {
-        radio_.setSaf(Rx::Main, on);
+        radio_->setSaf(Rx::Main, on);
         safOn_ = on;
         notchOn_ = on;                             // NS1 -> NM reads 1; NS0 kills both
         sinceNotchEdit_.restart();
@@ -699,39 +734,39 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                     : "SAF off");
     });
     connect(panel_, &ControlPanel::hwNbToggled, this,
-            [this](bool on) { radio_.setHardwareNb(Rx::Main, on); });
-    connect(&radio_, &TenTecOrion::notchCenterReported, this, [this](Rx rx, int hz) {
+            [this](bool on) { radio_->setHardwareNb(Rx::Main, on); });
+    connect(radio_, &RadioController::notchCenterReported, this, [this](Rx rx, int hz) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         notchCenter_ = hz;
         syncNotchUi();
     });
-    connect(&radio_, &TenTecOrion::notchWidthReported, this, [this](Rx rx, int hz) {
+    connect(radio_, &RadioController::notchWidthReported, this, [this](Rx rx, int hz) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         notchWidth_ = hz;
         syncNotchUi();
     });
-    connect(&radio_, &TenTecOrion::notchEngagedReported, this, [this](Rx rx, bool on) {
+    connect(radio_, &RadioController::notchEngagedReported, this, [this](Rx rx, bool on) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         notchOn_ = on;
         if (!on) safOn_ = false;                   // engine off implies SAF off
         syncNotchUi();
     });
-    connect(&radio_, &TenTecOrion::safReported, this, [this](Rx rx, bool on) {
+    connect(radio_, &RadioController::safReported, this, [this](Rx rx, bool on) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         safOn_ = on;
         if (on) notchOn_ = true;                   // SAF active = engine engaged
         syncNotchUi();
     });
-    connect(&radio_, &TenTecOrion::hardwareNbReported, this, [this](Rx rx, bool on) {
+    connect(radio_, &RadioController::hardwareNbReported, this, [this](Rx rx, bool on) {
         if (rx == Rx::Main) panel_->showHwNb(on);
     });
 
     // Radio state -> control surface (front-panel changes reflect on screen).
-    connect(&radio_, &TenTecOrion::sMeterReported, this, [this](int mainRaw, int) {
+    connect(radio_, &RadioController::sMeterReported, this, [this](int mainRaw, int) {
         if (std::getenv("TTC_SELFTEST")) {
             static int n = 0;
             if (++n % 4 == 1) std::fprintf(stderr, "[radio] S-meter main raw %d\n", mainRaw);
@@ -739,7 +774,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         smeter_->setRawLevel(mainRaw);
         rigctld_.cachePtt(false);                   // radio answered in receive
     });
-    connect(&radio_, &TenTecOrion::txMeterReported, this,
+    connect(radio_, &RadioController::txMeterReported, this,
             [this](double fwd, double ref, double swr) {
                 smeter_->setTxLevel(fwd, ref, swr);
                 rigctld_.cachePtt(true);            // radio is provably keyed
@@ -748,7 +783,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (txBar_->ampMode() && fwd > txBar_->ampLimit() * 1.15
                     && (!sinceEnforce_.isValid() || sinceEnforce_.elapsed() > 1000)) {
                     sinceEnforce_.restart();
-                    radio_.setTxPower(txBar_->ampLimit());
+                    radio_->setTxPower(txBar_->ampLimit());
                     txBar_->showTxPower(txBar_->ampLimit());
                     statusBar()->showMessage(
                         QString("AMP LIMIT: %1 W measured, drive forced to %2")
@@ -758,24 +793,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // TX bar <-> radio.
     connect(txBar_, &TxBar::txPowerChanged, this,
-            [this](int p) { radio_.setTxPower(p); });
+            [this](int p) { radio_->setTxPower(p); });
     connect(txBar_, &TxBar::micGainChanged, this,
-            [this](int p) { radio_.setMicGain(p); });
+            [this](int p) { radio_->setMicGain(p); });
     connect(audioPanel_, &AudioPanel::monitorChanged, this,
-            [this](int p) { radio_.setMonitor(p); });
+            [this](int p) { radio_->setMonitor(p); });
     connect(txBar_, &TxBar::txFilterChanged, this, [this](int hz) {
         txBwHz_ = hz;
-        radio_.setTxFilter(hz);
+        radio_->setTxFilter(hz);
     });
     connect(txBar_, &TxBar::speechProcChanged, this, [this](int l) {
         if (!digital_) lastSpeechProc_ = l;
-        radio_.setSpeechProc(l);
+        radio_->setSpeechProc(l);
     });
     connect(txBar_, &TxBar::profileRecalled, this, &MainWindow::applyTxProfile);
     connect(txBar_, &TxBar::profileSaveRequested, this, &MainWindow::saveTxProfile);
     connect(txBar_, &TxBar::tunerEnableToggled, this, [this](bool on) {
         tunerOn_ = on;
-        radio_.setTunerEnabled(on);
+        radio_->setTunerEnabled(on);
     });
     tuneTimeout_ = new QTimer(this);
     tuneTimeout_->setSingleShot(true);
@@ -786,7 +821,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (tunerOn_) {
             // Internal tuner enabled: the radio runs its own cycle (*TTT
             // generates its own carrier and drops it when matched).
-            radio_.startTune();
+            radio_->startTune();
             statusBar()->showMessage("internal tuner: tune cycle started");
             txBar_->showTuneActive(false);         // momentary in this mode
             return;
@@ -810,11 +845,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QSettings s;
         s.setValue("amp/enabled", on);
         s.setValue("amp/limit", limit);
-        if (on) radio_.queryTxPower();              // check the current drive now
+        if (on) radio_->queryTxPower();              // check the current drive now
         statusBar()->showMessage(on ? QString("amp mode: drive capped at %1 W").arg(limit)
                                     : "amp mode off");
     });
-    connect(&radio_, &TenTecOrion::txPowerReported, this, [this](int p) {
+    connect(radio_, &RadioController::txPowerReported, this, [this](int p) {
         lastTxPwr_ = p;                             // for restore after manual tune
         if (tuning_) return;                        // don't fight the tune carrier
         // Amp protection, slow path: the periodic ?TP poll catches a front-
@@ -822,7 +857,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (txBar_->ampMode() && p > txBar_->ampLimit()) {
             if (!sinceEnforce_.isValid() || sinceEnforce_.elapsed() > 1000) {
                 sinceEnforce_.restart();
-                radio_.setTxPower(txBar_->ampLimit());
+                radio_->setTxPower(txBar_->ampLimit());
                 statusBar()->showMessage(
                     QString("AMP LIMIT: drive %1 forced back to %2 W")
                         .arg(p).arg(txBar_->ampLimit()));
@@ -832,7 +867,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         txBar_->showTxPower(p);
     });
-    connect(&radio_, &TenTecOrion::micGainReported, this, [this](int p) {
+    connect(radio_, &RadioController::micGainReported, this, [this](int p) {
         txBar_->showMicGain(p);
         micNow_ = p;
         // Learn the voice mic setting — but never learn 0: mic 0 is the
@@ -841,20 +876,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         // restore so DIG-off "resets" to zero.
         if (!digital_ && p > 0) lastMicGain_ = p;
     });
-    connect(&radio_, &TenTecOrion::speechProcReported, this, [this](int l) {
+    connect(radio_, &RadioController::speechProcReported, this, [this](int l) {
         // Proc 0 is a legitimate voice setting, so gate the learn on the
         // radio actually being in voice (mic up) — otherwise a leftover
         // digital state (mic 0 + proc 0) records proc "off" as the setup.
         if (!digital_ && micNow_ > 0) lastSpeechProc_ = l;
         txBar_->showSpeechProc(l);
     });
-    connect(&radio_, &TenTecOrion::txFilterReported, this, [this](int hz) {
+    connect(radio_, &RadioController::txFilterReported, this, [this](int hz) {
         txBwHz_ = hz;
         txBar_->showTxFilter(hz);
     });
-    connect(&radio_, &TenTecOrion::monitorReported, this,
+    connect(radio_, &RadioController::monitorReported, this,
             [this](int p) { audioPanel_->showMonitor(p); });
-    connect(&radio_, &TenTecOrion::afVolumeReported, this, [this](Rx rx, int p) {
+    connect(radio_, &RadioController::afVolumeReported, this, [this](Rx rx, int p) {
         const int i = rx == Rx::Main ? 0 : 1;
         if (muted_[i]) return;                     // muted: 0 expected, keep slider
         vol_[i] = p;
@@ -862,11 +897,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         volSl_[i]->setValue(p);
         volLbl_[i]->setText(QString::number(p));
     });
-    connect(&radio_, &TenTecOrion::tunerReported, this, [this](bool on) {
+    connect(radio_, &RadioController::tunerReported, this, [this](bool on) {
         tunerOn_ = on;
         txBar_->showTuner(on);
     });
-    connect(&radio_, &TenTecOrion::vfoLockReported, this, [this](char vfo, bool locked) {
+    connect(radio_, &RadioController::vfoLockReported, this, [this](char vfo, bool locked) {
         const int i = vfo == 'B' ? 1 : 0;
         (i == 0 ? vfoLockA_ : vfoLockB_) = locked;
         const QSignalBlocker b(lockBtn_[i]);        // reflect, don't re-send
@@ -877,26 +912,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // rigctld PTT (WSJT-X / fldigi keying through :4532). The 't' reply
     // tracks the radio's true T/R state via the metering replies.
     connect(&rigctld_, &RigctldServer::pttRequested, this,
-            [this](bool on) { radio_.setPtt(on); });
-    connect(&radio_, &TenTecOrion::agcReported, this, [this](Rx rx, char a) {
+            [this](bool on) { radio_->setPtt(on); });
+    connect(radio_, &RadioController::agcReported, this, [this](Rx rx, char a) {
         if (rx == Rx::Main) panel_->showAgc(a);
     });
-    connect(&radio_, &TenTecOrion::rfGainReported, this, [this](Rx rx, int g) {
+    connect(radio_, &RadioController::rfGainReported, this, [this](Rx rx, int g) {
         if (rx == Rx::Main) panel_->showRfGain(g);
     });
-    connect(&radio_, &TenTecOrion::attenReported, this, [this](Rx rx, int s) {
+    connect(radio_, &RadioController::attenReported, this, [this](Rx rx, int s) {
         if (rx == Rx::Main) panel_->showAtten(s);
     });
-    connect(&radio_, &TenTecOrion::preampReported, this, [this](Rx rx, bool on) {
+    connect(radio_, &RadioController::preampReported, this, [this](Rx rx, bool on) {
         if (rx == Rx::Main) panel_->showPreamp(on);
     });
-    connect(&radio_, &TenTecOrion::nrReported, this, [this](Rx rx, int l) {
+    connect(radio_, &RadioController::nrReported, this, [this](Rx rx, int l) {
         if (rx == Rx::Main) panel_->showNr(l);
     });
-    connect(&radio_, &TenTecOrion::nbReported, this, [this](Rx rx, int l) {
+    connect(radio_, &RadioController::nbReported, this, [this](Rx rx, int l) {
         if (rx == Rx::Main) panel_->showNb(l);
     });
-    connect(&radio_, &TenTecOrion::autoNotchReported, this, [this](Rx rx, int l) {
+    connect(radio_, &RadioController::autoNotchReported, this, [this](Rx rx, int l) {
         if (rx == Rx::Main) panel_->showAutoNotch(l);
     });
 
@@ -919,8 +954,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // real sync-AM listener's move — pick whichever side dodges the QRM.
     const auto samFilter = [this] {
         QTimer::singleShot(450, this, [this] {     // after the mode switch settles
-            radio_.setBandwidthHz(Rx::Main, 4000); // AM-width audio
-            radio_.setPbtHz(Rx::Main, 0);
+            radio_->setBandwidthHz(Rx::Main, 4000); // AM-width audio
+            radio_->setPbtHz(Rx::Main, 0);
         });
     };
     connect(panel_, &ControlPanel::samToggled, this, [this, samFilter](bool on) {
@@ -949,7 +984,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             applyMode(preSamMode_);
             panel_->showMode(preSamMode_);
             QTimer::singleShot(450, this, [this] {
-                radio_.setBandwidthHz(Rx::Main, preSamBw_);
+                radio_->setBandwidthHz(Rx::Main, preSamBw_);
             });
             statusBar()->showMessage("SAM off — previous mode restored");
         }
@@ -1004,7 +1039,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // stays on VFO A, whose IQ tap feeds it.
     connect(freqDispB_, &FrequencyDisplay::frequencyEdited, this,
             [this](uint64_t hz) {
-                radio_.setFrequencyHz(Rx::Sub, hz);
+                radio_->setFrequencyHz(Rx::Sub, hz);
                 vfoBHz_ = hz;
                 pushVfoB();
                 sinceVfoBEdit_.restart();           // poll echo may still be stale
@@ -1017,7 +1052,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // antenna button groups, driven over *KV / *KA).
     connect(routing_, &RoutingPanel::vfoAssignmentEdited, this,
             [this, applyVfoColors](char m, char s, char t) {
-                radio_.setVfoAssignment(m, s, t);
+                radio_->setVfoAssignment(m, s, t);
                 // One-click split setup (no separate split button): the moment a
                 // click puts VFO B on TX or RX, park B above the dial — 5 kHz
                 // in voice, 1 kHz in CW. The radio's own menu copies the mode
@@ -1029,7 +1064,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 if (bEngaged && !vfoLockB_) {       // locked B: engage without the park
                     const bool cw = rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
                     const uint64_t b = centerHz_ + (cw ? 1000 : 5000);
-                    radio_.setFrequencyHz(Rx::Sub, b);
+                    radio_->setFrequencyHz(Rx::Sub, b);
                     vfoBHz_ = b;
                     freqDispB_->setFrequency(b);
                     sinceVfoBEdit_.restart();
@@ -1043,7 +1078,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             });
     connect(routing_, &RoutingPanel::antennaRoutingEdited, this,
             [this](char a1, char a2, char rxa) {
-                radio_.setAntennaRouting(a1, a2, rxa);
+                radio_->setAntennaRouting(a1, a2, rxa);
                 statusBar()->showMessage(QString("antenna routing: ANT1=%1 ANT2=%2 RX=%3")
                                              .arg(a1).arg(a2).arg(rxa));
             });
@@ -1052,7 +1087,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // drops commands that arrive while it's busy with a mode switch.
     connect(routing_, &RoutingPanel::copyABRequested, this, [this] {
         if (vfoLockB_) { statusBar()->showMessage("A>B blocked: VFO B is LOCKED"); return; }
-        radio_.setFrequencyHz(Rx::Sub, centerHz_);
+        radio_->setFrequencyHz(Rx::Sub, centerHz_);
         vfoBHz_ = centerHz_;
         pushVfoB();
         freqDispB_->setFrequency(centerHz_);
@@ -1080,7 +1115,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
         const uint64_t a = centerHz_, b = vfoBHz_;
         const Mode ma = rigMode_, mb = subMode_;
-        radio_.setFrequencyHz(Rx::Sub, a);
+        radio_->setFrequencyHz(Rx::Sub, a);
         vfoBHz_ = a;
         pushVfoB();
         freqDispB_->setFrequency(a);
@@ -1095,7 +1130,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(QString("A<>B: %1 <-> %2 MHz")
                                      .arg(b / 1e6, 0, 'f', 6).arg(a / 1e6, 0, 'f', 6));
     });
-    connect(&radio_, &TenTecOrion::vfoAssignmentReported, this,
+    connect(radio_, &RadioController::vfoAssignmentReported, this,
             [this, applyVfoColors](char m, char s, char t) {
                 routing_->showVfoAssignment(m, s, t);
                 txVfo_ = t;
@@ -1103,55 +1138,55 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 applyVfoColors();
                 pushVfoB();
             });
-    connect(&radio_, &TenTecOrion::antennaRoutingReported, this,
+    connect(radio_, &RadioController::antennaRoutingReported, this,
             [this](char a1, char a2, char rxa) { routing_->showAntennaRouting(a1, a2, rxa); });
     if (std::getenv("TTC_TEST_XFER"))               // headless transfer exercise
         QTimer::singleShot(3000, routing_, &RoutingPanel::swapABRequested);
     connect(panel_, &ControlPanel::agcSelected, this,
-            [this](char a) { radio_.setAgc(Rx::Main, a); });
+            [this](char a) { radio_->setAgc(Rx::Main, a); });
     connect(panel_, &ControlPanel::agcThresholdChanged, this, [this](int uv) {
-        radio_.setAgcThreshold(Rx::Main, uv);
+        radio_->setAgcThreshold(Rx::Main, uv);
         statusBar()->showMessage(QString("AGC threshold -> %1 µV").arg(uv));
         // Read back shortly: the radio quantizes, show its real value.
-        QTimer::singleShot(300, this, [this] { radio_.queryAgcThreshold(Rx::Main); });
+        QTimer::singleShot(300, this, [this] { radio_->queryAgcThreshold(Rx::Main); });
     });
-    connect(&radio_, &TenTecOrion::agcThresholdReported, this,
+    connect(radio_, &RadioController::agcThresholdReported, this,
             [this](Rx rx, double uv) {
                 if (rx == Rx::Main) panel_->showAgcThreshold(uv);
             });
     connect(panel_, &ControlPanel::agcHangChanged, this, [this](int tenths) {
-        radio_.setAgcHang(Rx::Main, tenths / 10.0);
+        radio_->setAgcHang(Rx::Main, tenths / 10.0);
         statusBar()->showMessage(tenths == 0
                                      ? QString("AGC hang -> off")
                                      : QString("AGC hang -> %1 s").arg(tenths / 10.0, 0, 'f', 1));
-        QTimer::singleShot(300, this, [this] { radio_.queryAgcHang(Rx::Main); });
+        QTimer::singleShot(300, this, [this] { radio_->queryAgcHang(Rx::Main); });
     });
-    connect(&radio_, &TenTecOrion::agcHangReported, this,
+    connect(radio_, &RadioController::agcHangReported, this,
             [this](Rx rx, double sec) {
                 if (rx == Rx::Main) panel_->showAgcHang(sec);
             });
     connect(panel_, &ControlPanel::agcDecayChanged, this, [this](int rate) {
-        radio_.setAgcDecay(Rx::Main, rate);
+        radio_->setAgcDecay(Rx::Main, rate);
         statusBar()->showMessage(QString("AGC decay -> %1").arg(rate));
-        QTimer::singleShot(300, this, [this] { radio_.queryAgcDecay(Rx::Main); });
+        QTimer::singleShot(300, this, [this] { radio_->queryAgcDecay(Rx::Main); });
     });
-    connect(&radio_, &TenTecOrion::agcDecayReported, this,
+    connect(radio_, &RadioController::agcDecayReported, this,
             [this](Rx rx, int rate) {
                 if (rx == Rx::Main) panel_->showAgcDecay(rate);
             });
     connect(panel_, &ControlPanel::attenSelected, this,
-            [this](int s) { radio_.setAttenuator(Rx::Main, s); });
+            [this](int s) { radio_->setAttenuator(Rx::Main, s); });
     connect(panel_, &ControlPanel::preampToggled, this,
-            [this](bool on) { radio_.setPreamp(Rx::Main, on); });
+            [this](bool on) { radio_->setPreamp(Rx::Main, on); });
     connect(panel_, &ControlPanel::rfGainChanged, this,
-            [this](int g) { radio_.setRfGain(Rx::Main, g); });
+            [this](int g) { radio_->setRfGain(Rx::Main, g); });
     connect(panel_, &ControlPanel::nrChanged, this,
-            [this](int v) { radio_.setNoiseReduction(Rx::Main, v); });
+            [this](int v) { radio_->setNoiseReduction(Rx::Main, v); });
     connect(panel_, &ControlPanel::nbChanged, this,
-            [this](int v) { radio_.setNoiseBlanker(Rx::Main, v); });
+            [this](int v) { radio_->setNoiseBlanker(Rx::Main, v); });
     connect(panel_, &ControlPanel::autoNotchChanged, this,
-            [this](int v) { radio_.setAutoNotch(Rx::Main, v); });
-    connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {
+            [this](int v) { radio_->setAutoNotch(Rx::Main, v); });
+    connect(radio_, &RadioController::bandwidthReported, this, [this](Rx rx, int bw) {
         if (rx == Rx::Sub) {
             if (sinceSubFilterEdit_.isValid()
                 && sinceSubFilterEdit_.elapsed() < 2000) return;  // mid/just-dragged
@@ -1161,7 +1196,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         rigctld_.cacheBandwidth(bw);
         if (bw != rigBwHz_) { rigBwHz_ = bw; refreshPassbandOverlay(); bandStamp_->start(); }
     });
-    connect(&radio_, &TenTecOrion::pbtReported, this, [this](Rx rx, int pbt) {
+    connect(radio_, &RadioController::pbtReported, this, [this](Rx rx, int pbt) {
         if (rx == Rx::Sub) {
             if (sinceSubFilterEdit_.isValid()
                 && sinceSubFilterEdit_.elapsed() < 2000) return;  // mid/just-dragged
@@ -1180,7 +1215,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(bfTx_, &QTimer::timeout, this, [this] {
         if (!bfDirty_) { bfTx_->stop(); return; }
         bfDirty_ = false;
-        radio_.setFrequencyHz(Rx::Sub, pendBHz_);
+        radio_->setFrequencyHz(Rx::Sub, pendBHz_);
     });
     connect(pan_, &PanadapterWidget::vfoBDragged, this, [this](int off) {
         const uint64_t hz =
@@ -1219,8 +1254,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(sfTx_, &QTimer::timeout, this, [this] {
         if (!subFilterDirty_) { sfTx_->stop(); return; }
         subFilterDirty_ = false;
-        radio_.setBandwidthHz(Rx::Sub, pendSubBw_);
-        radio_.setPbtHz(Rx::Sub, pendSubPbt_);
+        radio_->setBandwidthHz(Rx::Sub, pendSubBw_);
+        radio_->setPbtHz(Rx::Sub, pendSubPbt_);
         subBwHz_  = pendSubBw_;                     // optimistic; poll confirms
         subPbtHz_ = pendSubPbt_;
     });
@@ -1253,7 +1288,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!bViewBtn_->isChecked()) bViewBtn_->setChecked(true);  // deliberate B use
         const uint64_t hz =
             static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
-        radio_.setFrequencyHz(Rx::Sub, hz);
+        radio_->setFrequencyHz(Rx::Sub, hz);
         vfoBHz_ = hz;
         freqDispB_->setFrequency(hz);
         sinceVfoBEdit_.restart();
@@ -1268,7 +1303,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     const auto zeroPbt = [this] {
         filterTx_->stop();                          // drop any stale pending PBT
         filterDirty_ = false;
-        radio_.setPbtHz(Rx::Main, 0);
+        radio_->setPbtHz(Rx::Main, 0);
         rigPbtHz_ = 0;
         panel_->showPbt(0);
         sinceFilterEdit_.invalidate();              // explicit action: refresh now
@@ -1282,7 +1317,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pan_, &PanadapterWidget::vfoBPbtZeroRequested, this, [this] {
         sfTx_->stop();                              // drop any stale pending PBT
         subFilterDirty_ = false;
-        radio_.setPbtHz(Rx::Sub, 0);
+        radio_->setPbtHz(Rx::Sub, 0);
         subPbtHz_ = 0;
         sinceSubFilterEdit_.invalidate();           // explicit action: redraw now
         pushVfoB();
@@ -1290,7 +1325,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     // Sidebar PBT slider: deliberate shifts (already coalesced in the panel).
     connect(panel_, &ControlPanel::pbtChanged, this, [this](int hz) {
-        radio_.setPbtHz(Rx::Main, hz);
+        radio_->setPbtHz(Rx::Main, hz);
         rigPbtHz_ = hz;
         sinceFilterEdit_.invalidate();              // explicit action: redraw now
         refreshPassbandOverlay();
@@ -1301,7 +1336,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // The radio reported its frequency (startup sync or dial-follow poll): keep the
     // rigctld cache and the panadapter center locked to the physical VFO.
-    connect(&radio_, &TenTecOrion::frequencyReported, this,
+    connect(radio_, &RadioController::frequencyReported, this,
             [this](Rx rx, uint64_t hz) {
                 if (rx == Rx::Sub) {                 // VFO B: display-follow only
                     if (!sinceVfoBEdit_.isValid() || sinceVfoBEdit_.elapsed() > 1500) {
@@ -1388,52 +1423,58 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }
 #endif
 
-    // Open the Orion so click-to-tune / drag-to-filter actually reach the radio,
-    // and poll its VFO so the panadapter follows the physical dial. Device path
-    // overridable via TTC_RADIO_DEV (default /dev/orion).
+    // Open the radio so click-to-tune / drag-to-filter actually reach it, and
+    // poll its VFO so the panadapter follows the physical dial. Device path:
+    // TTC_RADIO_DEV env > radio/device setting > per-radio default (both
+    // rigs live on the FT4232H quad adapter — Orion port 0, Omni port 3).
     const char* devEnv = std::getenv("TTC_RADIO_DEV");
-    const std::string radioDev = devEnv ? devEnv : "/dev/orion";
-    if (radio_.open(radioDev)) {
-        radio_.queryFrequency(Rx::Main);            // one-shot sync at startup
-        radio_.queryFrequency(Rx::Sub);             // VFO B readout
-        radio_.queryVfoAssignment();                // routing matrices
-        radio_.queryAntennaRouting();
-        radio_.queryMode(Rx::Main);
-        radio_.queryMode(Rx::Sub);                  // transfers carry the mode
-        radio_.queryFilter(Rx::Sub);                // B's on-screen filter width
-        radio_.queryFilter(Rx::Main);
-        radio_.queryAgc(Rx::Main);                  // sync the control sidebar
-        radio_.queryAgcThreshold(Rx::Main);
-        radio_.queryAgcHang(Rx::Main);
-        radio_.queryAgcDecay(Rx::Main);
-        radio_.queryRfGain(Rx::Main);
-        radio_.queryAttenuator(Rx::Main);
-        radio_.queryPreamp(Rx::Main);
-        radio_.queryDspLevels(Rx::Main);            // syncs NR/NB/AN/hw-NB sliders
-        radio_.queryNotch(Rx::Main);                // syncs notch center/width/engage
-        radio_.queryTxPower();                      // syncs the TX bar
-        radio_.queryTxAudio();
-        radio_.queryAfVolume(Rx::Sub);              // AUDIO panel (?UM in TxAudio)
-        radio_.queryAudioRouting();
+    const std::string radioDev = devEnv ? devEnv
+        : QSettings().value("radio/device",
+              radio_->caps().dualReceiver
+                  ? "/dev/orion"
+                  : "/dev/serial/by-id/usb-FTDI_FT4232H_Device_FT73ZILE-if03-port0")
+              .toString().toStdString();
+    if (radio_->open(radioDev)) {
+        radio_->queryFrequency(Rx::Main);            // one-shot sync at startup
+        radio_->queryFrequency(Rx::Sub);             // VFO B readout
+        radio_->queryVfoAssignment();                // routing matrices
+        radio_->queryAntennaRouting();
+        radio_->queryMode(Rx::Main);
+        radio_->queryMode(Rx::Sub);                  // transfers carry the mode
+        radio_->queryFilter(Rx::Sub);                // B's on-screen filter width
+        radio_->queryFilter(Rx::Main);
+        radio_->queryAgc(Rx::Main);                  // sync the control sidebar
+        radio_->queryAgcThreshold(Rx::Main);
+        radio_->queryAgcHang(Rx::Main);
+        radio_->queryAgcDecay(Rx::Main);
+        radio_->queryRfGain(Rx::Main);
+        radio_->queryAttenuator(Rx::Main);
+        radio_->queryPreamp(Rx::Main);
+        radio_->queryDspLevels(Rx::Main);            // syncs NR/NB/AN/hw-NB sliders
+        radio_->queryNotch(Rx::Main);                // syncs notch center/width/engage
+        radio_->queryTxPower();                      // syncs the TX bar
+        radio_->queryTxAudio();
+        radio_->queryAfVolume(Rx::Sub);              // AUDIO panel (?UM in TxAudio)
+        radio_->queryAudioRouting();
         // The startup burst can flood the Orion's UART servicing and drop a
         // few query responses — re-ask for the audio state once it settles.
         // (Seen live: mic slider stuck at 0 against the radio's 51 because
         // the barrage ate the ?TM answer.)
         QTimer::singleShot(2500, this, [this] {
-            radio_.queryAfVolume(Rx::Main);
-            radio_.queryAfVolume(Rx::Sub);
-            radio_.queryAudioRouting();
-            radio_.queryTxAudio();                  // mic / proc / TX BW / monitor
+            radio_->queryAfVolume(Rx::Main);
+            radio_->queryAfVolume(Rx::Sub);
+            radio_->queryAudioRouting();
+            radio_->queryTxAudio();                  // mic / proc / TX BW / monitor
         });
-        radio_.queryAuxInputGain();
-        radio_.queryTuner();
-        radio_.queryVfoLock('A');
-        radio_.queryVfoLock('B');
+        radio_->queryAuxInputGain();
+        radio_->queryTuner();
+        radio_->queryVfoLock('A');
+        radio_->queryVfoLock('B');
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);
         connect(poll, &QTimer::timeout, this, [this] {
-            if (!radio_.connected()) return;
+            if (!radio_->connected()) return;
             ++pollTick_;
             // 1 s rotation at 200 ms/tick, sized to the Orion's ~100 ms UART
             // servicing cycle: 2 Hz S-meter, 2 Hz frequency, mode and filter
@@ -1444,47 +1485,47 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
                     switch ((pollTick_ / 25) % 13) {
-                        case 0:  radio_.queryAgc(Rx::Main);
-                                 radio_.queryAgcThreshold(Rx::Main); break;
-                        case 9:  radio_.queryAgcHang(Rx::Main);
-                                 radio_.queryAgcDecay(Rx::Main);     break;
-                        case 1:  radio_.queryRfGain(Rx::Main);     break;
-                        case 2:  radio_.queryAttenuator(Rx::Main); break;
-                        case 3:  radio_.queryPreamp(Rx::Main);     break;
-                        case 4:  radio_.queryTxPower();            break;
-                        case 5:  radio_.queryVfoAssignment();      break;
-                        case 6:  radio_.queryAntennaRouting();     break;
-                        case 7:  radio_.queryAfVolume(Rx::Main);   // front-panel knobs
-                                 radio_.queryAfVolume(Rx::Sub);    break;
-                        case 8:  radio_.queryAudioRouting();       break;
-                        case 10: radio_.queryTxFilter();           // front-panel TX
-                                 radio_.querySpeechProc();         // audio changes
-                                 radio_.queryMicGain();
+                        case 0:  radio_->queryAgc(Rx::Main);
+                                 radio_->queryAgcThreshold(Rx::Main); break;
+                        case 9:  radio_->queryAgcHang(Rx::Main);
+                                 radio_->queryAgcDecay(Rx::Main);     break;
+                        case 1:  radio_->queryRfGain(Rx::Main);     break;
+                        case 2:  radio_->queryAttenuator(Rx::Main); break;
+                        case 3:  radio_->queryPreamp(Rx::Main);     break;
+                        case 4:  radio_->queryTxPower();            break;
+                        case 5:  radio_->queryVfoAssignment();      break;
+                        case 6:  radio_->queryAntennaRouting();     break;
+                        case 7:  radio_->queryAfVolume(Rx::Main);   // front-panel knobs
+                                 radio_->queryAfVolume(Rx::Sub);    break;
+                        case 8:  radio_->queryAudioRouting();       break;
+                        case 10: radio_->queryTxFilter();           // front-panel TX
+                                 radio_->querySpeechProc();         // audio changes
+                                 radio_->queryMicGain();
                                  break;
-                        case 11: radio_.queryVfoLock('A');         // front-panel lock
-                                 radio_.queryVfoLock('B');         // button presses
+                        case 11: radio_->queryVfoLock('A');         // front-panel lock
+                                 radio_->queryVfoLock('B');         // button presses
                                  break;
-                        default: radio_.queryNotch(Rx::Main);      break;
+                        default: radio_->queryNotch(Rx::Main);      break;
                     }
                 } else {
-                    radio_.querySMeter();
+                    radio_->querySMeter();
                 }
                 return;
             }
             if (phase == 2) {
                 switch ((pollTick_ / 5) % 5) {       // main mode/filter, VFO B side
-                    case 0:  radio_.queryMode(Rx::Main);      break;
-                    case 1:  radio_.queryFilter(Rx::Main);    break;
-                    case 2:  radio_.queryFrequency(Rx::Sub);  break;
-                    case 3:  radio_.queryMode(Rx::Sub);       break;
-                    default: radio_.queryFilter(Rx::Sub);     break;
+                    case 0:  radio_->queryMode(Rx::Main);      break;
+                    case 1:  radio_->queryFilter(Rx::Main);    break;
+                    case 2:  radio_->queryFrequency(Rx::Sub);  break;
+                    case 3:  radio_->queryMode(Rx::Sub);       break;
+                    default: radio_->queryFilter(Rx::Sub);     break;
                 }
                 return;
             }
             // Only one ?AF in flight: the Orion's response tail runs ~110 ms. Re-arm
             // after 600 ms anyway in case a response was dropped.
             if (awaitingFreq_ && freqQueryAge_.elapsed() < 600) return;
-            radio_.queryFrequency(Rx::Main);
+            radio_->queryFrequency(Rx::Main);
             awaitingFreq_ = true;
             freqQueryAge_.restart();
         });
@@ -1515,7 +1556,7 @@ void MainWindow::tuneAbsolute(uint64_t f) {
         return;
     }
     f = std::clamp<uint64_t>(f, 100000, 60000000);
-    radio_.setFrequencyHz(Rx::Main, f);
+    radio_->setFrequencyHz(Rx::Main, f);
     rigctld_.cacheFrequency(f);
     centerHz_ = f;                              // recenter view on the new frequency
     pendingHz_ = f;
@@ -1530,14 +1571,14 @@ void MainWindow::tuneAbsolute(uint64_t f) {
 }
 
 void MainWindow::applyMode(Mode m) {
-    radio_.setMode(Rx::Main, m);
+    radio_->setMode(Rx::Main, m);
     rigMode_ = m;
     rigctld_.cacheMode(m);
     refreshPassbandOverlay();
     refreshNotchOverlay();
     // The Orion recalls its per-mode stored filter on a mode change — fetch it
     // as soon as the firmware has settled instead of waiting for the slow poll.
-    QTimer::singleShot(400, this, [this] { radio_.queryFilter(Rx::Main); });
+    QTimer::singleShot(400, this, [this] { radio_->queryFilter(Rx::Main); });
 }
 
 // Manual tune: the CAT set has no "tune button" command (*TTT needs the
@@ -1550,9 +1591,9 @@ void MainWindow::startManualTune() {
     preTuneMode_ = rigMode_;
     int level = txBar_->tuneLevel();
     if (txBar_->ampMode()) level = std::min(level, txBar_->ampLimit());
-    radio_.setTxPower(level);
-    if (rigMode_ != Mode::FM) radio_.setMode(Rx::Main, Mode::FM);
-    radio_.setPtt(true);
+    radio_->setTxPower(level);
+    if (rigMode_ != Mode::FM) radio_->setMode(Rx::Main, Mode::FM);
+    radio_->setPtt(true);
     tuneTimeout_->start();
     statusBar()->showMessage(
         QString("TUNE: %1 W carrier — click again to stop (auto-stop 15 s)").arg(level));
@@ -1562,9 +1603,9 @@ void MainWindow::stopManualTune() {
     if (!tuning_) return;
     tuning_ = false;
     tuneTimeout_->stop();
-    radio_.setPtt(false);                          // drop the carrier FIRST
+    radio_->setPtt(false);                          // drop the carrier FIRST
     if (preTuneMode_ != Mode::FM) applyMode(preTuneMode_);
-    radio_.setTxPower(preTunePwr_);
+    radio_->setTxPower(preTunePwr_);
     txBar_->showTxPower(preTunePwr_);
     txBar_->showTuneActive(false);
     statusBar()->showMessage("TUNE: carrier off, power and mode restored");
@@ -1586,9 +1627,9 @@ void MainWindow::setDigitalMode(bool on) {
             s.setValue("audio/voiceSpeech", lastSpeechProc_); // state)
         }
         digital_ = true;                            // (gates the "learn" slots)
-        radio_.setMicGain(0);
-        radio_.setSpeechProc(0);
-        radio_.setAuxInputGain(100);
+        radio_->setMicGain(0);
+        radio_->setSpeechProc(0);
+        radio_->setAuxInputGain(100);
         txBar_->showSpeechProc(0);
         statusBar()->showMessage("DIGITAL: line-in 100, mic/speech off");
     } else {
@@ -1602,9 +1643,9 @@ void MainWindow::setDigitalMode(bool on) {
             lastMicGain_ = vm > 0 ? std::min(vm, 100) : 51;   // stored 0 = poisoned too
             lastSpeechProc_ = std::clamp(s.value("audio/voiceSpeech", 2).toInt(), 0, 9);
         }
-        radio_.setAuxInputGain(0);
-        radio_.setMicGain(lastMicGain_);
-        radio_.setSpeechProc(lastSpeechProc_);
+        radio_->setAuxInputGain(0);
+        radio_->setMicGain(lastMicGain_);
+        radio_->setSpeechProc(lastSpeechProc_);
         txBar_->showMicGain(lastMicGain_);
         txBar_->showSpeechProc(lastSpeechProc_);
         statusBar()->showMessage(QString("VOICE: mic %1, speech %2, line-in off")
@@ -1639,8 +1680,8 @@ void MainWindow::applyTxProfile(int slot) {
     txBwHz_ = bw;
     lastSpeechProc_ = proc;
     lastMicGain_ = mic;
-    radio_.setTxFilter(bw);
-    radio_.setTxPower(pwr);
+    radio_->setTxFilter(bw);
+    radio_->setTxPower(pwr);
     txBar_->showTxFilter(bw);
     txBar_->showTxPower(pwr);
     if (digital_) {
@@ -1652,8 +1693,8 @@ void MainWindow::applyTxProfile(int slot) {
                                      .arg(mic).arg(proc));
         return;
     }
-    radio_.setSpeechProc(proc);
-    radio_.setMicGain(mic);
+    radio_->setSpeechProc(proc);
+    radio_->setMicGain(mic);
     txBar_->showSpeechProc(proc);
     txBar_->showMicGain(mic);
     statusBar()->showMessage(QString("TX profile %1: bw %2 Hz  proc %3  mic %4  pwr %5")
@@ -1762,8 +1803,8 @@ void MainWindow::recallStack(int band, int reg) {
         panel_->showMode(m);
     });
     QTimer::singleShot(450, this, [this, bw, pbt] {
-        radio_.setBandwidthHz(Rx::Main, bw);
-        radio_.setPbtHz(Rx::Main, pbt);
+        radio_->setBandwidthHz(Rx::Main, bw);
+        radio_->setPbtHz(Rx::Main, pbt);
     });
     rigBwHz_  = bw;                             // optimistic UI; poll confirms
     rigPbtHz_ = pbt;
@@ -1793,15 +1834,15 @@ void MainWindow::recall60m(int chan) {
         panel_->showMode(m);
     });
     QTimer::singleShot(450, this, [this, bw = c.bwHz] {
-        radio_.setBandwidthHz(Rx::Main, bw);
-        radio_.setPbtHz(Rx::Main, 0);
+        radio_->setBandwidthHz(Rx::Main, bw);
+        radio_->setPbtHz(Rx::Main, 0);
     });
     QTimer::singleShot(650, this, [this, chan] {
         const Chan60& c = kUs60mChans[chan];
         int pwr = c.txPwrPct;
         if (txBar_->ampMode()) pwr = std::min(pwr, txBar_->ampLimit());
-        radio_.setTxFilter(c.txBwHz);
-        radio_.setTxPower(pwr);
+        radio_->setTxFilter(c.txBwHz);
+        radio_->setTxPower(pwr);
         txBwHz_ = c.txBwHz;
         lastTxPwr_ = pwr;
         txBar_->showTxFilter(c.txBwHz);
@@ -1813,7 +1854,7 @@ void MainWindow::recall60m(int chan) {
             if (digital_) {
                 setDigitalMode(false);          // restores mic + our proc level
             } else {
-                radio_.setSpeechProc(c.procLvl);
+                radio_->setSpeechProc(c.procLvl);
                 txBar_->showSpeechProc(c.procLvl);
             }
         }
@@ -1932,7 +1973,7 @@ void MainWindow::syncNotchUi() {
 void MainWindow::sendPendingNotch() {
     if (!notchDirty_) return;
     notchDirty_ = false;
-    radio_.setNotchCenter(Rx::Main, pendNotchHz_);  // -> *RMNC (clamped in driver)
+    radio_->setNotchCenter(Rx::Main, pendNotchHz_);  // -> *RMNC (clamped in driver)
     statusBar()->showMessage(QString("notch -> %1 Hz x %2 Hz")
                                  .arg(pendNotchHz_).arg(notchWidth_));
 }
@@ -1940,8 +1981,8 @@ void MainWindow::sendPendingNotch() {
 void MainWindow::sendPendingFilter() {
     if (!filterDirty_) return;
     filterDirty_ = false;
-    radio_.setBandwidthHz(Rx::Main, pendBwHz_);     // -> *RMF
-    radio_.setPbtHz(Rx::Main, pendPbtHz_);          // -> *RMP
+    radio_->setBandwidthHz(Rx::Main, pendBwHz_);     // -> *RMF
+    radio_->setPbtHz(Rx::Main, pendPbtHz_);          // -> *RMP
     rigBwHz_  = pendBwHz_;                          // optimistic; poll will confirm
     rigPbtHz_ = pendPbtHz_;
     rigctld_.cacheBandwidth(pendBwHz_);

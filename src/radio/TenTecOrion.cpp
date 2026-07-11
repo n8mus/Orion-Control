@@ -10,7 +10,7 @@ namespace ttc {
 
 static int clampi(int v, int lo, int hi) { return std::max(lo, std::min(hi, v)); }
 
-TenTecOrion::TenTecOrion(QObject* parent) : QObject(parent) {
+TenTecOrion::TenTecOrion(QObject* parent) : RadioController(parent) {
     caps_.name             = "Ten-Tec Orion 565/566";
     caps_.bandwidthMinHz   = 100;
     caps_.bandwidthMaxHz   = 9000;   // AM reaches 9000 (front-panel parity,
@@ -277,7 +277,6 @@ static bool parseLeadingInt(const QByteArray& s, qlonglong& out) {
 void TenTecOrion::onLine(const QByteArray& line) {
     if (std::getenv("TTC_TRACE"))
         std::fprintf(stderr, "[cat<-] %s\n", line.constData());
-    emit rawLine(line);
     // Responses are '@'-prefixed, e.g. @AF14250000, @RMF2400, @RMP-200.
     if (line.size() < 3 || line[0] != '@') return;
 

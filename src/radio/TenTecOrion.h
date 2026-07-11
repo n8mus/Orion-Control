@@ -8,12 +8,12 @@ namespace ttc {
 
 // Ten-Tec Orion 565/566 (firmware v3) driver. ASCII CAT over 57600 8N1.
 // Command encoders below are the real protocol; see docs/cat-command-reference.md.
-class TenTecOrion : public QObject, public RadioController {
+class TenTecOrion : public RadioController {
     Q_OBJECT
 public:
     explicit TenTecOrion(QObject* parent = nullptr);
 
-    bool open(const std::string& device);   // e.g. "/dev/ttyS0"
+    bool open(const std::string& device) override;   // e.g. "/dev/ttyS0"
     void close();
 
     const CapabilityProfile& caps() const override { return caps_; }
@@ -27,7 +27,7 @@ public:
 
     // Control-surface knobs. AGC is the radio's own letter code:
     // 'F'ast 'M'edium 'S'low 'P'rogram 'O'ff. Attenuator steps 0..3 = off/6/12/18 dB.
-    void setAgc(Rx rx, char agc);                 // *R<M/S>A<F/M/S/P/O>
+    void setAgc(Rx rx, char agc) override;        // *R<M/S>A<F/M/S/P/O>
     // Programmable-AGC group (active in 'P' mode), all live-verified:
     // threshold in µV, decimals ok, radio quantizes (*RMAT150 -> 151.29);
     // hang in seconds, decimals ok, 0 = off (*RMAH2 -> 01.98), 0..~10 s;
@@ -116,41 +116,7 @@ public:
     // harmless; if replies come back the *Reported signals below fire.
     void queryDspLevels(Rx rx);                   // ?R.NN / ?R.NB / ?R.NA
 
-signals:
-    void frequencyReported(Rx rx, uint64_t hz);
-    void bandwidthReported(Rx rx, int bwHz);
-    void pbtReported(Rx rx, int pbtHz);
-    void modeReported(Rx rx, Mode mode);
-    void sMeterReported(int mainRaw, int subRaw); // raw units (hamlib cal table scale)
-    void txMeterReported(double fwdWatts, double refWatts, double swr);
-    void agcReported(Rx rx, char agc);
-    void agcThresholdReported(Rx rx, double uv);
-    void agcHangReported(Rx rx, double sec);
-    void agcDecayReported(Rx rx, int rate);
-    void rfGainReported(Rx rx, int gain);
-    void attenReported(Rx rx, int step);
-    void preampReported(Rx rx, bool on);
-    void notchCenterReported(Rx rx, int hz);
-    void notchWidthReported(Rx rx, int hz);
-    void notchEngagedReported(Rx rx, bool on);
-    void safReported(Rx rx, bool on);
-    void nrReported(Rx rx, int level);
-    void nbReported(Rx rx, int level);
-    void autoNotchReported(Rx rx, int level);
-    void hardwareNbReported(Rx rx, bool on);
-    void txPowerReported(int pct);
-    void micGainReported(int pct);
-    void speechProcReported(int level);
-    void txFilterReported(int hz);
-    void auxInputGainReported(int pct);
-    void monitorReported(int pct);
-    void afVolumeReported(Rx rx, int pct);
-    void audioRoutingReported(char left, char right, char speaker);
-    void tunerReported(bool on);
-    void vfoAssignmentReported(char mainRx, char subRx, char tx);
-    void antennaRoutingReported(char ant1, char ant2, char rxAnt);
-    void vfoLockReported(char vfo, bool locked);
-    void rawLine(const QByteArray& line);
+    // Report signals are inherited from RadioController.
 
 private slots:
     void onLine(const QByteArray& line);

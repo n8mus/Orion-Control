@@ -17,7 +17,8 @@ constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
 constexpr int   kScaleBandH    = 16;     // freq-scale strip between spectrum and wf
 constexpr int   kDbAxisW       = 40;     // grab width of the left dB scale
 constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
-constexpr float kFillGamma     = 0.7f;   // boosts fill color: warm sooner than white
+constexpr float kFillGamma     = 0.6f;   // compresses the ramp: warm colors arrive
+                                         // ~60% up the scale (KE9NS look)
 constexpr float kNoRow         = -300.0f;
 
 // Color palettes. All stops interpolate linearly; t=0 is the scale bottom
@@ -383,30 +384,24 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    // KE9NS-style fill: each column is painted in the color of ITS OWN level
-    // (same palette as the waterfall, gamma-boosted so strong signals go
-    // yellow/red as whole columns, not just a sliver at the tip), with a
-    // vertical fade toward the bottom for depth.
+    // KE9NS-style fill: color keyed to the dB AXIS, so the bands run
+    // horizontally and a signal climbs through blue -> green -> yellow -> red
+    // as it gets stronger (per-column coloring made vertical streaks instead).
+    // Gamma-compressed so the warm colors arrive partway up the scale, not
+    // only at the very top.
     if (!colT.empty() && ds_.fillTrace && hSpec > 1) {
         if (fillImg_.width() != w || fillImg_.height() != hSpec)
             fillImg_ = QImage(w, hSpec, QImage::Format_RGB32);
-        std::vector<QRgb> colRgb(w);
-        std::vector<int>  colY(w);
-        for (int x = 0; x < w; ++x) {
-            colRgb[x] = mapColor(std::pow(colT[x], kFillGamma));
-            colY[x]   = static_cast<int>(hSpec * (1.0f - colT[x]));
-        }
+        std::vector<int> colY(w);
+        for (int x = 0; x < w; ++x)
+            colY[x] = static_cast<int>(hSpec * (1.0f - colT[x]));
         const QRgb bg = qRgb(12, 16, 22);
         for (int y = 0; y < hSpec; ++y) {
+            const float t = 1.0f - static_cast<float>(y) / (hSpec - 1);
+            const QRgb c = mapColor(std::pow(t, kFillGamma));
             QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
-            const int bright = 255 - 110 * y / hSpec;   // fade toward the bottom
-            for (int x = 0; x < w; ++x) {
-                if (y < colY[x]) { line[x] = bg; continue; }
-                const QRgb c = colRgb[x];
-                line[x] = qRgb((qRed(c)   * bright) >> 8,
-                               (qGreen(c) * bright) >> 8,
-                               (qBlue(c)  * bright) >> 8);
-            }
+            for (int x = 0; x < w; ++x)
+                line[x] = (y >= colY[x]) ? c : bg;
         }
         p.drawImage(0, 0, fillImg_);
     }

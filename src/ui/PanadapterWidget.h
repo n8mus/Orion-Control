@@ -79,7 +79,8 @@ public:
 
 signals:
     void tuneRequested(int offsetHz);              // click-to-tune (offset from center)
-    void tuneStepRequested(int steps, bool fine);  // wheel tune; fine = Shift held
+    void tuneStepRequested(int steps, bool fine);  // wheel tune A; fine = Shift held
+    void vfoBStepRequested(int steps, bool fine);  // wheel tune B (B touched last)
     void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state
     void passbandChanged(int loHz, int hiHz);      // drag-to-filter
     void notchDragged(int rfOffsetHz);             // notch marker slid (streamed)
@@ -166,6 +167,7 @@ private:
     int      vfoBLo_ = -1250, vfoBHi_ = 1250;      // B filter edges (offsets from B)
     qint64   dragStartBOff_ = 0;                   // B offset at grab time
     uint64_t dragStartCenter_ = 0;                 // A dial at grab time
+    char     wheelVfo_ = 'A';                      // wheel follows the last-tuned VFO
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.

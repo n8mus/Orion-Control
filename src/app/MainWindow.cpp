@@ -318,8 +318,23 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
     });
     // Wheel tuning: 100 Hz per notch, 10 Hz with Shift (Ctrl+wheel zooms).
+    // The wheel follows whichever VFO was tuned last (right-click/drag on B
+    // hands it to B; any A tune takes it back).
     connect(pan_, &PanadapterWidget::tuneStepRequested, this, [this](int steps, bool fine) {
         onTuneRequested(steps * (fine ? 10 : 100));
+    });
+    connect(pan_, &PanadapterWidget::vfoBStepRequested, this, [this](int steps, bool fine) {
+        vfoBHz_ = static_cast<uint64_t>(
+            static_cast<qint64>(vfoBHz_) + steps * (fine ? 10 : 100));
+        freqDispB_->setFrequency(vfoBHz_);
+        sinceVfoBEdit_.restart();
+        pushVfoB();
+        pendBHz_ = vfoBHz_;                        // coalesce like B drags
+        bfDirty_ = true;
+        if (!bfTx_->isActive()) bfTx_->start();
+        statusBar()->showMessage(QString("VFO B -> %1 MHz%2")
+                                     .arg(vfoBHz_ / 1e6, 0, 'f', 6)
+                                     .arg(txVfo_ == 'B' ? "  (TX)" : ""));
     });
 
     // Coalesce drag-to-filter writes: the Orion's UART services on a ~100 ms cycle,

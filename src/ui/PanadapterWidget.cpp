@@ -766,6 +766,8 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
         // (Shift = fine).
         if (overNotch(static_cast<int>(e->position().x())))
             emit notchWidthAdjustRequested(n);
+        else if (wheelVfo_ == 'B')                  // wheel follows last-tuned VFO
+            emit vfoBStepRequested(n, e->modifiers() & Qt::ShiftModifier);
         else
             emit tuneStepRequested(n, e->modifiers() & Qt::ShiftModifier);
     }
@@ -784,8 +786,10 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     // station the DX just worked, one click).
     if (e->button() == Qt::RightButton) {
         drag_ = Drag::None;
-        if (!inScaleBand(y) && !inDbAxis(x, y))
+        if (!inScaleBand(y) && !inDbAxis(x, y)) {
+            wheelVfo_ = 'B';                        // wheel now nudges B
             emit vfoBTuneRequested(xToHz(x));
+        }
         return;
     }
     // The frequency-scale band IS the split handle (KE9NS-style).
@@ -804,6 +808,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     for (const auto& [rect, hz] : spotHits_) {
         if (rect.contains(e->pos())) {
             drag_ = Drag::None;
+            wheelVfo_ = 'A';
             emit tuneRequested(static_cast<int>(hz - static_cast<qint64>(centerHz_)));
             return;
         }
@@ -828,12 +833,14 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     // Grab VFO B (line or its passband tint) to slide it — split TX placement.
     if (overVfoB(x)) {
         drag_ = Drag::VfoB;
+        wheelVfo_ = 'B';
         dragStartBOff_ = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
         return;
     }
     // Grab the A dial line to drag-tune the main VFO.
     if (std::abs(x - width() / 2) <= 4 && centerHz_) {
         drag_ = Drag::VfoA;
+        wheelVfo_ = 'A';
         dragStartCenter_ = centerHz_;
         return;
     }
@@ -844,6 +851,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
     drag_ = Drag::None;
+    wheelVfo_ = 'A';
     emit tuneRequested(xToHz(x));                   // click-to-tune
 }
 
@@ -945,8 +953,10 @@ void PanadapterWidget::mouseDoubleClickEvent(QMouseEvent* e) {
 
 void PanadapterWidget::mouseReleaseEvent(QMouseEvent* e) {
     // A press inside the passband that never moved is a click-to-tune.
-    if (drag_ == Drag::BodyPending)
+    if (drag_ == Drag::BodyPending) {
+        wheelVfo_ = 'A';
         emit tuneRequested(xToHz(e->pos().x()));
+    }
     drag_ = Drag::None;
 }
 

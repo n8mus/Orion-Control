@@ -3,6 +3,9 @@
 #include <QMainWindow>
 #include <QElapsedTimer>
 class QTimer;
+class QSlider;
+class QLabel;
+class QToolButton;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
@@ -53,7 +56,14 @@ private:
     FrequencyDisplay* freqDisp_  = nullptr;   // VFO A (main RX, the panadapter dial)
     FrequencyDisplay* freqDispB_ = nullptr;   // VFO B (sub RX), display + direct set
     RoutingPanel*     routing_   = nullptr;   // VFO/antenna matrix + A/B transfers
-    AudioPanel*       audioPanel_ = nullptr;  // volumes, mutes, output routing
+    AudioPanel*       audioPanel_ = nullptr;  // output-routing popup
+    // Per-VFO volume + mute, living under the frequency readouts.
+    QSlider*     volSl_[2]   = {};            // [0]=A/main, [1]=B/sub
+    QLabel*      volLbl_[2]  = {};
+    QToolButton* muteBtn_[2] = {};
+    QTimer*      volTx_[2]   = {};            // coalesced *UM/*US streams
+    int  pendVol_[2] = {0, 0};
+    bool muted_[2]   = {false, false};
     int  vol_[2]     = {50, 50};              // last known volumes (A, B)
     int  preMute_[2] = {50, 50};              // levels to restore on unmute
     uint64_t vfoBHz_ = 7000000;               // last known VFO B dial
@@ -82,6 +92,13 @@ private:
     Mode preTuneMode_ = Mode::USB;
     int  preTunePwr_  = 50;
     QTimer* tuneTimeout_ = nullptr;            // safety: carrier auto-drops
+
+    // SAM pseudo-mode ([vendor] ECSS): USB zero-beaten on an AM carrier, fine
+    // wheel steps while active; previous mode/filter restored on exit.
+    bool samActive_   = false;
+    Mode samEngine_   = Mode::USB;            // click the lit button to flip U/L
+    Mode preSamMode_  = Mode::AM;
+    int  preSamBw_    = 6000;
 
     // Digital/voice audio switching ([vendor]-style). Voice settings are learned
     // from the radio when entering digital, and persisted (defaults 51/2).

@@ -23,7 +23,12 @@ public:
 signals:
     void bandSelected(int bandIdx);       // index into kBands (app/Bands.h)
     void modeSelected(Mode m);
+    void samToggled(bool on);             // pseudo-sync-AM (ECSS) pseudo-mode
+    void digitalToggled(bool on);         // line-in vs mic audio switch
     void agcSelected(char agc);           // 'F','M','S','P','O'
+    void agcThresholdChanged(int uv);     // programmable-AGC threshold slider
+    void agcHangChanged(int tenths);      // hang time, tenths of a second (0 = off)
+    void agcDecayChanged(int rate);       // decay rate (radio min 5)
     void attenSelected(int step);         // 0..3 = off/6/12/18 dB
     void preampToggled(bool on);          // front-end preamp
     void rfGainChanged(int gain);         // 0..100, coalesced while sliding
@@ -39,7 +44,14 @@ public slots:
     void showBand(int bandIdx);           // -1 = out of every band
     void showBandStack(int regIdx);       // 0..3 = A..D, -1 = none
     void showMode(Mode m);
+    void showSam(bool on);                // no emit
+    void setSamLabel(const QString& t);   // "SAM" / "SAM-U" / "SAM-L"
+    void showDigital(bool on);            // no emit
+    void clearModeSelection();            // SAM presents as its own mode
     void showAgc(char agc);
+    void showAgcThreshold(double uv);     // radio's actual (quantized) values
+    void showAgcHang(double sec);
+    void showAgcDecay(int rate);
     void showAtten(int step);
     void showPreamp(bool on);
     void showRfGain(int gain);
@@ -67,6 +79,8 @@ private:
     QPushButton* notchBtn_ = nullptr;  QLabel* notchVal_ = nullptr;
     QPushButton* hwNbBtn_  = nullptr;
     QPushButton* preBtn_   = nullptr;
+    QPushButton* samBtn_   = nullptr;
+    QPushButton* digBtn_   = nullptr;
     QLabel* pbtVal_ = nullptr;
     QSlider* pbt_   = nullptr;
     // Trailing-edge coalescer for slider drags (the Orion's UART services
@@ -75,6 +89,12 @@ private:
     int pendGain_ = -1;
     QTimer* pbtTx_ = nullptr;
     int pendPbt_ = -9999;
+    QSlider* agcThr_   = nullptr;  QLabel* agcThrVal_   = nullptr;
+    QSlider* agcHang_  = nullptr;  QLabel* agcHangVal_  = nullptr;
+    QSlider* agcDecay_ = nullptr;  QLabel* agcDecayVal_ = nullptr;
+    QTimer* agcThrTx_ = nullptr;   QTimer* agcHangTx_ = nullptr;
+    QTimer* agcDecayTx_ = nullptr;
+    int pendAgcThr_ = -1, pendAgcHang_ = -1, pendAgcDecay_ = -1;
 };
 
 } // namespace ttc

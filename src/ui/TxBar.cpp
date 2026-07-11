@@ -93,16 +93,6 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
             [this](bool on) { emit tunerEnableToggled(on); });
 
     lay->addSpacing(8);
-    digBtn_ = new QPushButton("DIG");
-    digBtn_->setCheckable(true);
-    digBtn_->setFocusPolicy(Qt::NoFocus);
-    digBtn_->setToolTip("Digital mode: line-in audio, mic + speech processor off "
-                        "(restores your voice settings when off)");
-    lay->addWidget(digBtn_);
-    connect(digBtn_, &QPushButton::toggled, this,
-            [this](bool on) { emit digitalModeToggled(on); });
-
-    lay->addSpacing(8);
     lay->addWidget(new QLabel("MIC"));
     mic_ = makeSlider("MIC", micVal_, micTx_, pendMic_, &TxBar::micGainChanged);
     lay->addWidget(mic_);
@@ -183,11 +173,6 @@ void TxBar::showAfVolume(int pct) { showVal(af_, afVal_, pct); }
 void TxBar::showTuner(bool on) {
     QSignalBlocker block(tunerBtn_);
     tunerBtn_->setChecked(on);
-}
-
-void TxBar::showDigitalMode(bool on) {
-    QSignalBlocker block(digBtn_);
-    digBtn_->setChecked(on);
 }
 
 } // namespace ttc

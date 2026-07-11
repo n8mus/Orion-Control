@@ -79,7 +79,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // columns (antennas, A/B transfers, VFO assignment — Orion front-panel
     // style, vertical) and VFO B. Taller than the readouts need so more
     // controls can join later.
-    topStrip->setMinimumHeight(84);
+    topStrip->setMinimumHeight(104);
     auto* topLay = new QHBoxLayout(topStrip);
     topLay->setContentsMargins(10, 4, 10, 4);
     topLay->addWidget(smeter_);
@@ -98,12 +98,55 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     topLay->addWidget(zoomLbl);
     topLay->addWidget(zoom);
     topLay->addSpacing(16);
-    topLay->addWidget(freqDisp_);
+    // Each VFO is a column: readout on top, its volume + mute right below
+    // (KE9NS-style rounded buttons, matching the sidebar controls).
+    auto makeVolRow = [&](int i) {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(6);
+        volSl_[i] = new QSlider(Qt::Horizontal, topStrip);
+        volSl_[i]->setRange(0, 100);
+        volSl_[i]->setFixedWidth(128);
+        volSl_[i]->setFocusPolicy(Qt::NoFocus);
+        volSl_[i]->setStyleSheet(
+            "QSlider::groove:horizontal { height: 5px; background: #2a3644; border-radius: 2px; }"
+            "QSlider::handle:horizontal { width: 14px; margin: -5px 0; border-radius: 7px;"
+            " background: #6aa5d8; }");
+        volLbl_[i] = new QLabel("--", topStrip);
+        volLbl_[i]->setFixedWidth(22);
+        volLbl_[i]->setStyleSheet("color: #8fa3b8; font-size: 11px; font-weight: bold;");
+        muteBtn_[i] = new QToolButton(topStrip);
+        muteBtn_[i]->setText("MUTE");
+        muteBtn_[i]->setCheckable(true);
+        muteBtn_[i]->setFocusPolicy(Qt::NoFocus);
+        muteBtn_[i]->setFixedHeight(19);
+        muteBtn_[i]->setStyleSheet(
+            "QToolButton { background: #1c2430; border: 1px solid #2a3644;"
+            " border-radius: 3px; color: #8fa3b8; font-size: 10px; font-weight: bold;"
+            " padding: 0 8px; }"
+            "QToolButton:hover { border-color: #4a5a6e; }"
+            "QToolButton:checked { background: #8a2727; border-color: #e05d5d;"
+            " color: #ffecec; }");
+        row->addSpacing(4);
+        row->addWidget(volSl_[i]);
+        row->addWidget(volLbl_[i]);
+        row->addWidget(muteBtn_[i]);
+        row->addStretch(1);
+        return row;
+    };
+    auto* colA = new QVBoxLayout;
+    colA->setSpacing(3);
+    colA->addWidget(freqDisp_);
+    colA->addLayout(makeVolRow(0));
+    topLay->addLayout(colA);
     topLay->addStretch(1);
     routing_ = new RoutingPanel(topStrip);
     topLay->addWidget(routing_);
     topLay->addStretch(1);
-    topLay->addWidget(freqDispB_);
+    auto* colB = new QVBoxLayout;
+    colB->setSpacing(3);
+    colB->addWidget(freqDispB_);
+    colB->addLayout(makeVolRow(1));
+    topLay->addLayout(colB);
     topLay->addStretch(1);
 
     auto spanFromSlider = [this](int v) {
@@ -126,6 +169,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 zoom->setValue(sliderFromSpan(spanHz));
             });
 
+    // All toolbar dropdowns share the console's dark look — without this the
+    // QMenu frame and plain actions render in the system (light) theme.
+    const auto styleMenu = [](QMenu* m) {
+        m->setAttribute(Qt::WA_TranslucentBackground);  // real rounded corners
+        m->setStyleSheet(
+            "QMenu { background-color: #141b24; color: #c8d4e0;"
+            " border: 1px solid #2a3644; border-radius: 6px; padding: 6px;"
+            " font-size: 13px; }"
+            "QMenu::item { background: transparent; padding: 6px 16px;"
+            " border-radius: 4px; }"
+            "QMenu::item:selected { background: #2a3644; }"
+            "QMenu::item:disabled { color: #5a6b7d; }"
+            "QMenu::separator { height: 1px; background: #2a3644; margin: 6px 8px; }"
+            "QMenu::indicator { width: 14px; height: 14px; }"
+            "QMenu::indicator:checked { background: #3f7cb4;"
+            " border: 1px solid #5db2f0; border-radius: 3px; }"
+            "QMenu::indicator:unchecked { background: #1c2430;"
+            " border: 1px solid #2a3644; border-radius: 3px; }");
+    };
+
     // "DISPLAY" dropdown: Flex/KE9NS-style viewer settings (ref level, range,
     // averaging, waterfall speed, palette, fill, peak hold), applied live and
     // persisted. Sits in a QWidgetAction so the popup stays open while dragging.
@@ -138,6 +201,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
         "QToolButton::menu-indicator { image: none; }");
     auto* dispMenu = new QMenu(dispBtn);
+    styleMenu(dispMenu);
     auto* dispPanel = new DisplayPanel(dispMenu);
     auto* dispAction = new QWidgetAction(dispMenu);
     dispAction->setDefaultWidget(dispPanel);
@@ -219,6 +283,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
         "QToolButton::menu-indicator { image: none; }");
     auto* spotsMenu = new QMenu(spotsBtn);
+    styleMenu(spotsMenu);
     auto* spotsOn   = spotsMenu->addAction("Show spots");
     spotsOn->setCheckable(true);
     auto* spotsClear = spotsMenu->addAction("Clear spots");
@@ -249,6 +314,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
         "QToolButton::menu-indicator { image: none; }");
     auto* audioMenu = new QMenu(audioBtn);
+    styleMenu(audioMenu);
     audioPanel_ = new AudioPanel(audioMenu);
     auto* audioAction = new QWidgetAction(audioMenu);
     audioAction->setDefaultWidget(audioPanel_);
@@ -257,34 +323,47 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     topLay->addSpacing(8);
     topLay->addWidget(audioBtn);
 
-    // Volume edits (panel sliders or the TX bar's AF, which is main volume).
-    // Editing a muted receiver's volume implicitly unmutes it.
-    auto setVolume = [this](Rx rx, int pct) {
-        const int i = rx == Rx::Main ? 0 : 1;
-        vol_[i] = pct;
-        if (audioPanel_->isMuted(rx)) audioPanel_->showMute(rx, false);
-        radio_.setAfVolume(rx, pct);
-        if (rx == Rx::Main) txBar_->showAfVolume(pct);
-        audioPanel_->showVolume(rx, pct);
-        statusBar()->showMessage(QString("volume %1 -> %2")
-                                     .arg(rx == Rx::Main ? "A" : "B").arg(pct));
-    };
-    connect(audioPanel_, &AudioPanel::volumeEdited, this, setVolume);
-    connect(audioPanel_, &AudioPanel::muteToggled, this, [this](Rx rx, bool on) {
-        const int i = rx == Rx::Main ? 0 : 1;
-        if (on) {
-            preMute_[i] = vol_[i];
-            radio_.setAfVolume(rx, 0);
-        } else {
-            radio_.setAfVolume(rx, preMute_[i]);
-            vol_[i] = preMute_[i];
-            audioPanel_->showVolume(rx, preMute_[i]);
-            if (rx == Rx::Main) txBar_->showAfVolume(preMute_[i]);
-        }
-        statusBar()->showMessage(QString("%1 %2")
-                                     .arg(rx == Rx::Main ? "VFO A audio" : "VFO B audio")
-                                     .arg(on ? "MUTED" : "unmuted"));
-    });
+    // Per-VFO volume + mute (the rows under the readouts). Sliding a muted
+    // receiver's volume implicitly unmutes it; mute remembers the level.
+    for (int i = 0; i < 2; ++i) {
+        const Rx rx = i == 0 ? Rx::Main : Rx::Sub;
+        volTx_[i] = new QTimer(this);
+        volTx_[i]->setSingleShot(true);
+        volTx_[i]->setInterval(60);
+        connect(volTx_[i], &QTimer::timeout, this,
+                [this, i, rx] { radio_.setAfVolume(rx, pendVol_[i]); });
+        connect(volSl_[i], &QSlider::valueChanged, this, [this, i, rx](int v) {
+            volLbl_[i]->setText(QString::number(v));
+            vol_[i] = v;
+            if (muted_[i]) {                        // touch = unmute
+                muted_[i] = false;
+                const QSignalBlocker b(muteBtn_[i]);
+                muteBtn_[i]->setChecked(false);
+            }
+            pendVol_[i] = v;
+            volTx_[i]->start();
+            if (i == 0 && txBar_) txBar_->showAfVolume(v);
+            statusBar()->showMessage(QString("volume %1 -> %2")
+                                         .arg(i == 0 ? "A" : "B").arg(v));
+        });
+        connect(muteBtn_[i], &QToolButton::toggled, this, [this, i, rx](bool on) {
+            muted_[i] = on;
+            if (on) {
+                preMute_[i] = vol_[i];
+                radio_.setAfVolume(rx, 0);
+            } else {
+                radio_.setAfVolume(rx, preMute_[i]);
+                vol_[i] = preMute_[i];
+                const QSignalBlocker b(volSl_[i]);
+                volSl_[i]->setValue(preMute_[i]);
+                volLbl_[i]->setText(QString::number(preMute_[i]));
+                if (i == 0 && txBar_) txBar_->showAfVolume(preMute_[i]);
+            }
+            statusBar()->showMessage(QString("VFO %1 audio %2")
+                                         .arg(i == 0 ? "A" : "B")
+                                         .arg(on ? "MUTED" : "unmuted"));
+        });
+    }
     connect(audioPanel_, &AudioPanel::routingEdited, this,
             [this](char l, char r, char s) {
                 radio_.setAudioRouting(l, r, s);
@@ -325,6 +404,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
         "QToolButton::menu-indicator { image: none; }");
     auto* sdrMenu = new QMenu(sdrBtn);
+    styleMenu(sdrMenu);
     auto* antGroup = new QActionGroup(this);
     antGroup->setExclusive(true);
     auto* antA = antGroup->addAction(sdrMenu->addAction("Antenna A  (Orion)"));
@@ -446,11 +526,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
     });
-    // Wheel tuning: 100 Hz per notch, 10 Hz with Shift (Ctrl+wheel zooms).
-    // The wheel follows whichever VFO was tuned last (right-click/drag on B
-    // hands it to B; any A tune takes it back).
+    // Wheel tuning: 100 Hz per notch, 10 Hz with Shift (Ctrl+wheel zooms);
+    // in SAM the steps drop to 10/1 Hz for the carrier zero-beat. The wheel
+    // follows whichever VFO was tuned last (right-click/drag on B hands it
+    // to B; any A tune takes it back).
     connect(pan_, &PanadapterWidget::tuneStepRequested, this, [this](int steps, bool fine) {
-        onTuneRequested(steps * (fine ? 10 : 100));
+        const int unit = samActive_ ? (fine ? 1 : 10) : (fine ? 10 : 100);
+        onTuneRequested(steps * unit);
     });
     connect(pan_, &PanadapterWidget::vfoBStepRequested, this, [this](int steps, bool fine) {
         vfoBHz_ = static_cast<uint64_t>(
@@ -482,12 +564,20 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
         if (rx == Rx::Sub) { subMode_ = m; return; }
         rigctld_.cacheMode(m);                      // clients always see true mode
-        panel_->showMode(m);                        // sidebar mirrors the front panel
+        if (samActive_ && m == samEngine_)          // SAM's engine reporting in:
+            panel_->clearModeSelection();           // keep SAM as the lit mode
+        else
+            panel_->showMode(m);                    // sidebar mirrors the front panel
         if (m != rigMode_) {
             rigMode_ = m;
             refreshPassbandOverlay();
             refreshNotchOverlay();                  // marker side flips with sideband
             if (bandStamp_) bandStamp_->start();    // keep the stack register current
+            if (samActive_ && m != samEngine_) {    // front panel left SAM's mode
+                samActive_ = false;
+                panel_->showSam(false);
+                panel_->setSamLabel("SAM");
+            }
         }
     });
 
@@ -577,11 +667,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(txBar_, &TxBar::monitorChanged, this,
             [this](int p) { radio_.setMonitor(p); });
     connect(txBar_, &TxBar::afVolumeChanged, this, [this](int p) {
-        vol_[0] = p;                               // TX-bar AF = main volume
-        if (audioPanel_->isMuted(Rx::Main)) audioPanel_->showMute(Rx::Main, false);
-        radio_.setAfVolume(Rx::Main, p);
-        audioPanel_->showVolume(Rx::Main, p);
-    });
+        volSl_[0]->setValue(p);                    // TX-bar AF = main volume; the
+    });                                            // slider handler does the rest
     connect(txBar_, &TxBar::tunerEnableToggled, this, [this](bool on) {
         tunerOn_ = on;
         radio_.setTunerEnabled(on);
@@ -613,7 +700,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         lastMicGain_    = s.value("audio/voiceMic", 51).toInt();
         lastSpeechProc_ = s.value("audio/voiceSpeech", 2).toInt();
     }
-    connect(txBar_, &TxBar::digitalModeToggled, this,
+    connect(panel_, &ControlPanel::digitalToggled, this,
             [this](bool on) { setDigitalMode(on); });
     connect(txBar_, &TxBar::ampModeChanged, this, [this](bool on, int limit) {
         QSettings s;
@@ -651,10 +738,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&radio_, &TenTecOrion::monitorReported, this,
             [this](int p) { txBar_->showMonitor(p); });
     connect(&radio_, &TenTecOrion::afVolumeReported, this, [this](Rx rx, int p) {
-        if (audioPanel_->isMuted(rx)) return;      // muted: 0 expected, keep slider
-        vol_[rx == Rx::Main ? 0 : 1] = p;
-        audioPanel_->showVolume(rx, p);
-        if (rx == Rx::Main) txBar_->showAfVolume(p);
+        const int i = rx == Rx::Main ? 0 : 1;
+        if (muted_[i]) return;                     // muted: 0 expected, keep slider
+        vol_[i] = p;
+        const QSignalBlocker b(volSl_[i]);
+        volSl_[i]->setValue(p);
+        volLbl_[i]->setText(QString::number(p));
+        if (i == 0) txBar_->showAfVolume(p);
     });
     connect(&radio_, &TenTecOrion::tunerReported, this, [this](bool on) {
         tunerOn_ = on;
@@ -688,8 +778,59 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
 
     // Control surface -> radio. Sets are fire-and-forget; polling confirms.
-    connect(panel_, &ControlPanel::modeSelected, this,
-            [this](Mode m) { applyMode(m); });
+    connect(panel_, &ControlPanel::modeSelected, this, [this](Mode m) {
+        if (samActive_) {                          // picking a real mode ends SAM
+            samActive_ = false;
+            panel_->showSam(false);
+            panel_->setSamLabel("SAM");
+        }
+        applyMode(m);
+        panel_->showMode(m);
+    });
+
+    // SAM ([vendor]-style ECSS): the Orion has no true sync-AM, so receive the
+    // AM signal in USB with the carrier zero-beaten instead. Engaging swaps
+    // to USB + a wide filter; the panadapter wheel drops to 10 Hz (1 Hz with
+    // Shift) for the careful zero-beat. Off restores the previous mode/filter.
+    // Click cycle: off -> SAM-U -> SAM-L -> off. The sideband flip is the
+    // real sync-AM listener's move — pick whichever side dodges the QRM.
+    const auto samFilter = [this] {
+        QTimer::singleShot(450, this, [this] {     // after the mode switch settles
+            radio_.setBandwidthHz(Rx::Main, 4000); // AM-width audio
+            radio_.setPbtHz(Rx::Main, 0);
+        });
+    };
+    connect(panel_, &ControlPanel::samToggled, this, [this, samFilter](bool on) {
+        if (on) {                                  // engage, upper sideband first
+            samActive_ = true;
+            samEngine_ = Mode::USB;
+            preSamMode_ = rigMode_;
+            preSamBw_   = rigBwHz_;
+            applyMode(Mode::USB);                  // the ECSS engine, not the face
+            panel_->clearModeSelection();          // SAM alone stays lit
+            panel_->setSamLabel("SAM-U");
+            samFilter();
+            statusBar()->showMessage(
+                "SAM (upper): zero-beat the carrier — wheel 10 Hz, Shift 1 Hz");
+        } else if (samActive_ && samEngine_ == Mode::USB) {
+            samEngine_ = Mode::LSB;                // second click: flip sideband
+            panel_->showSam(true);                 // stay lit
+            panel_->setSamLabel("SAM-L");
+            applyMode(Mode::LSB);
+            panel_->clearModeSelection();
+            samFilter();                           // mode change recalls per-mode filter
+            statusBar()->showMessage("SAM (lower sideband)");
+        } else {                                   // third click: off
+            samActive_ = false;
+            panel_->setSamLabel("SAM");
+            applyMode(preSamMode_);
+            panel_->showMode(preSamMode_);
+            QTimer::singleShot(450, this, [this] {
+                radio_.setBandwidthHz(Rx::Main, preSamBw_);
+            });
+            statusBar()->showMessage("SAM off — previous mode restored");
+        }
+    });
 
     // Band buttons with Orion-style stack registers: a fresh band recalls its
     // last-used register; clicking the active band again cycles A->B->C->D.
@@ -826,6 +967,36 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         QTimer::singleShot(3000, routing_, &RoutingPanel::swapABRequested);
     connect(panel_, &ControlPanel::agcSelected, this,
             [this](char a) { radio_.setAgc(Rx::Main, a); });
+    connect(panel_, &ControlPanel::agcThresholdChanged, this, [this](int uv) {
+        radio_.setAgcThreshold(Rx::Main, uv);
+        statusBar()->showMessage(QString("AGC threshold -> %1 µV").arg(uv));
+        // Read back shortly: the radio quantizes, show its real value.
+        QTimer::singleShot(300, this, [this] { radio_.queryAgcThreshold(Rx::Main); });
+    });
+    connect(&radio_, &TenTecOrion::agcThresholdReported, this,
+            [this](Rx rx, double uv) {
+                if (rx == Rx::Main) panel_->showAgcThreshold(uv);
+            });
+    connect(panel_, &ControlPanel::agcHangChanged, this, [this](int tenths) {
+        radio_.setAgcHang(Rx::Main, tenths / 10.0);
+        statusBar()->showMessage(tenths == 0
+                                     ? QString("AGC hang -> off")
+                                     : QString("AGC hang -> %1 s").arg(tenths / 10.0, 0, 'f', 1));
+        QTimer::singleShot(300, this, [this] { radio_.queryAgcHang(Rx::Main); });
+    });
+    connect(&radio_, &TenTecOrion::agcHangReported, this,
+            [this](Rx rx, double sec) {
+                if (rx == Rx::Main) panel_->showAgcHang(sec);
+            });
+    connect(panel_, &ControlPanel::agcDecayChanged, this, [this](int rate) {
+        radio_.setAgcDecay(Rx::Main, rate);
+        statusBar()->showMessage(QString("AGC decay -> %1").arg(rate));
+        QTimer::singleShot(300, this, [this] { radio_.queryAgcDecay(Rx::Main); });
+    });
+    connect(&radio_, &TenTecOrion::agcDecayReported, this,
+            [this](Rx rx, int rate) {
+                if (rx == Rx::Main) panel_->showAgcDecay(rate);
+            });
     connect(panel_, &ControlPanel::attenSelected, this,
             [this](int s) { radio_.setAttenuator(Rx::Main, s); });
     connect(panel_, &ControlPanel::preampToggled, this,
@@ -1035,6 +1206,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryFilter(Rx::Sub);                // B's on-screen filter width
         radio_.queryFilter(Rx::Main);
         radio_.queryAgc(Rx::Main);                  // sync the control sidebar
+        radio_.queryAgcThreshold(Rx::Main);
+        radio_.queryAgcHang(Rx::Main);
+        radio_.queryAgcDecay(Rx::Main);
         radio_.queryRfGain(Rx::Main);
         radio_.queryAttenuator(Rx::Main);
         radio_.queryPreamp(Rx::Main);
@@ -1067,8 +1241,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 10) {
-                        case 0:  radio_.queryAgc(Rx::Main);        break;
+                    switch ((pollTick_ / 25) % 11) {
+                        case 0:  radio_.queryAgc(Rx::Main);
+                                 radio_.queryAgcThreshold(Rx::Main); break;
+                        case 9:  radio_.queryAgcHang(Rx::Main);
+                                 radio_.queryAgcDecay(Rx::Main);     break;
                         case 1:  radio_.queryRfGain(Rx::Main);     break;
                         case 2:  radio_.queryAttenuator(Rx::Main); break;
                         case 3:  radio_.queryPreamp(Rx::Main);     break;
@@ -1207,7 +1384,7 @@ void MainWindow::setDigitalMode(bool on) {
         statusBar()->showMessage(QString("VOICE: mic %1, speech %2, line-in off")
                                      .arg(lastMicGain_).arg(lastSpeechProc_));
     }
-    txBar_->showDigitalMode(on);
+    panel_->showDigital(on);
 }
 
 void MainWindow::saveBandMemory() {

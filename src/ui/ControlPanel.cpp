@@ -109,12 +109,32 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     }
     connect(modeGroup_, &QButtonGroup::idClicked, this,
             [this](int id) { emit modeSelected(kModes[id].mode); });
+    // Row 4, balancing the grid: SAM under AM — [vendor]-style pseudo-sync-AM
+    // (ECSS: USB with the carrier zero-beaten; the wheel drops to 10/1 Hz
+    // steps while lit). DIG under FM — line-in vs mic audio switch.
+    samBtn_ = makeButton("SAM");
+    samBtn_->setToolTip("Synchronous-AM style reception ([vendor] ECSS): switches to USB —\n"
+                        "zero-beat the AM carrier; wheel steps 10 Hz, 1 Hz with Shift.\n"
+                        "Turning it off returns to your previous mode and filter.");
+    modeGrid->addWidget(samBtn_, 3, 0);
+    connect(samBtn_, &QPushButton::toggled, this, [this](bool on) {
+        if (!samBtn_->signalsBlocked()) emit samToggled(on);
+    });
+    digBtn_ = makeButton("DIG");
+    digBtn_->setToolTip("Digital audio: rear line-in on, mic + speech processor off\n"
+                        "(your voice settings come back when turned off)");
+    modeGrid->addWidget(digBtn_, 3, 1);
+    connect(digBtn_, &QPushButton::toggled, this, [this](bool on) {
+        if (!digBtn_->signalsBlocked()) emit digitalToggled(on);
+    });
     lay->addWidget(modeBox);
 
     // --- AGC --------------------------------------------------------------
     auto* agcBox = makeGroup("AGC");
-    auto* agcRow = new QHBoxLayout(agcBox);
-    agcRow->setContentsMargins(0, 4, 0, 0);
+    auto* agcCol = new QVBoxLayout(agcBox);
+    agcCol->setContentsMargins(0, 4, 0, 0);
+    agcCol->setSpacing(4);
+    auto* agcRow = new QHBoxLayout;
     agcRow->setSpacing(3);
     agcGroup_ = new QButtonGroup(this);
     agcGroup_->setExclusive(true);
@@ -125,6 +145,50 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     }
     connect(agcGroup_, &QButtonGroup::idClicked, this,
             [this](int id) { emit agcSelected(kAgcs[id].agc); });
+    agcCol->addLayout(agcRow);
+    // Programmable-AGC group (*RMAT/*RMAH/*RMAD — acts with 'P' selected):
+    // threshold in µV, hang in tenths of a second (0 = off), decay rate.
+    // The radio quantizes; readbacks show its actual values.
+    auto agcSubRow = [&](const char* cap, QSlider*& sl, QLabel*& val,
+                         int lo, int hi, QTimer*& tx, int& pend, auto sig) {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(4);
+        auto* c = new QLabel(cap);
+        c->setFixedWidth(26);
+        row->addWidget(c);
+        sl = new QSlider(Qt::Horizontal);
+        sl->setRange(lo, hi);
+        row->addWidget(sl, 1);
+        val = new QLabel("--");
+        val->setFixedWidth(46);
+        val->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        row->addWidget(val);
+        agcCol->addLayout(row);
+        tx = new QTimer(this);
+        tx->setSingleShot(true);
+        tx->setInterval(40);
+        connect(tx, &QTimer::timeout, this, [this, &pend, sig] {
+            if (pend >= 0) { (this->*sig)(pend); pend = -1; }
+        });
+        connect(sl, &QSlider::valueChanged, this, [this, &pend, tx](int v) {
+            pend = v;
+            if (!tx->isActive()) tx->start();
+        });
+    };
+    agcSubRow("THR", agcThr_, agcThrVal_, 1, 150,
+              agcThrTx_, pendAgcThr_, &ControlPanel::agcThresholdChanged);
+    agcSubRow("HNG", agcHang_, agcHangVal_, 0, 100,      // tenths of a second
+              agcHangTx_, pendAgcHang_, &ControlPanel::agcHangChanged);
+    agcSubRow("DCY", agcDecay_, agcDecayVal_, 5, 500,
+              agcDecayTx_, pendAgcDecay_, &ControlPanel::agcDecayChanged);
+    connect(agcThr_, &QSlider::valueChanged, this,
+            [this](int v) { agcThrVal_->setText(QString("%1 µV").arg(v)); });
+    connect(agcHang_, &QSlider::valueChanged, this, [this](int v) {
+        agcHangVal_->setText(v == 0 ? QString("off")
+                                    : QString("%1 s").arg(v / 10.0, 0, 'f', 1));
+    });
+    connect(agcDecay_, &QSlider::valueChanged, this,
+            [this](int v) { agcDecayVal_->setText(QString::number(v)); });
     lay->addWidget(agcBox);
 
     // --- Front end: attenuator + preamp --------------------------------------
@@ -346,6 +410,50 @@ void ControlPanel::showNotch(bool on, int centerHz, int widthHz) {
 void ControlPanel::showHwNb(bool on) {
     QSignalBlocker block(hwNbBtn_);
     hwNbBtn_->setChecked(on);
+}
+
+void ControlPanel::showAgcThreshold(double uv) {
+    {
+        QSignalBlocker b(agcThr_);
+        agcThr_->setValue(std::clamp(static_cast<int>(std::lround(uv)), 1, 150));
+    }
+    agcThrVal_->setText(QString("%1 µV").arg(uv, 0, 'f', uv < 10.0 ? 1 : 0));
+}
+
+void ControlPanel::showSam(bool on) {
+    QSignalBlocker b(samBtn_);
+    samBtn_->setChecked(on);
+}
+
+void ControlPanel::setSamLabel(const QString& t) { samBtn_->setText(t); }
+
+void ControlPanel::clearModeSelection() {
+    QSignalBlocker block(modeGroup_);
+    modeGroup_->setExclusive(false);      // exclusive groups refuse "none"
+    for (auto* b : modeGroup_->buttons()) b->setChecked(false);
+    modeGroup_->setExclusive(true);
+}
+
+void ControlPanel::showDigital(bool on) {
+    QSignalBlocker b(digBtn_);
+    digBtn_->setChecked(on);
+}
+
+void ControlPanel::showAgcHang(double sec) {
+    {
+        QSignalBlocker b(agcHang_);
+        agcHang_->setValue(std::clamp(static_cast<int>(std::lround(sec * 10.0)), 0, 100));
+    }
+    agcHangVal_->setText(sec < 0.05 ? QString("off")
+                                    : QString("%1 s").arg(sec, 0, 'f', 1));
+}
+
+void ControlPanel::showAgcDecay(int rate) {
+    {
+        QSignalBlocker b(agcDecay_);
+        agcDecay_->setValue(std::clamp(rate, 5, 500));
+    }
+    agcDecayVal_->setText(QString::number(rate));
 }
 
 void ControlPanel::showPbt(int pbtHz) {

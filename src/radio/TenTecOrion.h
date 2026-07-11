@@ -28,6 +28,16 @@ public:
     // Control-surface knobs. AGC is the radio's own letter code:
     // 'F'ast 'M'edium 'S'low 'P'rogram 'O'ff. Attenuator steps 0..3 = off/6/12/18 dB.
     void setAgc(Rx rx, char agc);                 // *R<M/S>A<F/M/S/P/O>
+    // Programmable-AGC group (active in 'P' mode), all live-verified:
+    // threshold in µV, decimals ok, radio quantizes (*RMAT150 -> 151.29);
+    // hang in seconds, decimals ok, 0 = off (*RMAH2 -> 01.98), 0..~10 s;
+    // decay integer (dB/s), minimum 5 — smaller values silently rejected.
+    void setAgcThreshold(Rx rx, double uv);       // *R<M/S>AT<val>
+    void queryAgcThreshold(Rx rx);                // ?R<M/S>AT -> @RMAT79.06
+    void setAgcHang(Rx rx, double sec);           // *R<M/S>AH<val>
+    void queryAgcHang(Rx rx);                     // ?R<M/S>AH -> @RMAH01.98
+    void setAgcDecay(Rx rx, int rate);            // *R<M/S>AD<val>
+    void queryAgcDecay(Rx rx);                    // ?R<M/S>AD -> @RMAD5
     void setRfGain(Rx rx, int gain);              // *R<M/S>G<0-100>
     void setAttenuator(Rx rx, int step);          // *R<M/S>T<0-3>
     void setPreamp(Rx rx, bool on);               // *R<M/S>E<0/1> (main RX only on a 565)
@@ -103,6 +113,9 @@ signals:
     void sMeterReported(int mainRaw, int subRaw); // raw units (hamlib cal table scale)
     void txMeterReported(double fwdWatts, double refWatts, double swr);
     void agcReported(Rx rx, char agc);
+    void agcThresholdReported(Rx rx, double uv);
+    void agcHangReported(Rx rx, double sec);
+    void agcDecayReported(Rx rx, int rate);
     void rfGainReported(Rx rx, int gain);
     void attenReported(Rx rx, int step);
     void preampReported(Rx rx, bool on);

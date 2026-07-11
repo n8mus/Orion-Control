@@ -202,6 +202,33 @@ void TenTecOrion::setAntennaRouting(char ant1, char ant2, char rxAnt) {
 
 void TenTecOrion::queryAntennaRouting() { send("?KA"); }
 
+void TenTecOrion::setAgcThreshold(Rx rx, double uv) {
+    uv = std::max(0.1, std::min(300.0, uv));
+    send(QByteArray("*R") + rxLetter(rx) + "AT" + QByteArray::number(uv, 'f', 2));
+}
+
+void TenTecOrion::queryAgcThreshold(Rx rx) {
+    send(QByteArray("?R") + rxLetter(rx) + "AT");
+}
+
+void TenTecOrion::setAgcHang(Rx rx, double sec) {
+    sec = std::max(0.0, std::min(10.0, sec));
+    send(QByteArray("*R") + rxLetter(rx) + "AH" + QByteArray::number(sec, 'f', 2));
+}
+
+void TenTecOrion::queryAgcHang(Rx rx) {
+    send(QByteArray("?R") + rxLetter(rx) + "AH");
+}
+
+void TenTecOrion::setAgcDecay(Rx rx, int rate) {
+    send(QByteArray("*R") + rxLetter(rx) + "AD"
+         + QByteArray::number(clampi(rate, 5, 500)));
+}
+
+void TenTecOrion::queryAgcDecay(Rx rx) {
+    send(QByteArray("?R") + rxLetter(rx) + "AD");
+}
+
 void TenTecOrion::queryFrequency(Rx rx) {
     const char v = (rx == Rx::Main) ? 'A' : 'B';
     send(QByteArray("?") + v + "F");
@@ -331,6 +358,19 @@ void TenTecOrion::onLine(const QByteArray& line) {
             static const Mode modes[] = { Mode::USB, Mode::LSB, Mode::CWU,
                                           Mode::CWL, Mode::AM,  Mode::FM };
             emit modeReported(rx, modes[line[4] - '0']);
+        }
+        else if (line[3] == 'A' && line.size() >= 6 && line[4] == 'T') {
+            // @R<M/S>AT<uv> — programmable-AGC threshold, decimal µV
+            const double uv = std::atof(line.mid(5).constData());
+            if (uv > 0.0 && uv <= 500.0) emit agcThresholdReported(rx, uv);
+        }
+        else if (line[3] == 'A' && line.size() >= 6 && line[4] == 'H') {
+            const double sec = std::atof(line.mid(5).constData());
+            if (sec >= 0.0 && sec <= 20.0) emit agcHangReported(rx, sec);
+        }
+        else if (line[3] == 'A' && line.size() >= 6 && line[4] == 'D'
+                 && parseLeadingInt(line.mid(5), v) && v >= 1 && v <= 2000) {
+            emit agcDecayReported(rx, static_cast<int>(v));
         }
         else if (line[3] == 'A' && line.size() >= 5) { // AGC letter (P may trail data)
             const char a = line[4];

@@ -2,8 +2,15 @@
 #include "net/RigctldServer.h"
 
 #include <QTcpSocket>
+#include <cstdio>
+#include <cstdlib>
 
 namespace ttc {
+
+static bool rcTrace() {
+    static const bool on = std::getenv("TTC_TRACE") != nullptr;
+    return on;
+}
 
 RigctldServer::RigctldServer(RadioController* radio, QObject* parent)
     : QObject(parent), radio_(radio) {
@@ -18,6 +25,9 @@ void RigctldServer::onNewConnection() {
     while (QTcpSocket* s = server_.nextPendingConnection()) {
         connect(s, &QTcpSocket::readyRead, this, &RigctldServer::onReadyRead);
         connect(s, &QTcpSocket::disconnected, s, &QObject::deleteLater);
+        if (rcTrace())
+            std::fprintf(stderr, "[rigctld] client connected: %s\n",
+                         s->peerAddress().toString().toLatin1().constData());
         emit clientConnected(s->peerAddress().toString());
     }
 }
@@ -51,7 +61,16 @@ void RigctldServer::onReadyRead() {
         if (line.isEmpty()) continue;
         emit commandReceived(QString::fromLatin1(line));
         QByteArray reply = handleLine(line);
-        if (!reply.isNull()) s->write(reply);
+        if (rcTrace()) {
+            std::fprintf(stderr, "[rigctld<-] %s\n", line.constData());
+            QByteArray shown = reply;
+            shown.replace('\n', "\\n");
+            std::fprintf(stderr, "[rigctld->] %s\n", shown.constData());
+        }
+        if (!reply.isNull()) {
+            s->write(reply);
+            s->flush();
+        }
     }
 }
 

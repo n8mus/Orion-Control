@@ -62,6 +62,11 @@ public:
     int  maxViewSpanHz() const { return fullSpanHz_ - 2 * std::abs(dialOffsetHz_); }
     int  minViewSpanHz() const;
     void setPassband(int loHz, int hiHz);          // offsets from center, in Hz
+    // Which passband edge a pure-bandwidth change pins in place. On the Orion
+    // in SSB, bandwidth grows away from the carrier: USB anchors the low
+    // (zero-beat) edge, LSB the high edge; CW/AM/FM widen symmetrically.
+    // Drives the plain-edge drag preview so it matches what the radio does.
+    void setBwAnchor(int a);                       // -1 lock lo, +1 lock hi, 0 sym
     // Manual-notch marker, in display (RF-offset) space; caller maps the
     // radio's audio-Hz notch through the mode sideband. Ignored mid-drag.
     void setNotch(bool on, int rfOffsetHz, int widthHz);
@@ -140,6 +145,7 @@ private:
     uint64_t centerHz_ = 0;                        // 0 = unknown, labels skipped
     int pbLoHz_ = -1200;
     int pbHiHz_ = 1200;
+    int bwAnchor_ = 0;                             // see setBwAnchor
     bool notchOn_     = false;
     int  notchRfHz_   = 0;                         // marker center, RF offset
     int  notchWidthHz_ = 0;

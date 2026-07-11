@@ -1512,6 +1512,10 @@ void MainWindow::pushVfoB() {
 }
 
 void MainWindow::refreshPassbandOverlay() {
+    // SSB bandwidth grows away from the carrier (edgesFromRig): tell the
+    // panadapter which edge a pure-BW drag pins so the preview matches.
+    pan_->setBwAnchor(rigMode_ == Mode::USB ? -1
+                      : rigMode_ == Mode::LSB ? +1 : 0);
     // Don't snap the overlay out from under the user right after they dragged it.
     if (sinceFilterEdit_.isValid() && sinceFilterEdit_.elapsed() < 2000) return;
     int lo = 0, hi = 0;
@@ -1521,10 +1525,21 @@ void MainWindow::refreshPassbandOverlay() {
 
 void MainWindow::onPassbandChanged(int loHz, int hiHz) {
     // Delta from the drag anchor, applied to the radio's real anchored state.
-    const int dWidth  = (hiHz - loHz) - (anchorHiHz_ - anchorLoHz_);
-    const int dCenter = ((hiHz + loHz) - (anchorHiHz_ + anchorLoHz_)) / 2;
+    // The PBT delta is the exact inverse of edgesFromRig, so the (bw, pbt)
+    // sent reproduces the drawn edges: in SSB the nominal placement rides
+    // the zero-beat edge (USB lo = pbt, LSB hi = -pbt), elsewhere the center.
+    const int dWidth = (hiHz - loHz) - (anchorHiHz_ - anchorLoHz_);
+    int dPbt;
+    switch (rigMode_) {
+        case Mode::USB: dPbt = loHz - anchorLoHz_;    break;
+        case Mode::LSB: dPbt = anchorHiHz_ - hiHz;    break;
+        default:
+            dPbt = pbtRfSign(rigMode_)
+                   * (((hiHz + loHz) - (anchorHiHz_ + anchorLoHz_)) / 2);
+            break;
+    }
     pendBwHz_  = std::clamp(anchorBwHz_ + dWidth, 100, 6000);
-    pendPbtHz_ = std::clamp(anchorPbtHz_ + pbtRfSign(rigMode_) * dCenter, -8000, 8000);
+    pendPbtHz_ = std::clamp(anchorPbtHz_ + dPbt, -8000, 8000);
     filterDirty_ = true;
     sinceFilterEdit_.restart();
     if (!filterTx_->isActive()) filterTx_->start();  // coalesce to ~25 writes/sec

@@ -303,6 +303,10 @@ void PanadapterWidget::setPassband(int loHz, int hiHz) {
     update();
 }
 
+void PanadapterWidget::setBwAnchor(int a) {
+    bwAnchor_ = a < 0 ? -1 : (a > 0 ? 1 : 0);
+}
+
 void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz) {
     if (drag_ == Drag::Notch) return;              // never fight an active drag
     notchOn_ = on;
@@ -845,13 +849,20 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         dragStartRef_ = ds_.refDb;
         return;
     }
-    const bool onLo = std::abs(x - hzToX(pbLoHz_)) <= edgeTol;
-    const bool onHi = std::abs(x - hzToX(pbHiHz_)) <= edgeTol;
+    bool onLo = std::abs(x - hzToX(pbLoHz_)) <= edgeTol;
+    bool onHi = std::abs(x - hzToX(pbHiHz_)) <= edgeTol;
+    if (onLo && onHi) {                             // narrow filter: closer edge wins
+        if (std::abs(x - hzToX(pbLoHz_)) <= std::abs(x - hzToX(pbHiHz_))) onHi = false;
+        else                                                              onLo = false;
+    }
     if (onLo || onHi) {
-        // Plain edge = symmetric width change (pure bandwidth, PBT untouched —
-        // matches the front-panel BW knob and the sub filter's behavior);
-        // Shift+edge = hi/lo-cut (width + center, moves PBT).
+        // Plain edge = pure bandwidth (PBT untouched, matches the front-panel
+        // BW knob): the anchored zero-beat edge stays pinned, so in SSB only
+        // the outer edge is a width handle — a plain grab of the pinned edge
+        // adjusts that cut instead. Shift+edge = hi/lo-cut explicitly.
         if (e->modifiers() & Qt::ShiftModifier) drag_ = onLo ? Drag::LoEdge : Drag::HiEdge;
+        else if (bwAnchor_ < 0 && onLo)         drag_ = Drag::LoEdge;
+        else if (bwAnchor_ > 0 && onHi)         drag_ = Drag::HiEdge;
         else                                    drag_ = Drag::SymEdge;
         emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
         return;
@@ -961,12 +972,22 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         pbLoHz_ = dragStartLo_ + delta;
         pbHiHz_ = dragStartHi_ + delta;
     } else if (drag_ == Drag::SymEdge) {
-        // Mirror both edges about the grab-time center: center constant ->
-        // pure bandwidth, PBT untouched (matches the front-panel BW knob).
-        const int center = (dragStartLo_ + dragStartHi_) / 2;
-        const int half = std::max(25, std::abs(hz - center));
-        pbLoHz_ = center - half;
-        pbHiHz_ = center + half;
+        // Pure bandwidth, PBT untouched (front-panel BW knob). The preview
+        // must show what the radio actually does with the width: SSB grows
+        // away from the carrier (zero-beat edge pinned), CW/AM/FM widen
+        // symmetrically about the grab-time center.
+        if (bwAnchor_ < 0) {                        // USB: low edge is zero-beat
+            pbLoHz_ = dragStartLo_;
+            pbHiHz_ = std::max(hz, dragStartLo_ + 50);
+        } else if (bwAnchor_ > 0) {                 // LSB: high edge is zero-beat
+            pbHiHz_ = dragStartHi_;
+            pbLoHz_ = std::min(hz, dragStartHi_ - 50);
+        } else {
+            const int center = (dragStartLo_ + dragStartHi_) / 2;
+            const int half = std::max(25, std::abs(hz - center));
+            pbLoHz_ = center - half;
+            pbHiHz_ = center + half;
+        }
     } else if (drag_ == Drag::LoEdge) {
         pbLoHz_ = std::min(hz, pbHiHz_ - 50);
     } else {

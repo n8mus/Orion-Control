@@ -37,6 +37,15 @@ void TenTecOrion::send(const QByteArray& cmd) {
 }
 
 void TenTecOrion::setFrequencyHz(Rx rx, uint64_t hz) {
+    // Hard safety gate: a malformed CAT/rigctld request (e.g. "*AF0") would
+    // otherwise send the radio to 0 Hz and off frequency. Never let anything
+    // outside the Orion's real RX range reach the hardware.
+    if (hz < 100000 || hz > 60000000) {
+        if (std::getenv("TTC_TRACE"))
+            std::fprintf(stderr, "[cat] REJECTED out-of-range setFrequency %llu\n",
+                         static_cast<unsigned long long>(hz));
+        return;
+    }
     // *AF<hz> for VFO A (main), *BF<hz> for VFO B (sub), frequency in Hz.
     const char v = (rx == Rx::Main) ? 'A' : 'B';
     send(QByteArray("*") + v + "F" + QByteArray::number(static_cast<qulonglong>(hz)));

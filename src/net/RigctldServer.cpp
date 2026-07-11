@@ -150,8 +150,14 @@ QByteArray RigctldServer::handleExtended(const QByteArray& cmd,
         r += "Split: 0\nTX VFO: VFOA\n";
     } else if (name == "set_freq") {
         if (!a.isEmpty()) {
-            freqHz_ = static_cast<uint64_t>(a[0].toDouble());
-            if (radio_) radio_->setFrequencyHz(Rx::Main, freqHz_);
+            bool ok = false;
+            const uint64_t hz = static_cast<uint64_t>(a[0].toDouble(&ok));
+            if (ok && hz >= 100000 && hz <= 60000000) {
+                freqHz_ = hz;
+                if (radio_) radio_->setFrequencyHz(Rx::Main, hz);
+            } else {
+                return r + "RPRT -1\n";             // reject; never zero the rig
+            }
         }
     } else if (name == "set_mode") {
         if (!a.isEmpty()) {
@@ -202,25 +208,38 @@ QByteArray RigctldServer::handleLine(const QByteArray& line) {
     }
 
     const char c = line[0];
-    const QList<QByteArray> tok = line.split(' ');
+    // Strip the command letter, then drop any VFO token hamlib may prepend
+    // ("F VFOA 7074000"). The remaining args are the real payload — parsing a
+    // VFO name as a number would otherwise send the radio to 0 Hz.
+    QList<QByteArray> tok = line.mid(1).split(' ');
+    while (!tok.isEmpty() && (tok[0].isEmpty() || tok[0] == "currVFO"
+                              || tok[0].startsWith("VFO") || tok[0] == "Main"
+                              || tok[0] == "Sub"))
+        tok.removeFirst();
 
     switch (c) {
         case 'f':                                   // get frequency
             return QByteArray::number(static_cast<qulonglong>(freqHz_)) + "\n";
         case 'F':                                   // set frequency
-            if (tok.size() >= 2) {
-                freqHz_ = tok[1].toULongLong();
-                if (radio_) radio_->setFrequencyHz(Rx::Main, freqHz_);
+            if (!tok.isEmpty()) {
+                bool ok = false;
+                const uint64_t hz = static_cast<uint64_t>(tok[0].toDouble(&ok));
+                if (ok && hz >= 100000 && hz <= 60000000) {
+                    freqHz_ = hz;
+                    if (radio_) radio_->setFrequencyHz(Rx::Main, hz);
+                } else {
+                    return "RPRT -1\n";             // reject; never zero the rig
+                }
             }
             return "RPRT 0\n";
         case 'm':                                   // get mode + passband
             return QByteArray(modeToHamlib(mode_)) + "\n" + QByteArray::number(bwHz_) + "\n";
         case 'M':                                   // set mode [passband]
-            if (tok.size() >= 2) {
-                mode_ = hamlibToMode(tok[1]);
+            if (!tok.isEmpty()) {
+                mode_ = hamlibToMode(tok[0]);
                 if (radio_) radio_->setMode(Rx::Main, mode_);
-                if (tok.size() >= 3 && tok[2].toInt() > 0) {
-                    bwHz_ = tok[2].toInt();
+                if (tok.size() >= 2 && tok[1].toInt() > 0) {
+                    bwHz_ = tok[1].toInt();
                     if (radio_) radio_->setBandwidthHz(Rx::Main, bwHz_);
                 }
             }
@@ -232,8 +251,8 @@ QByteArray RigctldServer::handleLine(const QByteArray& line) {
         case 't':                                   // get PTT (cache tracks T/R
             return ptt_ ? "1\n" : "0\n";            // via the metering replies)
         case 'T':                                   // set PTT
-            if (tok.size() >= 2) {
-                const bool on = tok[1].toInt() != 0;
+            if (!tok.isEmpty()) {
+                const bool on = tok[0].toInt() != 0;
                 ptt_ = on;                          // optimistic; polls confirm
                 emit pttRequested(on);
             }

@@ -124,8 +124,7 @@ private:
     QImage wfImg_;                                 // rendered, 1 row = 1 pixel line
     int  lastBinLo_ = -1, lastBinHi_ = -1;         // geometry key for wfImg_
     bool wfDirty_ = true;                          // settings changed: full re-render
-    QImage gradStrip_;                             // 1 x hSpec fill gradient (cached)
-    int  gradPal_ = -1;                            // palette the strip was built for
+    QImage fillImg_;                               // level-colored fill (reused buffer)
 
     enum class Drag {
         None,

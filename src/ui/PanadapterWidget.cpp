@@ -17,6 +17,7 @@ constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
 constexpr int   kScaleBandH    = 16;     // freq-scale strip between spectrum and wf
 constexpr int   kDbAxisW       = 40;     // grab width of the left dB scale
 constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
+constexpr float kFillGamma     = 0.7f;   // boosts fill color: warm sooner than white
 constexpr float kNoRow         = -300.0f;
 
 // Color palettes. All stops interpolate linearly; t=0 is the scale bottom
@@ -101,10 +102,8 @@ void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
     ds_.split     = std::clamp(ds_.split, 0.15f, 0.85f);
     dbMax_ = ds_.refDb;
     dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
-    if (scaleChanged) {
+    if (scaleChanged)
         wfDirty_ = true;       // history re-renders in the new scale/palette
-        gradPal_ = -1;         // fill gradient rebuilds too
-    }
     update();
 }
 
@@ -356,42 +355,72 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         if (!wfImg_.isNull()) p.drawImage(0, wfTop, wfImg_);
     }
 
-    // Background: frequency gridlines, then the (draggable) dB scale.
+    // Per-pixel-column signal level (0..1 of the scale): max of the column's
+    // bins when zoomed out (narrow signals never vanish), linear interpolation
+    // between bins when zoomed deep (no staircase). Drives both fill and trace,
+    // and gives a clean one-vertex-per-pixel line instead of sub-pixel jitter.
+    const float range = dbMax_ - dbMin_;
+    const int w = width();
+    std::vector<float> colT;
+    if (n >= 2 && w > 1) {
+        colT.resize(w);
+        const int nv = binHi - binLo;
+        for (int x = 0; x < w; ++x) {
+            float v;
+            if (nv >= w) {
+                int b0 = binLo + static_cast<int>(static_cast<int64_t>(x) * nv / w);
+                int b1 = binLo + static_cast<int>(static_cast<int64_t>(x + 1) * nv / w);
+                if (b1 <= b0) b1 = b0 + 1;
+                v = avg_[b0];
+                for (int b = b0 + 1; b < b1; ++b) v = std::max(v, avg_[b]);
+            } else {
+                const double pos = binLo + static_cast<double>(x) * (nv - 1) / (w - 1);
+                const int b = static_cast<int>(pos);
+                const float f = static_cast<float>(pos - b);
+                v = avg_[b] * (1.0f - f) + avg_[std::min(b + 1, n - 1)] * f;
+            }
+            colT[x] = std::clamp((v - dbMin_) / range, 0.0f, 1.0f);
+        }
+    }
+
+    // KE9NS-style fill: each column is painted in the color of ITS OWN level
+    // (same palette as the waterfall, gamma-boosted so strong signals go
+    // yellow/red as whole columns, not just a sliver at the tip), with a
+    // vertical fade toward the bottom for depth.
+    if (!colT.empty() && ds_.fillTrace && hSpec > 1) {
+        if (fillImg_.width() != w || fillImg_.height() != hSpec)
+            fillImg_ = QImage(w, hSpec, QImage::Format_RGB32);
+        std::vector<QRgb> colRgb(w);
+        std::vector<int>  colY(w);
+        for (int x = 0; x < w; ++x) {
+            colRgb[x] = mapColor(std::pow(colT[x], kFillGamma));
+            colY[x]   = static_cast<int>(hSpec * (1.0f - colT[x]));
+        }
+        const QRgb bg = qRgb(12, 16, 22);
+        for (int y = 0; y < hSpec; ++y) {
+            QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
+            const int bright = 255 - 110 * y / hSpec;   // fade toward the bottom
+            for (int x = 0; x < w; ++x) {
+                if (y < colY[x]) { line[x] = bg; continue; }
+                const QRgb c = colRgb[x];
+                line[x] = qRgb((qRed(c)   * bright) >> 8,
+                               (qGreen(c) * bright) >> 8,
+                               (qBlue(c)  * bright) >> 8);
+            }
+        }
+        p.drawImage(0, 0, fillImg_);
+    }
+
+    // Frequency gridlines and the (draggable) dB scale, over the fill.
     drawFreqGrid(p, hSpec);
     drawDbScale(p, hSpec);
 
-    // KE9NS-style fill: the area under the trace is painted with the same
-    // palette as the waterfall, mapped to the dB axis — strong signals rise
-    // into yellow/orange/red while the floor stays deep blue.
-    const float range = dbMax_ - dbMin_;
     QPainterPath tracePath;
-    if (n >= 2) {
-        const int nv = binHi - binLo;
-        for (int i = 0; i < nv; ++i) {
-            const double x = static_cast<double>(i) / (nv - 1) * width();
-            const float t = (avg_[binLo + i] - dbMin_) / range;
-            const double y = hSpec * (1.0 - std::clamp(t, 0.0f, 1.0f));
-            if (i == 0) tracePath.moveTo(x, y);
+    if (!colT.empty()) {
+        for (int x = 0; x < w; ++x) {
+            const double y = hSpec * (1.0 - colT[x]);
+            if (x == 0) tracePath.moveTo(x, y);
             else        tracePath.lineTo(x, y);
-        }
-        if (ds_.fillTrace) {
-            if (gradStrip_.height() != hSpec || gradPal_ != ds_.palette) {
-                gradStrip_ = QImage(1, std::max(1, hSpec), QImage::Format_RGB32);
-                for (int y = 0; y < gradStrip_.height(); ++y) {
-                    const float t = 1.0f - static_cast<float>(y)
-                                           / std::max(1, gradStrip_.height() - 1);
-                    gradStrip_.setPixel(0, y, mapColor(t));
-                }
-                gradPal_ = ds_.palette;
-            }
-            QPainterPath fillPath = tracePath;
-            fillPath.lineTo(width(), hSpec);
-            fillPath.lineTo(0, hSpec);
-            fillPath.closeSubpath();
-            p.save();
-            p.setClipPath(fillPath);
-            p.drawImage(QRect(0, 0, width(), hSpec), gradStrip_);
-            p.restore();
         }
     }
 

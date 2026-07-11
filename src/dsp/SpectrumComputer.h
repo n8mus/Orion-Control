@@ -27,8 +27,10 @@ private:
     int n_;
     Fft fft_;
     std::vector<float> window_;                 // Hann
-    std::vector<std::complex<float>> buf_;      // rolling accumulator (kept at <= n_)
+    std::vector<std::complex<float>> buf_;      // pending samples (consumed in blocks)
     std::vector<std::complex<float>> frame_;
+    std::vector<float> psAcc_;                  // Welch power accumulator
+    int    psCount_     = 0;                    // spectra accumulated this frame
     std::vector<float> outDb_;                  // smoothed output, fftshifted
     std::function<void(const std::vector<float>&)> out_;
     double minInterval_ = 50.0;                 // ~20 fps

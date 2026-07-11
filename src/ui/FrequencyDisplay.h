@@ -12,10 +12,12 @@ namespace ttc {
 //   * click top/bottom half of a digit -> +/- that decade
 //   * double-click        -> inline type-in entry (MHz, kHz or Hz accepted)
 // setFrequency() feeds it from the radio; user changes emit frequencyEdited().
+// An optional caption ("VFO A"/"VFO B", KE9NS-style) draws above the digits.
 class FrequencyDisplay : public QWidget {
     Q_OBJECT
 public:
-    explicit FrequencyDisplay(QWidget* parent = nullptr);
+    explicit FrequencyDisplay(const QString& caption = QString(),
+                              QWidget* parent = nullptr);
 
     void setFrequency(uint64_t hz);
 
@@ -35,6 +37,8 @@ private:
     void finishEdit();
 
     uint64_t hz_ = 14200000;
+    QString  caption_;
+    int      digitTop_ = 0;                 // y offset of the digit row
     QLineEdit* edit_ = nullptr;
 };
 

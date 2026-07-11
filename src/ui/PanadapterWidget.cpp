@@ -209,6 +209,27 @@ void PanadapterWidget::setCallsign(const QString& call) {
     update();
 }
 
+void PanadapterWidget::setVfoB(uint64_t hz, char role, int loHz, int hiHz) {
+    if (drag_ == Drag::VfoB) return;               // don't snap it mid-drag
+    if (hz == vfoBHz_ && role == vfoBRole_ && loHz == vfoBLo_ && hiHz == vfoBHi_)
+        return;
+    vfoBHz_ = hz;
+    vfoBRole_ = role;
+    vfoBLo_ = loHz;
+    vfoBHi_ = hiHz;
+    update();
+}
+
+bool PanadapterWidget::overVfoB(int x) const {
+    if (!vfoBHz_ || !centerHz_) return false;
+    const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
+    if (std::llabs(off) > viewSpanHz_) return false;
+    const int xb  = hzToX(static_cast<int>(off));
+    const int xLo = hzToX(static_cast<int>(off) + vfoBLo_);
+    const int xHi = hzToX(static_cast<int>(off) + vfoBHi_);
+    return x >= std::min(xLo, xb) - 4 && x <= std::max(xHi, xb) + 4;
+}
+
 // KE9NS-style spot markers: a thin vertical line at the spotted frequency
 // with the callsign running down it. Labels are click-to-tune (hit rects
 // collected here, tested in mousePressEvent).
@@ -636,10 +657,64 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     }
 
     // Frequency scale band on the divider (after the tints, so it stays clean),
-    // then the center (tuned) marker crossing everything.
+    // then the VFO markers crossing everything. Colors follow the routing
+    // panel: red = the transmitting VFO, green = the receiving one. Normal
+    // (TX+RX both on A) keeps the plain center marker and shows B, when it's
+    // in view, as a quiet blue sub-RX line.
     drawScaleBand(p, hSpec);
-    p.setPen(QColor(200, 80, 80));
-    p.drawLine(width() / 2, 0, width() / 2, height());
+    {
+        const QFont savedFont = p.font();
+        auto flag = [&](int x, const QString& text, const QColor& c) {
+            QFont ff = savedFont;
+            ff.setPixelSize(9);
+            ff.setBold(true);
+            p.setFont(ff);
+            QRect r(x + 4, 18, p.fontMetrics().horizontalAdvance(text) + 8, 13);
+            if (r.right() > width() - 2) r.moveRight(x - 4);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(c.red(), c.green(), c.blue(), 200));
+            p.drawRoundedRect(r, 2, 2);
+            p.setPen(QColor(250, 252, 255));
+            p.drawText(r, Qt::AlignCenter, text);
+        };
+        // Role colors match the routing buttons: red = transmitting VFO,
+        // green = the main receiver's VFO, blue = a parked sub dial.
+        const QColor txRed(224, 93, 93), rxGreen(62, 207, 122), subBlue(93, 178, 240);
+        QColor aCol(200, 80, 80);
+        QString aText = "A";
+        if (vfoBRole_ == 'T')      { aCol = rxGreen; aText = "A RX"; }
+        else if (vfoBRole_ == 'R') { aCol = txRed;   aText = "A TX"; }
+        p.setPen(aCol);
+        p.drawLine(width() / 2, 0, width() / 2, height());
+        flag(width() / 2, aText, aCol);
+        if (vfoBHz_ && centerHz_) {                // VFO B, if inside the view
+            const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
+            const int xb = hzToX(static_cast<int>(off));
+            if (std::llabs(off) < viewSpanHz_ / 2 && xb >= 0 && xb <= width()) {
+                // Full VFO look, same as the main passband: filter tint across
+                // spectrum + waterfall, edge lines, dial line, flag.
+                const QColor& c = vfoBRole_ == 'T' ? txRed
+                                : vfoBRole_ == 'R' ? rxGreen : subBlue;
+                const QString bText = vfoBRole_ == 'T' ? "B TX"
+                                    : vfoBRole_ == 'R' ? "B RX" : "B";
+                const int xLo = hzToX(static_cast<int>(off) + vfoBLo_);
+                const int xHi = hzToX(static_cast<int>(off) + vfoBHi_);
+                p.setBrush(Qt::NoBrush);
+                p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, height())),
+                           QColor(c.red(), c.green(), c.blue(), 42));
+                p.setPen(QPen(QColor(c.red(), c.green(), c.blue(), 170), 1));
+                p.drawLine(xLo, 0, xLo, height());
+                p.drawLine(xHi, 0, xHi, height());
+                p.setPen(QPen(c, 1));
+                p.drawLine(xb, 0, xb, height());
+                flag(xb, bText, c);
+            }
+        }
+        p.setFont(savedFont);
+        // The flags set a fill brush; clear it or the trace path below is
+        // rendered as a giant filled polygon in the flag's color.
+        p.setBrush(Qt::NoBrush);
+    }
 
     // Peak-hold trace (under the live trace), then the spectrum trace itself.
     if (n >= 2) {
@@ -675,19 +750,10 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {
     const double steps = e->angleDelta().y() / 120.0;
     if (steps == 0.0) return;
-    // Wheel over the dB axis adjusts the range (contrast): up = tighter/punchier.
-    if (inDbAxis(static_cast<int>(e->position().x()),
-                 static_cast<int>(e->position().y()))) {
-        ds_.rangeDb = std::clamp(ds_.rangeDb - static_cast<float>(steps) * 5.0f,
-                                 30.0f, 120.0f);
-        dbMax_ = ds_.refDb;
-        dbMin_ = ds_.refDb - ds_.rangeDb;
-        wfDirty_ = true;
-        update();
-        emit displaySettingsEdited(ds_);
-        e->accept();
-        return;
-    }
+    // NOTE: no wheel gesture on the dB axis — a plain wheel there used to
+    // adjust RANGE, which silently rescaled the colors whenever a wheel-tune
+    // happened near the left edge. Range lives in the DISPLAY panel; the axis
+    // drag still shifts REF.
     if (e->modifiers() & Qt::ControlModifier) {     // Ctrl+wheel = zoom
         const double factor = std::pow(1.25, -steps);
         viewSpanHz_ = std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
@@ -714,6 +780,14 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     dragStartY_  = y;
     dragStartLo_ = pbLoHz_;
     dragStartHi_ = pbHiHz_;
+    // Right-click = drop VFO B on that frequency (get the TX dead on the
+    // station the DX just worked, one click).
+    if (e->button() == Qt::RightButton) {
+        drag_ = Drag::None;
+        if (!inScaleBand(y) && !inDbAxis(x, y))
+            emit vfoBTuneRequested(xToHz(x));
+        return;
+    }
     // The frequency-scale band IS the split handle (KE9NS-style).
     if (inScaleBand(y)) {
         drag_ = Drag::Divider;
@@ -751,6 +825,18 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
         return;
     }
+    // Grab VFO B (line or its passband tint) to slide it — split TX placement.
+    if (overVfoB(x)) {
+        drag_ = Drag::VfoB;
+        dragStartBOff_ = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
+        return;
+    }
+    // Grab the A dial line to drag-tune the main VFO.
+    if (std::abs(x - width() / 2) <= 4 && centerHz_) {
+        drag_ = Drag::VfoA;
+        dragStartCenter_ = centerHz_;
+        return;
+    }
     if (x > hzToX(pbLoHz_) && x < hzToX(pbHiHz_)) {
         // Inside the passband: could become a body drag (pure PBT slide) or,
         // if released without moving, a click-to-tune. Decide on first move.
@@ -763,9 +849,11 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
 
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     if (drag_ == Drag::None) {
-        // Hover feedback for the two vertical-drag targets.
+        // Hover feedback: vertical-drag targets, and VFO B's horizontal grab.
         const int hx = e->pos().x(), hy = e->pos().y();
         if (inScaleBand(hy) || inDbAxis(hx, hy)) setCursor(Qt::SizeVerCursor);
+        else if (overVfoB(hx)
+                 || std::abs(hx - width() / 2) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();
         return;
     }
@@ -799,6 +887,21 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         notchRfHz_ = hz;
         update();
         emit notchDragged(notchRfHz_);              // drag-to-notch
+        return;
+    }
+    if (drag_ == Drag::VfoB) {
+        const qint64 off = dragStartBOff_ + (hz - xToHz(dragStartX_));
+        vfoBHz_ = static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
+        update();
+        emit vfoBDragged(static_cast<int>(off));    // consumer streams *BF
+        return;
+    }
+    if (drag_ == Drag::VfoA) {
+        // Anchored to the grab-time dial: cursor movement maps 1:1 to Hz, so
+        // the view recentering underneath doesn't compound.
+        const qint64 delta = hz - xToHz(dragStartX_);
+        emit vfoADragged(static_cast<uint64_t>(
+            static_cast<qint64>(dragStartCenter_) + delta));
         return;
     }
     if (drag_ == Drag::BodyPending) {

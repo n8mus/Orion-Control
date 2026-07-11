@@ -58,6 +58,18 @@ public:
     void setTunerEnabled(bool on);                // *TT<0/1> (internal tuner)
     void startTune();                             // *TTT (tune cycle)
 
+    // VFO assignment: which VFO drives the main RX / sub RX / transmitter.
+    // Letters 'A'/'B' ('N' = unassigned for sub/tx). RX on A with TX on B is
+    // how the Orion does split. *KV[mainrx][subrx][tx], query ?KV -> @KV...
+    void setVfoAssignment(char mainRx, char subRx, char tx);
+    void queryVfoAssignment();
+    // Antenna routing: per port (ANT1, ANT2, RX ANT), which receivers listen
+    // there — 'M'ain, 'S'ub, 'B'oth, 'N'one. TX follows the main receiver's
+    // port, and main must sit on ANT1 or ANT2 (RX ANT is receive-only).
+    // *KA[ant1][ant2][rxant], query ?KA -> @KA...
+    void setAntennaRouting(char ant1, char ant2, char rxAnt);
+    void queryAntennaRouting();
+
     // Queries (responses arrive asynchronously via the signals below).
     void queryFrequency(Rx rx);
     void queryFilter(Rx rx);
@@ -103,6 +115,8 @@ signals:
     void monitorReported(int pct);
     void afVolumeReported(int pct);
     void tunerReported(bool on);
+    void vfoAssignmentReported(char mainRx, char subRx, char tx);
+    void antennaRoutingReported(char ant1, char ant2, char rxAnt);
     void rawLine(const QByteArray& line);
 
 private slots:

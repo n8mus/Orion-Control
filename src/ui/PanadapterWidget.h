@@ -62,6 +62,15 @@ public:
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
     void setCallsign(const QString& call);         // watermark text (ds_.showCall)
+    // VFO B: drawn like the main VFO (passband tint + center line + flag)
+    // when its dial falls inside the view. role = 'T' (B transmits — red),
+    // 'R' (B is the main RX — green) or 'N' (parked sub dial — blue); A's
+    // flag takes the complementary color, all matching the routing buttons.
+    // loHz/hiHz are B's filter edges as RF offsets from B's dial. B is
+    // grabbable (vfoBDragged, streamed) and RIGHT-CLICK anywhere drops B on
+    // that frequency (pileup TX placement). The A dial line is grabbable too
+    // (vfoADragged with an absolute target).
+    void setVfoB(uint64_t hz, char role, int loHz, int hiHz);
 
     void setDisplaySettings(const DisplaySettings& s);
     const DisplaySettings& displaySettings() const { return ds_; }
@@ -77,6 +86,9 @@ signals:
     void notchWidthAdjustRequested(int steps);     // wheel over the notch marker
     void pbtZeroRequested();                       // double-click a passband edge
     void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
+    void vfoADragged(uint64_t hz);                 // A dial line slid (absolute target)
+    void vfoBDragged(int rfOffsetHz);              // B slid (streamed, offset from center)
+    void vfoBTuneRequested(int rfOffsetHz);        // right-click: put B here
     // In-widget edits (dB-axis drag, range wheel, divider drag) changed ds_;
     // owner persists and syncs the DISPLAY panel.
     void displaySettingsEdited(const DisplaySettings& s);
@@ -103,6 +115,7 @@ private:
     void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
+    bool   overVfoB(int x) const;                  // over B's line or passband
     bool   inScaleBand(int y) const;               // over the draggable divider strip
     bool   inDbAxis(int x, int y) const;           // over the draggable dB scale
 
@@ -148,6 +161,12 @@ private:
 
     QString callsign_;                             // watermark (empty = off)
 
+    uint64_t vfoBHz_ = 0;                          // 0 = marker off
+    char     vfoBRole_ = 'N';                      // 'T' tx / 'R' main rx / 'N' parked
+    int      vfoBLo_ = -1250, vfoBHi_ = 1250;      // B filter edges (offsets from B)
+    qint64   dragStartBOff_ = 0;                   // B offset at grab time
+    uint64_t dragStartCenter_ = 0;                 // A dial at grab time
+
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.
     const QImage& backgroundImage(int w, int h);
@@ -161,6 +180,8 @@ private:
         SymEdge,            // Shift+edge: symmetric width, pure bw, pbt kept
         BodyPending, Body,  // press inside passband; becomes a pure-pbt slide
         Notch,
+        VfoA,               // slide the A dial line (drag-to-tune)
+        VfoB,               // slide VFO B (split TX placement)
         Divider,            // drag the freq-scale band: move the wf split
         DbAxis,             // drag the left dB scale: shift ref level
     } drag_ = Drag::None;

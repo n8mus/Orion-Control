@@ -33,8 +33,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
     smeter_ = new SMeterWidget(this);
     panel_  = new ControlPanel(this);
-    freqDisp_ = new FrequencyDisplay(this);
+    freqDisp_ = new FrequencyDisplay("VFO A", this);
     freqDisp_->setFrequency(centerHz_);
+    freqDispB_ = new FrequencyDisplay("VFO B", this);
+    freqDispB_->setFrequency(7000000);             // real value polled at startup
     curBand_ = bandIndexOf(centerHz_);
     if (curBand_ >= 0) {
         QSettings s;
@@ -60,8 +62,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QPalette strip = topStrip->palette();
     strip.setColor(QPalette::Window, QColor(12, 16, 22));
     topStrip->setPalette(strip);
+    // KE9NS arrangement: meter + zoom on the left, then VFO A, the routing
+    // columns (antennas, A/B transfers, VFO assignment — Orion front-panel
+    // style, vertical) and VFO B. Taller than the readouts need so more
+    // controls can join later.
+    topStrip->setMinimumHeight(84);
     auto* topLay = new QHBoxLayout(topStrip);
-    topLay->setContentsMargins(0, 0, 10, 0);
+    topLay->setContentsMargins(10, 4, 10, 4);
     topLay->addWidget(smeter_);
     // Zoom slider (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel
     // on the panadapter still works and keeps the slider in sync.
@@ -77,8 +84,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     topLay->addSpacing(16);
     topLay->addWidget(zoomLbl);
     topLay->addWidget(zoom);
-    topLay->addStretch(1);
+    topLay->addSpacing(16);
     topLay->addWidget(freqDisp_);
+    topLay->addStretch(1);
+    routing_ = new RoutingPanel(topStrip);
+    topLay->addWidget(routing_);
+    topLay->addStretch(1);
+    topLay->addWidget(freqDispB_);
+    topLay->addStretch(1);
 
     auto spanFromSlider = [this](int v) {
         const double ratio = double(pan_->minViewSpanHz()) / pan_->fullSpanHz();
@@ -172,9 +185,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // In-widget edits (dB-axis drag/wheel, divider drag) flow back the other
     // way: persist them and keep the DISPLAY panel's sliders in sync.
     connect(pan_, &PanadapterWidget::displaySettingsEdited, this,
-            [dispPanel, saveDisplay](const DisplaySettings& d) {
+            [this, dispPanel, saveDisplay](const DisplaySettings& d) {
                 dispPanel->setSettings(d);
                 saveDisplay(d);
+                // In-widget edits are easy to make without noticing — say so.
+                statusBar()->showMessage(
+                    QString("display: REF %1 dB  RANGE %2 dB")
+                        .arg(d.refDb, 0, 'f', 0).arg(d.rangeDb, 0, 'f', 0));
             });
 
     // "SPOTS" dropdown: DX-cluster callsign labels on the panadapter. The feed
@@ -319,7 +336,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 
     // Radio state -> mode-sided passband overlay (LSB hangs below the carrier).
     connect(&radio_, &TenTecOrion::modeReported, this, [this](Rx rx, Mode m) {
-        if (rx != Rx::Main) return;
+        if (rx == Rx::Sub) { subMode_ = m; return; }
         rigctld_.cacheMode(m);                      // clients always see true mode
         panel_->showMode(m);                        // sidebar mirrors the front panel
         if (m != rigMode_) {
@@ -555,6 +572,104 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Frequency readout edits (digit wheel/click or type-in) tune the radio.
     connect(freqDisp_, &FrequencyDisplay::frequencyEdited, this,
             [this](uint64_t hz) { tuneAbsolute(hz); });
+    // VFO B goes straight to the sub receiver's dial (*BF); the panadapter
+    // stays on VFO A, whose IQ tap feeds it.
+    connect(freqDispB_, &FrequencyDisplay::frequencyEdited, this,
+            [this](uint64_t hz) {
+                radio_.setFrequencyHz(Rx::Sub, hz);
+                vfoBHz_ = hz;
+                pushVfoB();
+                sinceVfoBEdit_.restart();           // poll echo may still be stale
+                statusBar()->showMessage(
+                    QString("VFO B -> %1 MHz").arg(hz / 1e6, 0, 'f', 6));
+            });
+    pushVfoB();                                     // marker live from the start
+
+    // Routing matrices + A/B dial transfers (the Orion front panel's VFO and
+    // antenna button groups, driven over *KV / *KA).
+    connect(routing_, &RoutingPanel::vfoAssignmentEdited, this,
+            [this](char m, char s, char t) {
+                radio_.setVfoAssignment(m, s, t);
+                // [vendor] split setup (no separate split button): the moment a
+                // click puts VFO B on TX or RX, park B above the dial — 5 kHz
+                // in voice, 1 kHz in CW. The radio's own menu copies the mode
+                // to the sub, so only the dial needs setting.
+                const bool bEngaged = (t == 'B' && txVfo_ != 'B')
+                                   || (m == 'B' && rxVfo_ != 'B');
+                txVfo_ = t;
+                rxVfo_ = m;
+                if (bEngaged) {
+                    const bool cw = rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
+                    const uint64_t b = centerHz_ + (cw ? 1000 : 5000);
+                    radio_.setFrequencyHz(Rx::Sub, b);
+                    vfoBHz_ = b;
+                    freqDispB_->setFrequency(b);
+                    sinceVfoBEdit_.restart();
+                }
+                pushVfoB();
+                statusBar()->showMessage(
+                    QString("VFO routing: RX %1  SUB %2  TX %3%4")
+                        .arg(m).arg(s).arg(t)
+                        .arg(m != t ? "  (SPLIT)" : ""));
+            });
+    connect(routing_, &RoutingPanel::antennaRoutingEdited, this,
+            [this](char a1, char a2, char rxa) {
+                radio_.setAntennaRouting(a1, a2, rxa);
+                statusBar()->showMessage(QString("antenna routing: ANT1=%1 ANT2=%2 RX=%3")
+                                             .arg(a1).arg(a2).arg(rxa));
+            });
+    // Dial transfers carry MODE with the frequency (PowerSDR semantics: the
+    // VFO is freq+mode). Mode commands trail the freq by 120+ ms — the Orion
+    // drops commands that arrive while it's busy with a mode switch.
+    connect(routing_, &RoutingPanel::copyABRequested, this, [this] {
+        radio_.setFrequencyHz(Rx::Sub, centerHz_);
+        vfoBHz_ = centerHz_;
+        pushVfoB();
+        freqDispB_->setFrequency(centerHz_);
+        sinceVfoBEdit_.restart();
+        // Sub mode: handled by the radio itself (menu set to copy the mode;
+        // *RSM is dead on v3 firmware anyway).
+        statusBar()->showMessage(QString("A>B: VFO B -> %1 MHz")
+                                     .arg(centerHz_ / 1e6, 0, 'f', 6));
+    });
+    connect(routing_, &RoutingPanel::copyBARequested, this, [this] {
+        tuneAbsolute(vfoBHz_);
+        QTimer::singleShot(120, this, [this, m = subMode_] {
+            applyMode(m);
+            panel_->showMode(m);
+        });
+        statusBar()->showMessage(QString("B>A: VFO A -> %1 MHz")
+                                     .arg(vfoBHz_ / 1e6, 0, 'f', 6));
+    });
+    connect(routing_, &RoutingPanel::swapABRequested, this, [this] {
+        const uint64_t a = centerHz_, b = vfoBHz_;
+        const Mode ma = rigMode_, mb = subMode_;
+        radio_.setFrequencyHz(Rx::Sub, a);
+        vfoBHz_ = a;
+        pushVfoB();
+        freqDispB_->setFrequency(a);
+        sinceVfoBEdit_.restart();
+        tuneAbsolute(b);
+        if (mb != ma) {                              // bring B's mode to the main RX
+            QTimer::singleShot(120, this, [this, mb] {
+                applyMode(mb);
+                panel_->showMode(mb);
+            });
+        }
+        statusBar()->showMessage(QString("A<>B: %1 <-> %2 MHz")
+                                     .arg(b / 1e6, 0, 'f', 6).arg(a / 1e6, 0, 'f', 6));
+    });
+    connect(&radio_, &TenTecOrion::vfoAssignmentReported, this,
+            [this](char m, char s, char t) {
+                routing_->showVfoAssignment(m, s, t);
+                txVfo_ = t;
+                rxVfo_ = m;
+                pushVfoB();
+            });
+    connect(&radio_, &TenTecOrion::antennaRoutingReported, this,
+            [this](char a1, char a2, char rxa) { routing_->showAntennaRouting(a1, a2, rxa); });
+    if (std::getenv("TTC_TEST_XFER"))               // headless transfer exercise
+        QTimer::singleShot(3000, routing_, &RoutingPanel::swapABRequested);
     connect(panel_, &ControlPanel::agcSelected, this,
             [this](char a) { radio_.setAgc(Rx::Main, a); });
     connect(panel_, &ControlPanel::attenSelected, this,
@@ -570,14 +685,71 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(panel_, &ControlPanel::autoNotchChanged, this,
             [this](int v) { radio_.setAutoNotch(Rx::Main, v); });
     connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {
-        if (rx != Rx::Main) return;
+        if (rx == Rx::Sub) {
+            if (bw != subBwHz_) { subBwHz_ = bw; pushVfoB(); }
+            return;
+        }
         rigctld_.cacheBandwidth(bw);
         if (bw != rigBwHz_) { rigBwHz_ = bw; refreshPassbandOverlay(); bandStamp_->start(); }
     });
     connect(&radio_, &TenTecOrion::pbtReported, this, [this](Rx rx, int pbt) {
-        if (rx != Rx::Main) return;
+        if (rx == Rx::Sub) {
+            if (pbt != subPbtHz_) { subPbtHz_ = pbt; pushVfoB(); }
+            return;
+        }
         panel_->showPbt(pbt);
         if (pbt != rigPbtHz_) { rigPbtHz_ = pbt; refreshPassbandOverlay(); bandStamp_->start(); }
+    });
+
+    // Slide VFO B on the panadapter (grab its tint/line, or Shift+click to
+    // drop it on a station) — the pileup "get my TX dead on the spot" moves.
+    // Drags stream *BF coalesced to ~25 writes/sec like the filter drags.
+    bfTx_ = new QTimer(this);
+    bfTx_->setInterval(40);
+    connect(bfTx_, &QTimer::timeout, this, [this] {
+        if (!bfDirty_) { bfTx_->stop(); return; }
+        bfDirty_ = false;
+        radio_.setFrequencyHz(Rx::Sub, pendBHz_);
+    });
+    connect(pan_, &PanadapterWidget::vfoBDragged, this, [this](int off) {
+        const uint64_t hz =
+            static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
+        vfoBHz_ = hz;
+        freqDispB_->setFrequency(hz);
+        sinceVfoBEdit_.restart();
+        pendBHz_ = hz;
+        bfDirty_ = true;
+        if (!bfTx_->isActive()) bfTx_->start();
+        statusBar()->showMessage(QString("VFO B -> %1 MHz%2")
+                                     .arg(hz / 1e6, 0, 'f', 6)
+                                     .arg(txVfo_ == 'B' ? "  (TX)" : ""));
+    });
+    // Drag the A dial line: stream full retunes (radio + SDR + view recenter),
+    // coalesced a bit slower than B since each one moves the whole display.
+    afTx_ = new QTimer(this);
+    afTx_->setInterval(60);
+    connect(afTx_, &QTimer::timeout, this, [this] {
+        if (!afDirty_) { afTx_->stop(); return; }
+        afDirty_ = false;
+        tuneAbsolute(pendAHz_);
+    });
+    connect(pan_, &PanadapterWidget::vfoADragged, this, [this](uint64_t hz) {
+        pendAHz_ = hz;
+        afDirty_ = true;
+        if (!afTx_->isActive()) afTx_->start();
+        statusBar()->showMessage(QString("VFO A -> %1 MHz").arg(hz / 1e6, 0, 'f', 6));
+    });
+    connect(pan_, &PanadapterWidget::vfoBTuneRequested, this, [this](int off) {
+        const uint64_t hz =
+            static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
+        radio_.setFrequencyHz(Rx::Sub, hz);
+        vfoBHz_ = hz;
+        freqDispB_->setFrequency(hz);
+        sinceVfoBEdit_.restart();
+        pushVfoB();
+        statusBar()->showMessage(QString("VFO B -> %1 MHz%2")
+                                     .arg(hz / 1e6, 0, 'f', 6)
+                                     .arg(txVfo_ == 'B' ? "  (TX)" : ""));
     });
 
     // PBT back to the detent: sidebar button or double-click a passband edge.
@@ -599,7 +771,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // rigctld cache and the panadapter center locked to the physical VFO.
     connect(&radio_, &TenTecOrion::frequencyReported, this,
             [this](Rx rx, uint64_t hz) {
-                if (rx != Rx::Main) return;
+                if (rx == Rx::Sub) {                 // VFO B: display-follow only
+                    if (!sinceVfoBEdit_.isValid() || sinceVfoBEdit_.elapsed() > 1500) {
+                        vfoBHz_ = hz;
+                        freqDispB_->setFrequency(hz);
+                        pushVfoB();
+                    }
+                    return;
+                }
                 awaitingFreq_ = false;               // poll answered; next one may go
                 if (std::getenv("TTC_SELFTEST"))
                     std::fprintf(stderr, "[radio] VFO-A reports %.4f MHz\n", hz / 1e6);
@@ -671,7 +850,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     const std::string radioDev = devEnv ? devEnv : "/dev/orion";
     if (radio_.open(radioDev)) {
         radio_.queryFrequency(Rx::Main);            // one-shot sync at startup
+        radio_.queryFrequency(Rx::Sub);             // VFO B readout
+        radio_.queryVfoAssignment();                // routing matrices
+        radio_.queryAntennaRouting();
         radio_.queryMode(Rx::Main);
+        radio_.queryMode(Rx::Sub);                  // transfers carry the mode
+        radio_.queryFilter(Rx::Sub);                // B's on-screen filter width
         radio_.queryFilter(Rx::Main);
         radio_.queryAgc(Rx::Main);                  // sync the control sidebar
         radio_.queryRfGain(Rx::Main);
@@ -697,12 +881,14 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 6) {
+                    switch ((pollTick_ / 25) % 8) {
                         case 0:  radio_.queryAgc(Rx::Main);        break;
                         case 1:  radio_.queryRfGain(Rx::Main);     break;
                         case 2:  radio_.queryAttenuator(Rx::Main); break;
                         case 3:  radio_.queryPreamp(Rx::Main);     break;
                         case 4:  radio_.queryTxPower();            break;
+                        case 5:  radio_.queryVfoAssignment();      break;
+                        case 6:  radio_.queryAntennaRouting();     break;
                         default: radio_.queryNotch(Rx::Main);      break;
                     }
                 } else {
@@ -711,8 +897,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 return;
             }
             if (phase == 2) {
-                if ((pollTick_ / 5) % 2) radio_.queryMode(Rx::Main);
-                else                     radio_.queryFilter(Rx::Main);
+                switch ((pollTick_ / 5) % 5) {       // main mode/filter, VFO B side
+                    case 0:  radio_.queryMode(Rx::Main);      break;
+                    case 1:  radio_.queryFilter(Rx::Main);    break;
+                    case 2:  radio_.queryFrequency(Rx::Sub);  break;
+                    case 3:  radio_.queryMode(Rx::Sub);       break;
+                    default: radio_.queryFilter(Rx::Sub);     break;
+                }
                 return;
             }
             // Only one ?AF in flight: the Orion's response tail runs ~110 ms. Re-arm
@@ -942,6 +1133,16 @@ static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
     centerRf += pbtRfSign(m) * pbt;
     lo = centerRf - bw / 2;
     hi = centerRf + bw / 2;
+}
+
+// VFO B's on-screen representation: dial + sub-RX filter edges + TX state.
+// Sideband placement uses the main mode — the radio is set to copy the mode
+// to the sub, and v3 firmware can't set sub mode over CAT anyway.
+void MainWindow::pushVfoB() {
+    int lo = 0, hi = 0;
+    edgesFromRig(rigMode_, subBwHz_, subPbtHz_, lo, hi);
+    const char role = txVfo_ == 'B' ? 'T' : (rxVfo_ == 'B' ? 'R' : 'N');
+    pan_->setVfoB(vfoBHz_, role, lo, hi);
 }
 
 void MainWindow::refreshPassbandOverlay() {

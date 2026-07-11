@@ -28,12 +28,14 @@ int cellX(int i) {
 }
 } // namespace
 
-FrequencyDisplay::FrequencyDisplay(QWidget* parent) : QWidget(parent) {
-    setFixedSize(cellX(7) + kCellW + kMarginX, 32);
+FrequencyDisplay::FrequencyDisplay(const QString& caption, QWidget* parent)
+    : QWidget(parent), caption_(caption) {
+    digitTop_ = caption_.isEmpty() ? 0 : 14;
+    setFixedSize(cellX(7) + kCellW + kMarginX, digitTop_ + 32);
     setCursor(Qt::PointingHandCursor);
 
     edit_ = new QLineEdit(this);
-    edit_->setGeometry(rect().adjusted(2, 2, -2, -2));
+    edit_->setGeometry(QRect(2, digitTop_ + 2, width() - 4, 28));
     edit_->setAlignment(Qt::AlignCenter);
     edit_->setStyleSheet("QLineEdit { background: #1c2430; color: #e8f0f8;"
                          " border: 1px solid #3f7cb4; font-size: 16px; }");
@@ -53,23 +55,36 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.fillRect(rect(), QColor(12, 16, 22));
 
+    if (!caption_.isEmpty()) {
+        QFont cf = p.font();
+        cf.setPixelSize(10);
+        cf.setBold(true);
+        p.setFont(cf);
+        p.setPen(QColor(143, 163, 184));
+        p.drawText(QRect(kMarginX, 0, width() - kMarginX, digitTop_),
+                   Qt::AlignLeft | Qt::AlignVCenter, caption_);
+    }
+
     QFont f("monospace");
     f.setPixelSize(24);
     f.setBold(true);
     p.setFont(f);
 
+    const QRect row(0, digitTop_, width(), height() - digitTop_);
     bool leading = true;
     for (int i = 0; i < 8; ++i) {
         const int d = static_cast<int>((hz_ / kPlace[i]) % 10);
         if (d != 0) leading = false;
         // Leading zeros dimmed (still visible: they're wheel/click targets).
         p.setPen(leading && i < 2 ? QColor(60, 70, 82) : QColor(230, 240, 250));
-        p.drawText(QRect(cellX(i), 0, kCellW, height()), Qt::AlignCenter,
+        p.drawText(QRect(cellX(i), row.y(), kCellW, row.height()), Qt::AlignCenter,
                    QString::number(d));
     }
     p.setPen(QColor(120, 140, 160));
-    p.drawText(QRect(cellX(1) + kCellW, 0, kDotW, height()), Qt::AlignCenter, ".");
-    p.drawText(QRect(cellX(4) + kCellW, 0, kDotW, height()), Qt::AlignCenter, ".");
+    p.drawText(QRect(cellX(1) + kCellW, row.y(), kDotW, row.height()),
+               Qt::AlignCenter, ".");
+    p.drawText(QRect(cellX(4) + kCellW, row.y(), kDotW, row.height()),
+               Qt::AlignCenter, ".");
 }
 
 int FrequencyDisplay::digitAt(int x) const {
@@ -89,7 +104,8 @@ void FrequencyDisplay::bump(int digit, int direction) {
 
 void FrequencyDisplay::mousePressEvent(QMouseEvent* e) {
     // Top half of a digit increments that decade, bottom half decrements.
-    bump(digitAt(e->pos().x()), e->pos().y() < height() / 2 ? +1 : -1);
+    const int mid = digitTop_ + (height() - digitTop_) / 2;
+    bump(digitAt(e->pos().x()), e->pos().y() < mid ? +1 : -1);
 }
 
 void FrequencyDisplay::mouseDoubleClickEvent(QMouseEvent*) { beginEdit(); }

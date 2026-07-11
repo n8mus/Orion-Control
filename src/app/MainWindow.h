@@ -10,6 +10,7 @@ class QTimer;
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
 #include "ui/FrequencyDisplay.h"
+#include "ui/RoutingPanel.h"
 #include "ui/TxBar.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
@@ -38,6 +39,7 @@ private:
     void startManualTune();            // steady carrier for amp/external tuner
     void stopManualTune();
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
+    void pushVfoB();                   // VFO B dial+filter+TX state -> panadapter
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
     void syncBandRegister();           // mirror any dial move into the band stack
     void recallStack(int band, int reg); // recall a band-stack register
@@ -47,7 +49,21 @@ private:
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;
-    FrequencyDisplay* freqDisp_ = nullptr;
+    FrequencyDisplay* freqDisp_  = nullptr;   // VFO A (main RX, the panadapter dial)
+    FrequencyDisplay* freqDispB_ = nullptr;   // VFO B (sub RX), display + direct set
+    RoutingPanel*     routing_   = nullptr;   // VFO/antenna matrix + A/B transfers
+    uint64_t vfoBHz_ = 7000000;               // last known VFO B dial
+    Mode     subMode_ = Mode::LSB;            // sub RX mode (rides with VFO B)
+    int      subBwHz_ = 2500, subPbtHz_ = 0;  // sub RX filter (B's overlay width)
+    char     txVfo_  = 'A';                   // from ?KV; 'B' = split active
+    char     rxVfo_  = 'A';                   // main RX assignment (for B-engage)
+    QTimer*  bfTx_ = nullptr;                 // coalesced *BF stream for B drags
+    uint64_t pendBHz_ = 0;
+    bool     bfDirty_ = false;
+    QTimer*  afTx_ = nullptr;                 // coalesced tune stream for A drags
+    uint64_t pendAHz_ = 0;
+    bool     afDirty_ = false;
+    QElapsedTimer sinceVfoBEdit_;             // suppress poll snap-back after an edit
     TxBar*            txBar_ = nullptr;
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)

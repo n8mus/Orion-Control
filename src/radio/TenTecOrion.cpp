@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace ttc {
 
@@ -178,6 +179,18 @@ void TenTecOrion::queryDspLevels(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "NH");   // hardware blanker on/off
 }
 
+void TenTecOrion::setVfoAssignment(char mainRx, char subRx, char tx) {
+    send(QByteArray("*KV") + mainRx + subRx + tx);
+}
+
+void TenTecOrion::queryVfoAssignment() { send("?KV"); }
+
+void TenTecOrion::setAntennaRouting(char ant1, char ant2, char rxAnt) {
+    send(QByteArray("*KA") + ant1 + ant2 + rxAnt);
+}
+
+void TenTecOrion::queryAntennaRouting() { send("?KA"); }
+
 void TenTecOrion::queryFrequency(Rx rx) {
     const char v = (rx == Rx::Main) ? 'A' : 'B';
     send(QByteArray("?") + v + "F");
@@ -262,6 +275,16 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit monitorReported(static_cast<int>(v));
         else if (line[2] == 'T' && (line[3] == '0' || line[3] == '1'))
             emit tunerReported(line[3] == '1');
+        return;
+    }
+    if (line[1] == 'K' && line.size() >= 6) {         // @KV<m><s><t> / @KA<1><2><rx>
+        auto in = [](char c, const char* set) { return std::strchr(set, c) != nullptr; };
+        if (line[2] == 'V' && in(line[3], "AB")
+            && in(line[4], "ABN") && in(line[5], "ABN"))
+            emit vfoAssignmentReported(line[3], line[4], line[5]);
+        else if (line[2] == 'A' && in(line[3], "MSBN")
+                 && in(line[4], "MSBN") && in(line[5], "MSBN"))
+            emit antennaRoutingReported(line[3], line[4], line[5]);
         return;
     }
     if (line[1] == 'U' && line.size() >= 4) {         // audio group @U<M/B><val>

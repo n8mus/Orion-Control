@@ -11,7 +11,7 @@ int main(int argc, char** argv) {
     QApplication::setApplicationName("tentec-console");
     QApplication::setWindowIcon(QIcon(":/icon.png"));
     ttc::MainWindow w;
-    w.resize(1000, 560);
+    w.resize(1360, 600);                   // room for the dual-VFO/routing strip
     w.show();
 
     // Headless self-test: TTC_SELFTEST=<seconds> runs the full pipeline then quits

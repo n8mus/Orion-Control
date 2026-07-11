@@ -9,6 +9,9 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QTimer>
+#include <QToolButton>
+#include <QMenu>
+#include <QActionGroup>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -92,6 +95,57 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 QSignalBlocker block(zoom);
                 zoom->setValue(sliderFromSpan(spanHz));
             });
+
+#ifdef HAVE_SDRPLAY
+    // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).
+    // Antenna A = Orion spare jack, B = Omni VII spare jack — switch it when you
+    // switch radios; it retunes the panadapter input live.
+    auto* sdrBtn = new QToolButton(topStrip);
+    sdrBtn->setText("SDR ▾");
+    sdrBtn->setPopupMode(QToolButton::InstantPopup);
+    sdrBtn->setFocusPolicy(Qt::NoFocus);
+    sdrBtn->setStyleSheet(
+        "QToolButton { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;"
+        " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+        "QToolButton::menu-indicator { image: none; }");
+    auto* sdrMenu = new QMenu(sdrBtn);
+    auto* antGroup = new QActionGroup(this);
+    antGroup->setExclusive(true);
+    auto* antA = antGroup->addAction(sdrMenu->addAction("Antenna A  (Orion)"));
+    auto* antB = antGroup->addAction(sdrMenu->addAction("Antenna B  (Omni VII)"));
+    antA->setCheckable(true);
+    antB->setCheckable(true);
+    sdrMenu->addSeparator();
+    auto* bcNotch = sdrMenu->addAction("Broadcast (MW) notch");
+    bcNotch->setCheckable(true);
+    sdrBtn->setMenu(sdrMenu);
+    topLay->addSpacing(8);
+    topLay->addWidget(sdrBtn);
+
+    {   // restore persisted RSP2 state before start() applies it
+        QSettings s;
+        const bool useB = s.value("sdr/antennaB", false).toBool();
+        const bool bcn  = s.value("sdr/broadcastNotch", false).toBool();
+        (useB ? antB : antA)->setChecked(true);
+        bcNotch->setChecked(bcn);
+        sdr_.setAntennaB(useB);
+        sdr_.setBroadcastNotch(bcn);
+    }
+    connect(antA, &QAction::triggered, this, [this] {
+        sdr_.setAntennaB(false);
+        QSettings().setValue("sdr/antennaB", false);
+        statusBar()->showMessage("RSP2 antenna A (Orion)");
+    });
+    connect(antB, &QAction::triggered, this, [this] {
+        sdr_.setAntennaB(true);
+        QSettings().setValue("sdr/antennaB", true);
+        statusBar()->showMessage("RSP2 antenna B (Omni VII)");
+    });
+    connect(bcNotch, &QAction::toggled, this, [this](bool on) {
+        sdr_.setBroadcastNotch(on);
+        QSettings().setValue("sdr/broadcastNotch", on);
+    });
+#endif
     left->addWidget(topStrip);
     left->addWidget(pan_, 1);
     txBar_ = new TxBar(this);

@@ -21,8 +21,16 @@ public:
     void setCenterFrequency(double hz) override;
     void setIqCallback(std::function<void(const IqBlock&)> cb) override { cb_ = std::move(cb); }
 
-    // Which RSP2 SMA the spare-jack coax is on. Default Antenna A.
-    void setAntennaB(bool b) { antennaB_ = b; }
+    // Which RSP2 SMA the spare-jack coax is on (A = Orion, B = Omni VII in
+    // Jon's setup). Applies live if streaming, so radio switches retune the
+    // panadapter input without a restart. Default Antenna A.
+    void setAntennaB(bool b);
+
+    // RSP2 built-in MW/broadcast-band RF notch filter (helps on a shared HF
+    // feed near strong AM broadcasters). Applies live if streaming.
+    void setBroadcastNotch(bool on);
+    bool antennaB() const { return antennaB_; }
+    bool broadcastNotch() const { return notch_; }
 
     // Front-end gain. The shared-antenna feed is hot, so more attenuation than
     // usual: raise LNAstate (0..8 on RSP2) and gRdB (20..59) to clear ADC overload.
@@ -48,6 +56,7 @@ private:
     bool apiOpen_   = false;
     bool streaming_ = false;
     bool antennaB_  = false;
+    bool notch_     = false;
     int  gRdB_      = 40;   // tuned for the hot shared-antenna feed (see docs/phase0-sdr.md)
     int  lnaState_  = 6;
     int  decim_     = 1;

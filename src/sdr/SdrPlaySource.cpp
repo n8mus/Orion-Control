@@ -74,6 +74,7 @@ bool SdrPlaySource::start(double centerHz, double sampleRate) {
     }
     rx->rsp2TunerParams.antennaSel =
         antennaB_ ? sdrplay_api_Rsp2_ANTENNA_B : sdrplay_api_Rsp2_ANTENNA_A;
+    rx->rsp2TunerParams.rfNotchEnable = notch_ ? 1 : 0;
 
     sdrplay_api_CallbackFnsT cbs{};
     cbs.StreamACbFn = &SdrPlaySource::streamCb;
@@ -104,6 +105,25 @@ void SdrPlaySource::setCenterFrequency(double hz) {
     params_->rxChannelA->tunerParams.rfFreq.rfHz = hz;
     sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
                        sdrplay_api_Update_Tuner_Frf, sdrplay_api_Update_Ext1_None);
+}
+
+void SdrPlaySource::setAntennaB(bool b) {
+    antennaB_ = b;
+    if (!streaming_ || !params_) return;
+    params_->rxChannelA->rsp2TunerParams.antennaSel =
+        b ? sdrplay_api_Rsp2_ANTENNA_B : sdrplay_api_Rsp2_ANTENNA_A;
+    sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
+                       sdrplay_api_Update_Rsp2_AntennaControl,
+                       sdrplay_api_Update_Ext1_None);
+}
+
+void SdrPlaySource::setBroadcastNotch(bool on) {
+    notch_ = on;
+    if (!streaming_ || !params_) return;
+    params_->rxChannelA->rsp2TunerParams.rfNotchEnable = on ? 1 : 0;
+    sdrplay_api_Update(device_.dev, sdrplay_api_Tuner_A,
+                       sdrplay_api_Update_Rsp2_RfNotchControl,
+                       sdrplay_api_Update_Ext1_None);
 }
 
 void SdrPlaySource::streamCb(short* xi, short* xq, sdrplay_api_StreamCbParamsT*,

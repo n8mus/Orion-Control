@@ -31,6 +31,7 @@ signals:
     void autoNotchChanged(int level);
     void notchToggled(bool on);           // manual notch engage
     void hwNbToggled(bool on);            // hardware noise blanker
+    void pbtZeroRequested();              // "PBT 0" button
 
 public slots:
     void showBand(int bandIdx);           // -1 = out of every band
@@ -46,6 +47,7 @@ public slots:
     void showAutoNotch(int level);
     void showNotch(bool on, int centerHz, int widthHz);
     void showHwNb(bool on);
+    void showPbt(int pbtHz);              // live off-center readout
 
 private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);
@@ -61,6 +63,7 @@ private:
     QSlider* an_     = nullptr;   QLabel* anVal_     = nullptr;
     QPushButton* notchBtn_ = nullptr;  QLabel* notchVal_ = nullptr;
     QPushButton* hwNbBtn_  = nullptr;
+    QLabel* pbtVal_ = nullptr;
     // Trailing-edge coalescer for slider drags (the Orion's UART services
     // commands on a ~100 ms cycle; raw slider-move rates would flood it).
     QTimer* gainTx_ = nullptr;

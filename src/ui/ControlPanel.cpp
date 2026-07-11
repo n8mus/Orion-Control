@@ -168,6 +168,23 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
         if (!gainTx_->isActive()) gainTx_->start();
     });
 
+    // --- PBT re-center --------------------------------------------------------
+    // Normal edge drags are hi/lo-cut and move PBT; this snaps it back to the
+    // detent (bandwidth kept). Also on double-click of either passband edge.
+    auto* pbtBox = makeGroup("PBT");
+    auto* pbtRow = new QHBoxLayout(pbtBox);
+    pbtRow->setContentsMargins(0, 4, 0, 0);
+    auto* pbtBtn = new QPushButton("PBT 0");
+    pbtBtn->setFocusPolicy(Qt::NoFocus);
+    pbtBtn->setMinimumHeight(26);
+    pbtVal_ = new QLabel("0 Hz");
+    pbtVal_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    pbtRow->addWidget(pbtBtn);
+    pbtRow->addWidget(pbtVal_, 1);
+    connect(pbtBtn, &QPushButton::clicked, this,
+            [this] { emit pbtZeroRequested(); });
+    lay->addWidget(pbtBox);
+
     // --- DSP: NR / NB / auto-notch -------------------------------------------
     // Queryable on v3 despite the docs (undocumented ?R.NR/NB/NA) — synced
     // from the radio at startup.
@@ -298,6 +315,12 @@ void ControlPanel::showNotch(bool on, int centerHz, int widthHz) {
 void ControlPanel::showHwNb(bool on) {
     QSignalBlocker block(hwNbBtn_);
     hwNbBtn_->setChecked(on);
+}
+
+void ControlPanel::showPbt(int pbtHz) {
+    pbtVal_->setText(QString("%1%2 Hz").arg(pbtHz > 0 ? "+" : "").arg(pbtHz));
+    // Make an off-center passband visible at a glance.
+    pbtVal_->setStyleSheet(pbtHz == 0 ? "color: #c8d4e0;" : "color: #f0b040;");
 }
 
 } // namespace ttc

@@ -36,6 +36,7 @@ signals:
     void passbandChanged(int loHz, int hiHz);      // drag-to-filter
     void notchDragged(int rfOffsetHz);             // notch marker slid (streamed)
     void notchWidthAdjustRequested(int steps);     // wheel over the notch marker
+    void pbtZeroRequested();                       // double-click a passband edge
     void viewSpanChanged(int spanHz);              // Ctrl+wheel zoom
 
 protected:
@@ -43,6 +44,7 @@ protected:
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
+    void mouseDoubleClickEvent(QMouseEvent*) override;
     void wheelEvent(QWheelEvent*) override;
 
 private:

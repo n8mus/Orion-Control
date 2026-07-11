@@ -287,6 +287,18 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     emit passbandChanged(pbLoHz_, pbHiHz_);         // drag-to-filter
 }
 
+void PanadapterWidget::mouseDoubleClickEvent(QMouseEvent* e) {
+    // Double-click either filter edge: snap PBT back to center (bandwidth
+    // kept). The first click only armed an edge drag, so nothing else fired.
+    const int x = e->pos().x();
+    const int edgeTol = 6;
+    if (!overNotch(x) && (std::abs(x - hzToX(pbLoHz_)) <= edgeTol
+                          || std::abs(x - hzToX(pbHiHz_)) <= edgeTol)) {
+        drag_ = Drag::None;                        // cancel the armed drag
+        emit pbtZeroRequested();
+    }
+}
+
 void PanadapterWidget::mouseReleaseEvent(QMouseEvent* e) {
     // A press inside the passband that never moved is a click-to-tune.
     if (drag_ == Drag::BodyPending)

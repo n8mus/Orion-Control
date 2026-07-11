@@ -259,8 +259,24 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(&radio_, &TenTecOrion::pbtReported, this, [this](Rx rx, int pbt) {
         if (rx != Rx::Main) return;
+        panel_->showPbt(pbt);
         if (pbt != rigPbtHz_) { rigPbtHz_ = pbt; refreshPassbandOverlay(); }
     });
+
+    // PBT back to the detent: sidebar button or double-click a passband edge.
+    // Bandwidth and dial untouched — the filter just slides back to center.
+    const auto zeroPbt = [this] {
+        filterTx_->stop();                          // drop any stale pending PBT
+        filterDirty_ = false;
+        radio_.setPbtHz(Rx::Main, 0);
+        rigPbtHz_ = 0;
+        panel_->showPbt(0);
+        sinceFilterEdit_.invalidate();              // explicit action: refresh now
+        refreshPassbandOverlay();
+        statusBar()->showMessage("PBT -> 0");
+    };
+    connect(panel_, &ControlPanel::pbtZeroRequested, this, zeroPbt);
+    connect(pan_, &PanadapterWidget::pbtZeroRequested, this, zeroPbt);
 
     // The radio reported its frequency (startup sync or dial-follow poll): keep the
     // rigctld cache and the panadapter center locked to the physical VFO.
@@ -463,6 +479,7 @@ void MainWindow::recallStack(int band, int reg) {
     rigBwHz_  = bw;
     rigPbtHz_ = pbt;
     rigctld_.cacheBandwidth(bw);
+    panel_->showPbt(pbt);
     refreshPassbandOverlay();
     panel_->showBandStack(reg);
     s.setValue(QString("band/%1/reg").arg(kBands[band].label), reg);
@@ -539,6 +556,7 @@ void MainWindow::sendPendingFilter() {
     rigBwHz_  = pendBwHz_;                          // optimistic; poll will confirm
     rigPbtHz_ = pendPbtHz_;
     rigctld_.cacheBandwidth(pendBwHz_);
+    panel_->showPbt(pendPbtHz_);
 }
 
 } // namespace ttc

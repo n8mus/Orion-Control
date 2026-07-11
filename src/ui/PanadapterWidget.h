@@ -6,6 +6,7 @@
 #include <QVector>
 #include <QRect>
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace ttc {
@@ -51,8 +52,14 @@ public:
 
     void setSpanHz(int spanHz);                    // full captured span
     void setViewSpanHz(int spanHz);                // zoom (slider); no signal re-emit
+    // PowerSDR-style offset LO (if_freq): the SDR captures offset ABOVE the
+    // dial so the zero-IF DC artifact never sits on the tuned frequency. The
+    // view stays dial-centered; this tells it where the dial lives within
+    // the capture. Also shrinks the maximum symmetric view span.
+    void setDialOffsetHz(int hz);
     int  viewSpanHz() const { return viewSpanHz_; }
     int  fullSpanHz() const { return fullSpanHz_; }
+    int  maxViewSpanHz() const { return fullSpanHz_ - 2 * std::abs(dialOffsetHz_); }
     int  minViewSpanHz() const;
     void setPassband(int loHz, int hiHz);          // offsets from center, in Hz
     // Manual-notch marker, in display (RF-offset) space; caller maps the
@@ -129,6 +136,7 @@ private:
 
     int fullSpanHz_ = 250000;                      // what the SDR captures
     int viewSpanHz_ = 250000;                      // what we display (zoom)
+    int dialOffsetHz_ = 0;                         // LO minus dial (offset tuning)
     uint64_t centerHz_ = 0;                        // 0 = unknown, labels skipped
     int pbLoHz_ = -1200;
     int pbHiHz_ = 1200;

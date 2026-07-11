@@ -1,25 +1,30 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 #include <QWidget>
+#include <QColor>
 #include <cstdint>
 
 class QLineEdit;
 
 namespace ttc {
 
-// Flex-style frequency readout: big "14.200.000" digits.
+// KE9NS-style frequency readout: big accent-colored MHz/kHz digits, the Hz
+// group smaller and white, leading zeros dropped ("14.237.000", "3.831.500").
 //   * wheel over a digit  -> step that decade (the whole dial is a tune knob)
 //   * click top/bottom half of a digit -> +/- that decade
 //   * double-click        -> inline type-in entry (MHz, kHz or Hz accepted)
 // setFrequency() feeds it from the radio; user changes emit frequencyEdited().
-// An optional caption ("VFO A"/"VFO B", KE9NS-style) draws above the digits.
+// An optional caption ("VFO A"/"VFO B") draws above the digits; accent is the
+// digit color (KE9NS: amber for VFO A, green for VFO B).
 class FrequencyDisplay : public QWidget {
     Q_OBJECT
 public:
     explicit FrequencyDisplay(const QString& caption = QString(),
+                              const QColor& accent = QColor(255, 210, 60),
                               QWidget* parent = nullptr);
 
     void setFrequency(uint64_t hz);
+    void setAccent(const QColor& c);        // digit color (red = TX VFO)
 
 signals:
     void frequencyEdited(uint64_t hz);
@@ -38,6 +43,7 @@ private:
 
     uint64_t hz_ = 14200000;
     QString  caption_;
+    QColor   accent_;                       // MHz/kHz digit color
     int      digitTop_ = 0;                 // y offset of the digit row
     QLineEdit* edit_ = nullptr;
 };

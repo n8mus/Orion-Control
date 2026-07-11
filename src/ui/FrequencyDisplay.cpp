@@ -13,8 +13,8 @@ namespace ttc {
 namespace {
 constexpr uint64_t kMinHz = 100000;      // Orion RX range sanity
 constexpr uint64_t kMaxHz = 60000000;
-constexpr int kCellW  = 17;              // per-glyph cell; dots use a half cell
-constexpr int kDotW   = 8;
+constexpr int kCellW  = 19;              // per-glyph cell; dots use a half cell
+constexpr int kDotW   = 9;
 constexpr int kMarginX = 6;
 // Cell layout: [10M][1M] . [100k][10k][1k] . [100][10][1]
 constexpr uint64_t kPlace[8] = {10000000, 1000000, 100000, 10000, 1000, 100, 10, 1};
@@ -28,10 +28,11 @@ int cellX(int i) {
 }
 } // namespace
 
-FrequencyDisplay::FrequencyDisplay(const QString& caption, QWidget* parent)
-    : QWidget(parent), caption_(caption) {
+FrequencyDisplay::FrequencyDisplay(const QString& caption, const QColor& accent,
+                                   QWidget* parent)
+    : QWidget(parent), caption_(caption), accent_(accent) {
     digitTop_ = caption_.isEmpty() ? 0 : 14;
-    setFixedSize(cellX(7) + kCellW + kMarginX, digitTop_ + 32);
+    setFixedSize(cellX(7) + kCellW + kMarginX, digitTop_ + 34);
     setCursor(Qt::PointingHandCursor);
 
     edit_ = new QLineEdit(this);
@@ -42,6 +43,12 @@ FrequencyDisplay::FrequencyDisplay(const QString& caption, QWidget* parent)
     edit_->hide();
     connect(edit_, &QLineEdit::returnPressed, this, &FrequencyDisplay::finishEdit);
     connect(edit_, &QLineEdit::editingFinished, this, [this] { edit_->hide(); });
+}
+
+void FrequencyDisplay::setAccent(const QColor& c) {
+    if (c == accent_) return;
+    accent_ = c;
+    update();
 }
 
 void FrequencyDisplay::setFrequency(uint64_t hz) {
@@ -65,22 +72,28 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
                    Qt::AlignLeft | Qt::AlignVCenter, caption_);
     }
 
-    QFont f("monospace");
-    f.setPixelSize(24);
-    f.setBold(true);
-    p.setFont(f);
+    // KE9NS look: MHz + kHz digits big in the VFO's accent color, the Hz
+    // group smaller and near-white, leading zeros not drawn at all (their
+    // cells stay live as click/wheel targets).
+    QFont big("DejaVu Sans");
+    big.setPixelSize(27);
+    big.setBold(true);
+    QFont small = big;
+    small.setPixelSize(19);
 
     const QRect row(0, digitTop_, width(), height() - digitTop_);
     bool leading = true;
     for (int i = 0; i < 8; ++i) {
         const int d = static_cast<int>((hz_ / kPlace[i]) % 10);
-        if (d != 0) leading = false;
-        // Leading zeros dimmed (still visible: they're wheel/click targets).
-        p.setPen(leading && i < 2 ? QColor(60, 70, 82) : QColor(230, 240, 250));
+        if (d != 0 || i >= 1) leading = false;      // only the 10 MHz digit hides
+        if (leading) continue;
+        p.setFont(i < 5 ? big : small);
+        p.setPen(i < 5 ? accent_ : QColor(222, 230, 238));
         p.drawText(QRect(cellX(i), row.y(), kCellW, row.height()), Qt::AlignCenter,
                    QString::number(d));
     }
-    p.setPen(QColor(120, 140, 160));
+    p.setFont(big);
+    p.setPen(QColor(accent_.red(), accent_.green(), accent_.blue(), 150));
     p.drawText(QRect(cellX(1) + kCellW, row.y(), kDotW, row.height()),
                Qt::AlignCenter, ".");
     p.drawText(QRect(cellX(4) + kCellW, row.y(), kDotW, row.height()),

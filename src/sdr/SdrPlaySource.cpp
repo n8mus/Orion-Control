@@ -71,8 +71,11 @@ bool SdrPlaySource::start(double centerHz, double sampleRate) {
     if (decim_ > 1) {                        // narrow span + matching analog BW
         rx->ctrlParams.decimation.enable          = 1;
         rx->ctrlParams.decimation.decimationFactor = static_cast<unsigned char>(decim_);
-        rx->tunerParams.bwType = (sampleRate / decim_ <= 300000.0)
-                                     ? sdrplay_api_BW_0_200 : sdrplay_api_BW_1_536;
+        const double outRate = sampleRate / decim_;
+        rx->tunerParams.bwType = outRate <= 200000.0 ? sdrplay_api_BW_0_200
+                               : outRate <= 300000.0 ? sdrplay_api_BW_0_300
+                               : outRate <= 600000.0 ? sdrplay_api_BW_0_600
+                                                     : sdrplay_api_BW_1_536;
     } else {
         rx->ctrlParams.decimation.enable = 0;
         rx->tunerParams.bwType           = sdrplay_api_BW_1_536;

@@ -121,7 +121,7 @@ private:
     bool notchDirty_ = false;
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
-    SpectrumComputer spectrum_{4096};   // 61 Hz/bin at 250 kHz span — survives deep zoom
+    SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom
 #endif
 };
 

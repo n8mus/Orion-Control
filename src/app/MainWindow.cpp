@@ -27,6 +27,10 @@ namespace ttc {
 
 static int pbtRfSign(Mode m);   // defined below with the passband math
 
+// Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
+// the dial so its zero-IF DC artifact can never sit on the tuned frequency.
+static constexpr int kLoOffsetHz = 60000;
+
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     setWindowTitle("Ten-Tec SDR Console");
 
@@ -35,10 +39,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
     smeter_ = new SMeterWidget(this);
     panel_  = new ControlPanel(this);
-    freqDisp_ = new FrequencyDisplay("VFO A", this);
-    freqDisp_->setFrequency(centerHz_);
-    freqDispB_ = new FrequencyDisplay("VFO B", this);
+    // Readout colors follow the TX role (matching the routing buttons and
+    // panadapter flags): red = the transmitting VFO, green = the other one.
+    const QColor vfoTxRed(230, 95, 95), vfoRxGreen(70, 214, 125);
+    freqDisp_ = new FrequencyDisplay("VFO A", vfoTxRed, this);
+    freqDisp_->setFrequency(centerHz_);            // TX starts on A
+    freqDispB_ = new FrequencyDisplay("VFO B", vfoRxGreen, this);
     freqDispB_->setFrequency(7000000);             // real value polled at startup
+    auto applyVfoColors = [this, vfoTxRed, vfoRxGreen] {
+        freqDisp_->setAccent(txVfo_ == 'B' ? vfoRxGreen : vfoTxRed);
+        freqDispB_->setAccent(txVfo_ == 'B' ? vfoTxRed : vfoRxGreen);
+    };
     curBand_ = bandIndexOf(centerHz_);
     if (curBand_ >= 0) {
         QSettings s;
@@ -96,12 +107,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     topLay->addStretch(1);
 
     auto spanFromSlider = [this](int v) {
-        const double ratio = double(pan_->minViewSpanHz()) / pan_->fullSpanHz();
-        return static_cast<int>(std::lround(pan_->fullSpanHz() * std::pow(ratio, v / 100.0)));
+        const double ratio = double(pan_->minViewSpanHz()) / pan_->maxViewSpanHz();
+        return static_cast<int>(std::lround(pan_->maxViewSpanHz() * std::pow(ratio, v / 100.0)));
     };
     auto sliderFromSpan = [this](int spanHz) {
-        const double ratio = double(pan_->minViewSpanHz()) / pan_->fullSpanHz();
-        const double f = std::log(double(spanHz) / pan_->fullSpanHz()) / std::log(ratio);
+        const double ratio = double(pan_->minViewSpanHz()) / pan_->maxViewSpanHz();
+        const double f = std::log(double(spanHz) / pan_->maxViewSpanHz()) / std::log(ratio);
         return std::clamp(static_cast<int>(std::lround(f * 100.0)), 0, 100);
     };
     connect(zoom, &QSlider::valueChanged, this, [this, spanFromSlider](int v) {
@@ -729,7 +740,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // Routing matrices + A/B dial transfers (the Orion front panel's VFO and
     // antenna button groups, driven over *KV / *KA).
     connect(routing_, &RoutingPanel::vfoAssignmentEdited, this,
-            [this](char m, char s, char t) {
+            [this, applyVfoColors](char m, char s, char t) {
                 radio_.setVfoAssignment(m, s, t);
                 // [vendor] split setup (no separate split button): the moment a
                 // click puts VFO B on TX or RX, park B above the dial — 5 kHz
@@ -747,6 +758,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     freqDispB_->setFrequency(b);
                     sinceVfoBEdit_.restart();
                 }
+                applyVfoColors();
                 pushVfoB();
                 statusBar()->showMessage(
                     QString("VFO routing: RX %1  SUB %2  TX %3%4")
@@ -801,10 +813,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                      .arg(b / 1e6, 0, 'f', 6).arg(a / 1e6, 0, 'f', 6));
     });
     connect(&radio_, &TenTecOrion::vfoAssignmentReported, this,
-            [this](char m, char s, char t) {
+            [this, applyVfoColors](char m, char s, char t) {
                 routing_->showVfoAssignment(m, s, t);
                 txVfo_ = t;
                 rxVfo_ = m;
+                applyVfoColors();
                 pushVfoB();
             });
     connect(&radio_, &TenTecOrion::antennaRoutingReported, this,
@@ -948,7 +961,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                     pan_->setCenterHz(hz);           // keep grid labels on the dial
                     syncBandRegister();              // mirror the move into the stack
 #ifdef HAVE_SDRPLAY
-                    sdr_.setCenterFrequency(static_cast<double>(hz));
+                    sdr_.setCenterFrequency(static_cast<double>(hz + kLoOffsetHz));
 #endif
                     statusBar()->showMessage(
                         QString("radio %1 MHz  |  panadapter following").arg(hz / 1e6, 0, 'f', 4));
@@ -966,10 +979,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
 #ifdef HAVE_SDRPLAY
     // IQ -> FFT -> panadapter. The spectrum callback runs on the SDR thread, so
     // marshal the result onto the GUI thread before touching the widget.
+    // PowerSDR-style offset LO (their if_freq / spur reduction): the RSP2
+    // tunes kLoOffsetHz ABOVE the dial, so the zero-IF DC artifact — line,
+    // phase-noise hump and recalibration transients — sits at a fixed
+    // +60 kHz from the tuned frequency, never on it and never in a passband.
+    // The capture is widened to 500 kHz so the dial-centered view still
+    // reaches large spans (max symmetric span = 500k - 2*60k = 380 kHz).
     constexpr double kSampleRate = 2000000.0;
-    constexpr int    kDecim      = 8;                 // 250 kHz displayed span
+    constexpr int    kDecim      = 4;                 // 500 kHz capture
     const int spanHz = static_cast<int>(kSampleRate / kDecim);
     pan_->setSpanHz(spanHz);
+    pan_->setDialOffsetHz(kLoOffsetHz);
     spectrum_.setOutput([this](const std::vector<float>& db) {
         if (std::getenv("TTC_SELFTEST")) {          // headless evidence the FFT is live
             static int frames = 0;
@@ -978,6 +998,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 for (float v : db) { mn = std::min(mn, v); mx = std::max(mx, v); }
                 std::fprintf(stderr, "[spectrum] frame %d  bins=%zu  min %.1f dB  peak %.1f dB\n",
                              frames, db.size(), mn, mx);
+                if (std::getenv("TTC_DCDUMP")) {    // profile the center hump
+                    const int c = static_cast<int>(db.size()) / 2;
+                    for (int o = -20; o <= 20; o += 2)
+                        std::fprintf(stderr, "[dc] %+5d Hz  %.1f dB\n", o * 61, db[c + o]);
+                }
             }
         }
         QMetaObject::invokeMethod(pan_, [this, copy = db]() mutable {
@@ -986,7 +1011,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     sdr_.setIqCallback([this](const IqBlock& iq) { spectrum_.addSamples(iq); });
     sdr_.setDecimation(kDecim);
-    if (sdr_.apiOk() && sdr_.start(static_cast<double>(centerHz_), kSampleRate)) {
+    if (sdr_.apiOk()
+        && sdr_.start(static_cast<double>(centerHz_ + kLoOffsetHz), kSampleRate)) {
         statusBar()->showMessage(QString("RSP2 panadapter %1 MHz, span %2 kHz  |  rigctld :4532")
                                      .arg(centerHz_ / 1e6, 0, 'f', 4).arg(spanHz / 1000));
     } else {
@@ -1108,7 +1134,7 @@ void MainWindow::tuneAbsolute(uint64_t f) {
     pan_->setCenterHz(f);                       // keep grid labels on the dial
     syncBandRegister();                         // mirror the move into the stack
 #ifdef HAVE_SDRPLAY
-    sdr_.setCenterFrequency(static_cast<double>(f));
+    sdr_.setCenterFrequency(static_cast<double>(f + kLoOffsetHz));
 #endif
     statusBar()->showMessage(QString("tune -> %1 MHz").arg(f / 1e6, 0, 'f', 6));
 }

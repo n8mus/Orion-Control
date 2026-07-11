@@ -30,7 +30,13 @@ void SpectrumComputer::addSamples(const IqBlock& iq) {
     if (psAcc_.size() != static_cast<size_t>(n_)) psAcc_.assign(n_, 0.0f);
     const float norm = 1.0f / static_cast<float>(n_);
     while (static_cast<int>(buf_.size()) >= n_) {
-        for (int i = 0; i < n_; ++i) frame_[i] = buf_[i] * window_[i];
+        // Subtract the block's complex mean before windowing: this removes
+        // the residual zero-IF DC line at the source, so its Hann leakage
+        // skirt (which no amount of center-bin patching covers) never forms.
+        std::complex<float> mean(0.0f, 0.0f);
+        for (int i = 0; i < n_; ++i) mean += buf_[i];
+        mean *= 1.0f / static_cast<float>(n_);
+        for (int i = 0; i < n_; ++i) frame_[i] = (buf_[i] - mean) * window_[i];
         buf_.erase(buf_.begin(), buf_.begin() + n_);
         fft_.forward(frame_);
         for (int i = 0; i < n_; ++i) {
@@ -49,6 +55,16 @@ void SpectrumComputer::addSamples(const IqBlock& iq) {
         const int k = (i + n_ / 2) % n_;          // fftshift: DC to center
         const float db = 10.0f * std::log10(psAcc_[k] * inv + 1e-12f);
         outDb_[i] = smooth_ * outDb_[i] + (1.0f - smooth_) * db;  // temporal smoothing
+    }
+    // Zero-IF DC removal: the RSP2's residual LO leakage survives the API's
+    // DC correction as a narrow spike parked on the display center (= the
+    // dial). It lives in a handful of known bins, so bridge straight across
+    // them from the neighbors — display-only data, honest enough.
+    {
+        const int c = n_ / 2, half = 3;           // +/-3 bins (~183 Hz at 61 Hz/bin)
+        const float a = outDb_[c - half - 1], b = outDb_[c + half + 1];
+        for (int i = -half; i <= half; ++i)
+            outDb_[c + i] = a + (b - a) * (i + half + 1) / float(2 * half + 2);
     }
     std::fill(psAcc_.begin(), psAcc_.end(), 0.0f);
     psCount_ = 0;

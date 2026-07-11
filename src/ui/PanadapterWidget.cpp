@@ -104,13 +104,16 @@ QImage renderBlueRays(int w, int h) {
 
 // World map with live grayline: the bundled equirectangular Blue Marble,
 // darkened for use as a backdrop, with the night side shaded from the
-// current UTC subsolar point (soft twilight band = the grayline).
+// current UTC subsolar point (soft twilight band = the grayline). KE9NS
+// proportions: the map fills only the upper band of the spectrum area and
+// fades to dark where the trace floor lives.
 QImage renderWorldMap(int w, int h) {
     static QImage earth;                            // decoded once
     if (earth.isNull())
         earth = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
     if (earth.isNull()) return renderBlueRays(w, h);  // resource missing
-    QImage img = earth.scaled(w, h, Qt::IgnoreAspectRatio,
+    const int mapH = std::max(1, static_cast<int>(h * 0.84));
+    QImage img = earth.scaled(w, mapH, Qt::IgnoreAspectRatio,
                               Qt::SmoothTransformation);
     // Subsolar point from UTC (declination approx; equation of time ignored —
     // a display grayline, not an almanac).
@@ -120,9 +123,9 @@ QImage renderWorldMap(int w, int h) {
     const double decl = 23.44 * std::sin(2.0 * M_PI * (doy - 81) / 365.25)
                         * M_PI / 180.0;
     const double subLon = (12.0 - hours) * 15.0 * M_PI / 180.0;
-    std::vector<double> sinLatSinD(h), cosLatCosD(h), cosDLon(w);
-    for (int y = 0; y < h; ++y) {
-        const double lat = (90.0 - 180.0 * (y + 0.5) / h) * M_PI / 180.0;
+    std::vector<double> sinLatSinD(mapH), cosLatCosD(mapH), cosDLon(w);
+    for (int y = 0; y < mapH; ++y) {
+        const double lat = (90.0 - 180.0 * (y + 0.5) / mapH) * M_PI / 180.0;
         sinLatSinD[y] = std::sin(lat) * std::sin(decl);
         cosLatCosD[y] = std::cos(lat) * std::cos(decl);
     }
@@ -139,7 +142,7 @@ QImage renderWorldMap(int w, int h) {
         const double t = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
         return t * t * (3.0 - 2.0 * t);
     };
-    for (int y = 0; y < h; ++y) {
+    for (int y = 0; y < mapH; ++y) {
         QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
         for (int x = 0; x < w; ++x) {
             const double sinElev = sinLatSinD[y] + cosLatCosD[y] * cosDLon[x];
@@ -153,7 +156,17 @@ QImage renderWorldMap(int w, int h) {
                            (qBlue(c)  * f) >> 8);
         }
     }
-    return img;
+    // Composite: map up top, dark trace floor below, soft fade between.
+    QImage out(w, h, QImage::Format_RGB32);
+    out.fill(QColor(12, 16, 22));
+    QPainter p(&out);
+    p.drawImage(0, 0, img);
+    const int fadeH = std::min(mapH / 4, 60);
+    QLinearGradient fade(0, mapH - fadeH, 0, mapH);
+    fade.setColorAt(0.0, QColor(12, 16, 22, 0));
+    fade.setColorAt(1.0, QColor(12, 16, 22, 255));
+    p.fillRect(QRect(0, mapH - fadeH, w, fadeH), fade);
+    return out;
 }
 } // namespace
 
@@ -181,15 +194,23 @@ PanadapterWidget::PanadapterWidget(QWidget* parent) : QWidget(parent) {
 
 void PanadapterWidget::setSpanHz(int spanHz) {
     fullSpanHz_ = std::max(1000, spanHz);
-    viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, fullSpanHz_);
+    viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
     update();
 }
 
 int PanadapterWidget::minViewSpanHz() const { return kMinViewSpanHz; }
 
+void PanadapterWidget::setDialOffsetHz(int hz) {
+    if (hz == dialOffsetHz_) return;
+    dialOffsetHz_ = hz;
+    viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
+    wfDirty_ = true;
+    update();
+}
+
 void PanadapterWidget::setViewSpanHz(int spanHz) {
     // Slider-driven zoom: no viewSpanChanged emit, or the slider would loop.
-    viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, fullSpanHz_);
+    viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, maxViewSpanHz());
     update();
 }
 
@@ -560,9 +581,13 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // Visible bin window: view span centered inside the full captured span.
     int binLo = 0, binHi = n;
     if (n >= 2) {
+        // The view is dial-centered; with offset tuning the dial sits BELOW
+        // the capture center by dialOffsetHz_, so the window shifts with it.
         const double frac = static_cast<double>(viewSpanHz_) / fullSpanHz_;
-        binLo = static_cast<int>(n * (0.5 - frac / 2.0));
-        binHi = static_cast<int>(n * (0.5 + frac / 2.0));
+        const double dialFrac =
+            0.5 - static_cast<double>(dialOffsetHz_) / fullSpanHz_;
+        binLo = static_cast<int>(n * (dialFrac - frac / 2.0));
+        binHi = static_cast<int>(n * (dialFrac + frac / 2.0));
         binLo = std::clamp(binLo, 0, n - 2);
         binHi = std::clamp(binHi, binLo + 2, n);
     }
@@ -757,7 +782,7 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
     if (e->modifiers() & Qt::ControlModifier) {     // Ctrl+wheel = zoom
         const double factor = std::pow(1.25, -steps);
         viewSpanHz_ = std::clamp(static_cast<int>(std::lround(viewSpanHz_ * factor)),
-                                 kMinViewSpanHz, fullSpanHz_);
+                                 kMinViewSpanHz, maxViewSpanHz());
         emit viewSpanChanged(viewSpanHz_);
         update();
     } else {

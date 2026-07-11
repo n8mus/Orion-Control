@@ -211,6 +211,41 @@ void PanadapterWidget::setCenterHz(uint64_t hz) {
     update();
 }
 
+void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
+    spots_ = s;
+    update();
+}
+
+// KE9NS-style spot markers: a thin vertical line at the spotted frequency
+// with the callsign running down it. Labels are click-to-tune (hit rects
+// collected here, tested in mousePressEvent).
+void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
+    spotHits_.clear();
+    if (spots_.isEmpty() || centerHz_ == 0 || hSpec < 60) return;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    f.setBold(false);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    const qint64 half = viewSpanHz_ / 2;
+    for (const SpotLabel& s : spots_) {
+        const qint64 off = s.hz - static_cast<qint64>(centerHz_);
+        if (off < -half || off > half) continue;
+        const int x = hzToX(static_cast<int>(off));
+        p.setPen(QColor(150, 120, 255, 110));           // KE9NS violet marker
+        p.drawLine(x, 20, x, hSpec);
+        const int textLen = fm.horizontalAdvance(s.call);
+        p.save();
+        p.translate(x - 2, 22);
+        p.rotate(90);                                    // callsign runs downward
+        p.setPen(QColor(140, 225, 255));
+        p.drawText(0, 0, s.call);
+        p.restore();
+        spotHits_.push_back({QRect(x - 8, 20, 14, std::min(textLen + 6, hSpec - 24)),
+                             s.hz});
+    }
+}
+
 void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
     const bool scaleChanged = s.refDb != ds_.refDb || s.rangeDb != ds_.rangeDb
                               || s.palette != ds_.palette;
@@ -591,6 +626,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
         p.setPen(QColor(210, 245, 215));
         p.drawPath(tracePath);
+        drawSpots(p, hSpec);                       // cluster spots, on top
     } else {
         p.setPen(QColor(120, 220, 140));
         p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,
@@ -657,6 +693,14 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     if (overNotch(x)) {
         drag_ = Drag::Notch;
         return;
+    }
+    // A click on a spot callsign tunes to the spotted frequency.
+    for (const auto& [rect, hz] : spotHits_) {
+        if (rect.contains(e->pos())) {
+            drag_ = Drag::None;
+            emit tuneRequested(static_cast<int>(hz - static_cast<qint64>(centerHz_)));
+            return;
+        }
     }
     // Left dB scale: vertical drag shifts the reference level (grid drag in
     // PowerSDR). Checked after the notch but before the passband edges.

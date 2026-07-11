@@ -14,6 +14,7 @@
 #include <QActionGroup>
 #include <QWidgetAction>
 #include "ui/DisplayPanel.h"
+#include "net/SpotClient.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -159,6 +160,55 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 dispPanel->setSettings(d);
                 saveDisplay(d);
             });
+
+    // "SPOTS" dropdown: DX-cluster callsign labels on the panadapter. The feed
+    // is a plain cluster telnet login (default VE7CC); host/port/login live in
+    // QSettings (spots/host, spots/port, spots/login) for other nodes or RBN.
+    auto* spotsBtn = new QToolButton(topStrip);
+    spotsBtn->setText("SPOTS ▾");
+    spotsBtn->setPopupMode(QToolButton::InstantPopup);
+    spotsBtn->setFocusPolicy(Qt::NoFocus);
+    spotsBtn->setStyleSheet(
+        "QToolButton { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;"
+        " border-radius: 3px; font-size: 11px; padding: 2px 8px; }"
+        "QToolButton::menu-indicator { image: none; }");
+    auto* spotsMenu = new QMenu(spotsBtn);
+    auto* spotsOn   = spotsMenu->addAction("Show spots");
+    spotsOn->setCheckable(true);
+    auto* spotsClear = spotsMenu->addAction("Clear spots");
+    spotsMenu->addSeparator();
+    {
+        QSettings s;
+        const QString host  = s.value("spots/host", "dxc.ve7cc.net").toString();
+        const quint16 port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
+        const QString login = s.value("spots/login", "N8MUS").toString();
+        auto* info = spotsMenu->addAction(QString("source: %1:%2 as %3")
+                                              .arg(host).arg(port).arg(login));
+        info->setEnabled(false);
+        spotClient_.configure(host, port, login);
+        spotsOn->setChecked(s.value("spots/enabled", true).toBool());
+    }
+    spotsBtn->setMenu(spotsMenu);
+    topLay->addSpacing(8);
+    topLay->addWidget(spotsBtn);
+
+    auto pushSpots = [this, spotsOn] {
+        QVector<SpotLabel> labels;
+        if (spotsOn->isChecked())
+            for (const Spot& s : spotClient_.spots())
+                labels.push_back({s.call, s.hz});
+        pan_->setSpots(labels);
+    };
+    connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
+    connect(&spotClient_, &SpotClient::statusChanged, this,
+            [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    connect(spotsOn, &QAction::toggled, this, [this, pushSpots](bool on) {
+        QSettings().setValue("spots/enabled", on);
+        spotClient_.setEnabled(on);
+        pushSpots();
+    });
+    connect(spotsClear, &QAction::triggered, this, [this] { spotClient_.clear(); });
+    spotClient_.setEnabled(spotsOn->isChecked());
 
 #ifdef HAVE_SDRPLAY
     // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).

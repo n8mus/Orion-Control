@@ -3,6 +3,8 @@
 #include <QWidget>
 #include <QImage>
 #include <QStringList>
+#include <QVector>
+#include <QRect>
 #include <cstdint>
 #include <vector>
 
@@ -23,6 +25,12 @@ struct DisplaySettings {
     float split     = 0.42f;    // spectrum/waterfall divider position (0..1)
     int   background = 0;       // index into backgroundNames()
     bool  showGrid   = true;    // freq/dB gridlines on or off
+};
+
+// A DX-cluster spot to mark on the display (absolute frequency).
+struct SpotLabel {
+    QString call;
+    qint64  hz = 0;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:
@@ -51,6 +59,7 @@ public:
     void setNotch(bool on, int rfOffsetHz, int widthHz);
     void setSpectrum(const std::vector<float>& magsDb);
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
+    void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
 
     void setDisplaySettings(const DisplaySettings& s);
     const DisplaySettings& displaySettings() const { return ds_; }
@@ -89,6 +98,7 @@ private:
     void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines, spectrum area only
     void   drawScaleBand(QPainter& p, int hSpec);  // freq scale strip on the divider
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
+    void   drawSpots(QPainter& p, int hSpec);      // cluster spot lines + callsigns
 
     bool   overNotch(int x) const;                 // cursor within the grab zone
     bool   inScaleBand(int y) const;               // over the draggable divider strip
@@ -128,6 +138,11 @@ private:
     int  lastBinLo_ = -1, lastBinHi_ = -1;         // geometry key for wfImg_
     bool wfDirty_ = true;                          // settings changed: full re-render
     QImage fillImg_;                               // level-colored fill (reused buffer)
+
+    // DX-cluster spots: markers + callsigns in the spectrum area; hit rects
+    // (rebuilt each paint) make the labels click-to-tune targets.
+    QVector<SpotLabel> spots_;
+    QVector<QPair<QRect, qint64>> spotHits_;       // label rect -> spot freq
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.

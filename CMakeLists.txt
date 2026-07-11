@@ -24,6 +24,7 @@ add_executable(tentec-console
   src/radio/SerialPort.cpp      src/radio/SerialPort.h
   src/radio/TenTecOrion.cpp     src/radio/TenTecOrion.h
   src/net/RigctldServer.cpp     src/net/RigctldServer.h
+  src/net/SpotClient.cpp        src/net/SpotClient.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/SMeterWidget.cpp       src/ui/SMeterWidget.h

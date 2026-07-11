@@ -5,6 +5,7 @@
 class QTimer;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
+#include "net/SpotClient.h"
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -41,6 +42,7 @@ private:
     void recallStack(int band, int reg); // recall a band-stack register
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
+    SpotClient       spotClient_;                  // DX-cluster telnet feed
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;

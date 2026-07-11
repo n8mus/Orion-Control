@@ -40,6 +40,7 @@ private slots:
 
 private:
     QByteArray handleLine(const QByteArray& line);
+    QByteArray handleExtended(const QByteArray& cmd, const QList<QByteArray>& args);
 
     QTcpServer server_;
     RadioController* radio_;

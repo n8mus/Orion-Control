@@ -126,8 +126,8 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
             [this](int id) { emit agcSelected(kAgcs[id].agc); });
     lay->addWidget(agcBox);
 
-    // --- Attenuator ---------------------------------------------------------
-    auto* attBox = makeGroup("ATTENUATOR (dB)");
+    // --- Front end: attenuator + preamp --------------------------------------
+    auto* attBox = makeGroup("ATTEN (dB) / PREAMP");
     auto* attRow = new QHBoxLayout(attBox);
     attRow->setContentsMargins(0, 4, 0, 0);
     attRow->setSpacing(3);
@@ -140,6 +140,11 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     }
     connect(attenGroup_, &QButtonGroup::idClicked, this,
             [this](int id) { emit attenSelected(id); });
+    attRow->addSpacing(6);
+    preBtn_ = makeButton("PRE");
+    attRow->addWidget(preBtn_);
+    connect(preBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit preampToggled(on); });
     lay->addWidget(attBox);
 
     // --- RF gain ------------------------------------------------------------
@@ -288,6 +293,11 @@ void ControlPanel::showAtten(int step) {
     if (step < 0 || step > 3) return;
     QSignalBlocker block(attenGroup_);
     if (auto* b = attenGroup_->button(step)) b->setChecked(true);
+}
+
+void ControlPanel::showPreamp(bool on) {
+    QSignalBlocker block(preBtn_);
+    preBtn_->setChecked(on);
 }
 
 void ControlPanel::showRfGain(int gain) {

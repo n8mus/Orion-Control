@@ -25,6 +25,7 @@ signals:
     void modeSelected(Mode m);
     void agcSelected(char agc);           // 'F','M','S','P','O'
     void attenSelected(int step);         // 0..3 = off/6/12/18 dB
+    void preampToggled(bool on);          // front-end preamp
     void rfGainChanged(int gain);         // 0..100, coalesced while sliding
     void nrChanged(int level);            // 0..9, 0 = off
     void nbChanged(int level);
@@ -39,6 +40,7 @@ public slots:
     void showMode(Mode m);
     void showAgc(char agc);
     void showAtten(int step);
+    void showPreamp(bool on);
     void showRfGain(int gain);
     // These only ever fire if the radio answers the speculative ?R.NN/NB/NA
     // queries — the sliders then reflect true radio state instead of "off".
@@ -63,6 +65,7 @@ private:
     QSlider* an_     = nullptr;   QLabel* anVal_     = nullptr;
     QPushButton* notchBtn_ = nullptr;  QLabel* notchVal_ = nullptr;
     QPushButton* hwNbBtn_  = nullptr;
+    QPushButton* preBtn_   = nullptr;
     QLabel* pbtVal_ = nullptr;
     // Trailing-edge coalescer for slider drags (the Orion's UART services
     // commands on a ~100 ms cycle; raw slider-move rates would flood it).

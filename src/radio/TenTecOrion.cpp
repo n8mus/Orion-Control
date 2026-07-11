@@ -102,6 +102,10 @@ void TenTecOrion::setAutoNotch(Rx rx, int level) {
     send(QByteArray("*R") + rxLetter(rx) + "NA" + QByteArray::number(clampi(level, 0, 9)));
 }
 
+void TenTecOrion::setPreamp(Rx rx, bool on) {
+    send(QByteArray("*R") + rxLetter(rx) + "E" + (on ? "1" : "0"));
+}
+
 void TenTecOrion::setNotchCenter(Rx rx, int hz) {
     send(QByteArray("*R") + rxLetter(rx) + "NC" + QByteArray::number(clampi(hz, 20, 4000)));
 }
@@ -122,6 +126,7 @@ void TenTecOrion::querySMeter()          { send("?S"); }
 void TenTecOrion::queryAgc(Rx rx)        { send(QByteArray("?R") + rxLetter(rx) + "A"); }
 void TenTecOrion::queryRfGain(Rx rx)     { send(QByteArray("?R") + rxLetter(rx) + "G"); }
 void TenTecOrion::queryAttenuator(Rx rx) { send(QByteArray("?R") + rxLetter(rx) + "T"); }
+void TenTecOrion::queryPreamp(Rx rx)     { send(QByteArray("?R") + rxLetter(rx) + "E"); }
 
 void TenTecOrion::queryNotch(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "NC");
@@ -223,6 +228,8 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit rfGainReported(rx, static_cast<int>(v));
         else if (line[3] == 'T' && line.size() >= 5 && line[4] >= '0' && line[4] <= '3')
             emit attenReported(rx, line[4] - '0');
+        else if (line[3] == 'E' && line.size() >= 5 && (line[4] == '0' || line[4] == '1'))
+            emit preampReported(rx, line[4] == '1');
         else if (line[3] == 'N' && line.size() >= 6) {  // @R.N<C/W/M/S/N/B/A><val>
             const char sub = line[4];
             const bool num = parseLeadingInt(line.mid(5), v);

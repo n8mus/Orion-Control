@@ -30,6 +30,7 @@ public:
     void setAgc(Rx rx, char agc);                 // *R<M/S>A<F/M/S/P/O>
     void setRfGain(Rx rx, int gain);              // *R<M/S>G<0-100>
     void setAttenuator(Rx rx, int step);          // *R<M/S>T<0-3>
+    void setPreamp(Rx rx, bool on);               // *R<M/S>E<0/1> (main RX only on a 565)
     // DSP helpers share one command group: *R<M/S>N<x><0-9>, 0 = off.
     // NOTE: v3 firmware moved NR from documented letter 'N' (dead, silently
     // ignored) to 'R' — live-probed with set/read-back on Jon's radio.
@@ -54,6 +55,7 @@ public:
     void queryAgc(Rx rx);                         // ?R<M/S>A
     void queryRfGain(Rx rx);                      // ?R<M/S>G
     void queryAttenuator(Rx rx);                  // ?R<M/S>T
+    void queryPreamp(Rx rx);                      // ?R<M/S>E
     void queryNotch(Rx rx);                       // ?R.NC / ?R.NW / ?R.NM (undocumented)
     // Speculative: NR/NB/AN level queries appear in no document, but neither
     // did the notch ones and the radio answered those. Unanswered queries are
@@ -70,6 +72,7 @@ signals:
     void agcReported(Rx rx, char agc);
     void rfGainReported(Rx rx, int gain);
     void attenReported(Rx rx, int step);
+    void preampReported(Rx rx, bool on);
     void notchCenterReported(Rx rx, int hz);
     void notchWidthReported(Rx rx, int hz);
     void notchEngagedReported(Rx rx, bool on);

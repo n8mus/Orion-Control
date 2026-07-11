@@ -207,6 +207,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(&radio_, &TenTecOrion::attenReported, this, [this](Rx rx, int s) {
         if (rx == Rx::Main) panel_->showAtten(s);
     });
+    connect(&radio_, &TenTecOrion::preampReported, this, [this](Rx rx, bool on) {
+        if (rx == Rx::Main) panel_->showPreamp(on);
+    });
     connect(&radio_, &TenTecOrion::nrReported, this, [this](Rx rx, int l) {
         if (rx == Rx::Main) panel_->showNr(l);
     });
@@ -244,6 +247,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this](char a) { radio_.setAgc(Rx::Main, a); });
     connect(panel_, &ControlPanel::attenSelected, this,
             [this](int s) { radio_.setAttenuator(Rx::Main, s); });
+    connect(panel_, &ControlPanel::preampToggled, this,
+            [this](bool on) { radio_.setPreamp(Rx::Main, on); });
     connect(panel_, &ControlPanel::rfGainChanged, this,
             [this](int g) { radio_.setRfGain(Rx::Main, g); });
     connect(panel_, &ControlPanel::nrChanged, this,
@@ -357,6 +362,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryAgc(Rx::Main);                  // sync the control sidebar
         radio_.queryRfGain(Rx::Main);
         radio_.queryAttenuator(Rx::Main);
+        radio_.queryPreamp(Rx::Main);
         radio_.queryDspLevels(Rx::Main);            // syncs NR/NB/AN/hw-NB sliders
         radio_.queryNotch(Rx::Main);                // syncs notch center/width/engage
         awaitingFreq_ = true;
@@ -373,10 +379,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 4) {
+                    switch ((pollTick_ / 25) % 5) {
                         case 0:  radio_.queryAgc(Rx::Main);        break;
                         case 1:  radio_.queryRfGain(Rx::Main);     break;
                         case 2:  radio_.queryAttenuator(Rx::Main); break;
+                        case 3:  radio_.queryPreamp(Rx::Main);     break;
                         default: radio_.queryNotch(Rx::Main);      break;
                     }
                 } else {

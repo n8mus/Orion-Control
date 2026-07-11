@@ -26,6 +26,7 @@
 namespace ttc {
 
 static int pbtRfSign(Mode m);   // defined below with the passband math
+static int bwMaxFor(Mode m);    // per-mode filter ceiling (AM runs to 8000)
 
 // Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
 // the dial so its zero-IF DC artifact can never sit on the tuned frequency.
@@ -75,29 +76,44 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QPalette strip = topStrip->palette();
     strip.setColor(QPalette::Window, QColor(12, 16, 22));
     topStrip->setPalette(strip);
-    // KE9NS arrangement: meter + zoom on the left, then VFO A, the routing
-    // columns (antennas, A/B transfers, VFO assignment — Orion front-panel
-    // style, vertical) and VFO B. Taller than the readouts need so more
-    // controls can join later.
-    topStrip->setMinimumHeight(104);
-    auto* topLay = new QHBoxLayout(topStrip);
-    topLay->setContentsMargins(10, 4, 10, 4);
-    topLay->addWidget(smeter_);
-    // Zoom slider (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel
-    // on the panadapter still works and keeps the slider in sync.
+    // Two-deck arrangement on a GRID so deck 1 items can align exactly with
+    // deck 2 columns: row 0 = S-meter, zoom (in VFO B's grid column, so it
+    // sits precisely over B's fields), menus at the right edge; row 1 = the
+    // VFO columns with the routing matrices between them. `topLay` stays the
+    // name of the menu corner so the menu-button code below is untouched.
+    // Column plan: 0 smeter/stretch | 1 colA | 2 gap | 3 routing | 4 gap
+    //              | 5 colB + zoom | 6 stretch | 7 menus
+    auto* topGrid = new QGridLayout(topStrip);
+    topGrid->setContentsMargins(10, 4, 10, 4);
+    topGrid->setHorizontalSpacing(0);
+    topGrid->setVerticalSpacing(3);
+    topGrid->setColumnStretch(0, 1);
+    topGrid->setColumnStretch(6, 1);
+    topGrid->setColumnMinimumWidth(2, 28);
+    topGrid->setColumnMinimumWidth(4, 28);
+    auto* topLay = new QHBoxLayout;
+    topLay->setContentsMargins(0, 0, 0, 0);
+    topGrid->addWidget(smeter_, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    topGrid->addLayout(topLay, 0, 7, Qt::AlignRight | Qt::AlignVCenter);
+    // Zoom (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel on
+    // the panadapter still works and keeps the slider in sync. Level with
+    // the S-meter, spanning VFO B's column: label at B's left edge, slider
+    // running to the column's right edge (the VIEW button's edge).
     auto* zoomLbl = new QLabel("ZOOM", topStrip);
     zoomLbl->setStyleSheet("color: #8fa3b8; font-size: 10px; font-weight: bold;");
     auto* zoom = new QSlider(Qt::Horizontal, topStrip);
     zoom->setRange(0, 100);
-    zoom->setFixedWidth(140);
+    zoom->setToolTip("Zoom (span) — Ctrl+wheel on the panadapter does the same");
     zoom->setStyleSheet(
         "QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }"
         "QSlider::handle:horizontal { width: 12px; margin: -5px 0; border-radius: 6px;"
         " background: #6aa5d8; }");
-    topLay->addSpacing(16);
-    topLay->addWidget(zoomLbl);
-    topLay->addWidget(zoom);
-    topLay->addSpacing(16);
+    auto* zoomRow = new QHBoxLayout;
+    zoomRow->setContentsMargins(0, 0, 0, 0);
+    zoomRow->addWidget(zoomLbl);
+    zoomRow->addSpacing(4);
+    zoomRow->addWidget(zoom, 1);                    // fills the rest of B's column
+    topGrid->addLayout(zoomRow, 0, 5);
     // Each VFO is a column: readout on top, its volume + mute right below
     // (KE9NS-style rounded buttons, matching the sidebar controls).
     auto makeVolRow = [&](int i) {
@@ -126,10 +142,38 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             "QToolButton:hover { border-color: #4a5a6e; }"
             "QToolButton:checked { background: #8a2727; border-color: #e05d5d;"
             " color: #ffecec; }");
+        // LOCK: sends the Orion's *AL/*BL (freezes the front-panel knob) and
+        // makes the console refuse its own tune gestures on that VFO — the
+        // radio still accepts CAT tuning while locked (live-verified), so
+        // both sides have to hold the line.
+        lockBtn_[i] = new QToolButton(topStrip);
+        lockBtn_[i]->setText("LOCK");
+        lockBtn_[i]->setCheckable(true);
+        lockBtn_[i]->setFocusPolicy(Qt::NoFocus);
+        lockBtn_[i]->setFixedHeight(19);
+        lockBtn_[i]->setToolTip(QString("Lock VFO %1: front-panel knob and all "
+                                        "console tuning (filter edges stay live)")
+                                    .arg(i == 0 ? 'A' : 'B'));
+        lockBtn_[i]->setStyleSheet(
+            "QToolButton { background: #1c2430; border: 1px solid #2a3644;"
+            " border-radius: 3px; color: #8fa3b8; font-size: 10px; font-weight: bold;"
+            " padding: 0 8px; }"
+            "QToolButton:hover { border-color: #4a5a6e; }"
+            "QToolButton:checked { background: #8a6a27; border-color: #e0b45d;"
+            " color: #fff6e0; }");
+        connect(lockBtn_[i], &QToolButton::toggled, this, [this, i](bool on) {
+            (i == 0 ? vfoLockA_ : vfoLockB_) = on;
+            radio_.setVfoLock(i == 0 ? 'A' : 'B', on);
+            pan_->setVfoLocks(vfoLockA_, vfoLockB_);
+            statusBar()->showMessage(QString("VFO %1 %2")
+                                         .arg(i == 0 ? 'A' : 'B')
+                                         .arg(on ? "LOCKED" : "unlocked"));
+        });
         row->addSpacing(4);
         row->addWidget(volSl_[i]);
         row->addWidget(volLbl_[i]);
         row->addWidget(muteBtn_[i]);
+        row->addWidget(lockBtn_[i]);
         row->addStretch(1);
         return row;
     };
@@ -137,17 +181,41 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     colA->setSpacing(3);
     colA->addWidget(freqDisp_);
     colA->addLayout(makeVolRow(0));
-    topLay->addLayout(colA);
-    topLay->addStretch(1);
+    topGrid->addLayout(colA, 1, 1);
     routing_ = new RoutingPanel(topStrip);
-    topLay->addWidget(routing_);
-    topLay->addStretch(1);
+    topGrid->addWidget(routing_, 1, 3);
     auto* colB = new QVBoxLayout;
     colB->setSpacing(3);
     colB->addWidget(freqDispB_);
-    colB->addLayout(makeVolRow(1));
-    topLay->addLayout(colB);
-    topLay->addStretch(1);
+    auto* rowB = makeVolRow(1);
+    // VIEW: show/hide VFO B on the panadapter — declutters the display when
+    // the sub VFO isn't in play. B keeps tracking underneath; right-clicking
+    // to drop B on a station turns the view back on.
+    bViewBtn_ = new QToolButton(topStrip);
+    bViewBtn_->setText("VIEW");
+    bViewBtn_->setCheckable(true);
+    bViewBtn_->setFocusPolicy(Qt::NoFocus);
+    bViewBtn_->setFixedHeight(19);
+    bViewBtn_->setToolTip("Show VFO B on the panadapter (uncheck to hide it "
+                          "when the second VFO isn't needed)");
+    bViewBtn_->setStyleSheet(
+        "QToolButton { background: #1c2430; border: 1px solid #2a3644;"
+        " border-radius: 3px; color: #8fa3b8; font-size: 10px; font-weight: bold;"
+        " padding: 0 8px; }"
+        "QToolButton:hover { border-color: #4a5a6e; }"
+        "QToolButton:checked { background: #2f6d9e; border-color: #5db2f0;"
+        " color: #eaf6ff; }");
+    bViewBtn_->setChecked(QSettings().value("display/showVfoB", true).toBool());
+    pan_->setVfoBVisible(bViewBtn_->isChecked());
+    connect(bViewBtn_, &QToolButton::toggled, this, [this](bool on) {
+        QSettings().setValue("display/showVfoB", on);
+        pan_->setVfoBVisible(on);
+        statusBar()->showMessage(on ? "VFO B shown on the panadapter"
+                                    : "VFO B hidden from the panadapter");
+    });
+    rowB->addWidget(bViewBtn_);
+    colB->addLayout(rowB);
+    topGrid->addLayout(colB, 1, 5);
 
     auto spanFromSlider = [this](int v) {
         const double ratio = double(pan_->minViewSpanHz()) / pan_->maxViewSpanHz();
@@ -232,6 +300,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     }
     dispPanel->setCallsign(stationCall);
     pan_->setCallsign(stationCall);
+    // US 60 m allocation per FCC 25-60, effective 2026-02-13 (KE9NS-style
+    // zone boxes): contiguous 5351.5-5366.5 kHz at 15 W EIRP / 2.8 kHz max
+    // bandwidth / any compliant mode, plus the four retained USB channels
+    // (2.8 kHz wide, 100 W ERP, USB/CW/digital). Old channel 3 (5358.5) is
+    // gone as a channel — it sits inside the band at the lower power limit.
+    pan_->setBandZones({
+        {5330600, 5333400, "60m CH1 100W"},
+        {5346600, 5349400, "60m CH2 100W"},
+        {5351500, 5366500, "60m 5351.5-5366.5 · 15W EIRP · ≤2.8k"},
+        {5371600, 5374400, "60m CH4 100W"},
+        {5403600, 5406400, "60m CH5 100W"},
+    });
     connect(dispPanel, &DisplayPanel::callsignChanged, this,
             [this](const QString& call) {
                 QSettings().setValue("station/callsign", call);
@@ -342,7 +422,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             }
             pendVol_[i] = v;
             volTx_[i]->start();
-            if (i == 0 && txBar_) txBar_->showAfVolume(v);
             statusBar()->showMessage(QString("volume %1 -> %2")
                                          .arg(i == 0 ? "A" : "B").arg(v));
         });
@@ -357,7 +436,6 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                 const QSignalBlocker b(volSl_[i]);
                 volSl_[i]->setValue(preMute_[i]);
                 volLbl_[i]->setText(QString::number(preMute_[i]));
-                if (i == 0 && txBar_) txBar_->showAfVolume(preMute_[i]);
             }
             statusBar()->showMessage(QString("VFO %1 audio %2")
                                          .arg(i == 0 ? "A" : "B")
@@ -535,6 +613,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         onTuneRequested(steps * unit);
     });
     connect(pan_, &PanadapterWidget::vfoBStepRequested, this, [this](int steps, bool fine) {
+        if (vfoLockB_) { statusBar()->showMessage("VFO B is LOCKED"); return; }
         vfoBHz_ = static_cast<uint64_t>(
             static_cast<qint64>(vfoBHz_) + steps * (fine ? 10 : 100));
         freqDispB_->setFrequency(vfoBHz_);
@@ -581,13 +660,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         }
     });
 
-    // Manual notch: drag the orange marker to move it, wheel over it for width,
-    // sidebar button to engage. All audio<->RF mapping happens here.
+    // Manual notch / SAF: drag the marker to move it, wheel over it for width,
+    // sidebar buttons to engage. One DSP engine in the radio — NOTCH rejects
+    // the band, SAF peaks it — sharing center/width. Live-verified: *R.NS1
+    // engages SAF (NM then reads 1 too), *R.NM1 steals the engine back to
+    // notch (NS drops to 0), *R.NS0 shuts the whole engine down.
     connect(pan_, &PanadapterWidget::notchDragged, this, [this](int rfOffsetHz) {
         const int audio = std::clamp(pbtRfSign(rigMode_) * rfOffsetHz, 20, 4000);
         notchCenter_ = audio;
-        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
         sinceNotchEdit_.restart();
+        syncNotchUi();
         notchDirty_ = true;
         pendNotchHz_ = audio;
         if (!notchTx_->isActive()) notchTx_->start();  // coalesce like the filter drag
@@ -596,15 +678,25 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         notchWidth_ = std::clamp(notchWidth_ + steps * 10, 10, 300);
         radio_.setNotchWidth(Rx::Main, notchWidth_);
         sinceNotchEdit_.restart();
-        refreshNotchOverlay();
-        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
-        statusBar()->showMessage(QString("notch width -> %1 Hz").arg(notchWidth_));
+        syncNotchUi();
+        statusBar()->showMessage(QString("%1 width -> %2 Hz")
+                                     .arg(safOn_ ? "SAF" : "notch").arg(notchWidth_));
     });
     connect(panel_, &ControlPanel::notchToggled, this, [this](bool on) {
         radio_.setNotchEngaged(Rx::Main, on);
         notchOn_ = on;
-        refreshNotchOverlay();
-        panel_->showNotch(on, notchCenter_, notchWidth_);
+        safOn_ = false;                            // NM either steals or stops the engine
+        sinceNotchEdit_.restart();
+        syncNotchUi();
+    });
+    connect(panel_, &ControlPanel::safToggled, this, [this](bool on) {
+        radio_.setSaf(Rx::Main, on);
+        safOn_ = on;
+        notchOn_ = on;                             // NS1 -> NM reads 1; NS0 kills both
+        sinceNotchEdit_.restart();
+        syncNotchUi();
+        statusBar()->showMessage(on ? "SAF: peaking the marked band"
+                                    : "SAF off");
     });
     connect(panel_, &ControlPanel::hwNbToggled, this,
             [this](bool on) { radio_.setHardwareNb(Rx::Main, on); });
@@ -612,22 +704,27 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         notchCenter_ = hz;
-        refreshNotchOverlay();
-        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
+        syncNotchUi();
     });
     connect(&radio_, &TenTecOrion::notchWidthReported, this, [this](Rx rx, int hz) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         notchWidth_ = hz;
-        refreshNotchOverlay();
-        panel_->showNotch(notchOn_, notchCenter_, notchWidth_);
+        syncNotchUi();
     });
     connect(&radio_, &TenTecOrion::notchEngagedReported, this, [this](Rx rx, bool on) {
         if (rx != Rx::Main) return;
         if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
         notchOn_ = on;
-        refreshNotchOverlay();
-        panel_->showNotch(on, notchCenter_, notchWidth_);
+        if (!on) safOn_ = false;                   // engine off implies SAF off
+        syncNotchUi();
+    });
+    connect(&radio_, &TenTecOrion::safReported, this, [this](Rx rx, bool on) {
+        if (rx != Rx::Main) return;
+        if (sinceNotchEdit_.isValid() && sinceNotchEdit_.elapsed() < 2000) return;
+        safOn_ = on;
+        if (on) notchOn_ = true;                   // SAF active = engine engaged
+        syncNotchUi();
     });
     connect(&radio_, &TenTecOrion::hardwareNbReported, this, [this](Rx rx, bool on) {
         if (rx == Rx::Main) panel_->showHwNb(on);
@@ -664,11 +761,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this](int p) { radio_.setTxPower(p); });
     connect(txBar_, &TxBar::micGainChanged, this,
             [this](int p) { radio_.setMicGain(p); });
-    connect(txBar_, &TxBar::monitorChanged, this,
+    connect(audioPanel_, &AudioPanel::monitorChanged, this,
             [this](int p) { radio_.setMonitor(p); });
-    connect(txBar_, &TxBar::afVolumeChanged, this, [this](int p) {
-        volSl_[0]->setValue(p);                    // TX-bar AF = main volume; the
-    });                                            // slider handler does the rest
+    connect(txBar_, &TxBar::txFilterChanged, this, [this](int hz) {
+        txBwHz_ = hz;
+        radio_.setTxFilter(hz);
+    });
+    connect(txBar_, &TxBar::speechProcChanged, this, [this](int l) {
+        if (!digital_) lastSpeechProc_ = l;
+        radio_.setSpeechProc(l);
+    });
+    connect(txBar_, &TxBar::profileRecalled, this, &MainWindow::applyTxProfile);
+    connect(txBar_, &TxBar::profileSaveRequested, this, &MainWindow::saveTxProfile);
     connect(txBar_, &TxBar::tunerEnableToggled, this, [this](bool on) {
         tunerOn_ = on;
         radio_.setTunerEnabled(on);
@@ -730,13 +834,26 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(&radio_, &TenTecOrion::micGainReported, this, [this](int p) {
         txBar_->showMicGain(p);
-        if (!digital_) lastMicGain_ = p;            // learn the voice mic setting
+        micNow_ = p;
+        // Learn the voice mic setting — but never learn 0: mic 0 is the
+        // digital line-in switch, and adopting it (e.g. console started
+        // while the radio was still in a digital session) poisons the
+        // restore so DIG-off "resets" to zero.
+        if (!digital_ && p > 0) lastMicGain_ = p;
     });
     connect(&radio_, &TenTecOrion::speechProcReported, this, [this](int l) {
-        if (!digital_) lastSpeechProc_ = l;         // learn the voice speech-proc
+        // Proc 0 is a legitimate voice setting, so gate the learn on the
+        // radio actually being in voice (mic up) — otherwise a leftover
+        // digital state (mic 0 + proc 0) records proc "off" as the setup.
+        if (!digital_ && micNow_ > 0) lastSpeechProc_ = l;
+        txBar_->showSpeechProc(l);
+    });
+    connect(&radio_, &TenTecOrion::txFilterReported, this, [this](int hz) {
+        txBwHz_ = hz;
+        txBar_->showTxFilter(hz);
     });
     connect(&radio_, &TenTecOrion::monitorReported, this,
-            [this](int p) { txBar_->showMonitor(p); });
+            [this](int p) { audioPanel_->showMonitor(p); });
     connect(&radio_, &TenTecOrion::afVolumeReported, this, [this](Rx rx, int p) {
         const int i = rx == Rx::Main ? 0 : 1;
         if (muted_[i]) return;                     // muted: 0 expected, keep slider
@@ -744,11 +861,17 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         const QSignalBlocker b(volSl_[i]);
         volSl_[i]->setValue(p);
         volLbl_[i]->setText(QString::number(p));
-        if (i == 0) txBar_->showAfVolume(p);
     });
     connect(&radio_, &TenTecOrion::tunerReported, this, [this](bool on) {
         tunerOn_ = on;
         txBar_->showTuner(on);
+    });
+    connect(&radio_, &TenTecOrion::vfoLockReported, this, [this](char vfo, bool locked) {
+        const int i = vfo == 'B' ? 1 : 0;
+        (i == 0 ? vfoLockA_ : vfoLockB_) = locked;
+        const QSignalBlocker b(lockBtn_[i]);        // reflect, don't re-send
+        lockBtn_[i]->setChecked(locked);
+        pan_->setVfoLocks(vfoLockA_, vfoLockB_);
     });
 
     // rigctld PTT (WSJT-X / fldigi keying through :4532). The 't' reply
@@ -836,6 +959,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // last-used register; clicking the active band again cycles A->B->C->D.
     connect(panel_, &ControlPanel::bandSelected, this, [this](int idx) {
         if (idx < 0 || idx >= kBandCount) return;
+        if (is60m(idx)) {
+            // Channelized + locked: cycle CH1..CH5 from the hard-coded table.
+            // Only "which channel was last used" persists, never the values.
+            const int ch = (idx == lastBandPress_)
+                ? (curReg_ + 1) % kChan60Count
+                : std::clamp(QSettings().value("band/60/chan", 2).toInt(),
+                             0, kChan60Count - 1);
+            saveBandMemory();                       // stash the outgoing band
+            recall60m(ch);
+            lastBandPress_ = idx;
+            return;
+        }
         QSettings s;
         int reg;
         // Cycle A->B->C->D on repeated presses of the SAME button. Keyed off the
@@ -891,7 +1026,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                    || (m == 'B' && rxVfo_ != 'B');
                 txVfo_ = t;
                 rxVfo_ = m;
-                if (bEngaged) {
+                if (bEngaged && !vfoLockB_) {       // locked B: engage without the park
                     const bool cw = rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
                     const uint64_t b = centerHz_ + (cw ? 1000 : 5000);
                     radio_.setFrequencyHz(Rx::Sub, b);
@@ -916,6 +1051,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     // VFO is freq+mode). Mode commands trail the freq by 120+ ms — the Orion
     // drops commands that arrive while it's busy with a mode switch.
     connect(routing_, &RoutingPanel::copyABRequested, this, [this] {
+        if (vfoLockB_) { statusBar()->showMessage("A>B blocked: VFO B is LOCKED"); return; }
         radio_.setFrequencyHz(Rx::Sub, centerHz_);
         vfoBHz_ = centerHz_;
         pushVfoB();
@@ -927,6 +1063,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                      .arg(centerHz_ / 1e6, 0, 'f', 6));
     });
     connect(routing_, &RoutingPanel::copyBARequested, this, [this] {
+        if (vfoLockA_) { statusBar()->showMessage("B>A blocked: VFO A is LOCKED"); return; }
         tuneAbsolute(vfoBHz_);
         QTimer::singleShot(120, this, [this, m = subMode_] {
             applyMode(m);
@@ -936,6 +1073,11 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                                      .arg(vfoBHz_ / 1e6, 0, 'f', 6));
     });
     connect(routing_, &RoutingPanel::swapABRequested, this, [this] {
+        if (vfoLockA_ || vfoLockB_) {
+            statusBar()->showMessage(QString("A<>B blocked: VFO %1 is LOCKED")
+                                         .arg(vfoLockA_ ? 'A' : 'B'));
+            return;
+        }
         const uint64_t a = centerHz_, b = vfoBHz_;
         const Mode ma = rigMode_, mb = subMode_;
         radio_.setFrequencyHz(Rx::Sub, a);
@@ -1011,6 +1153,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             [this](int v) { radio_.setAutoNotch(Rx::Main, v); });
     connect(&radio_, &TenTecOrion::bandwidthReported, this, [this](Rx rx, int bw) {
         if (rx == Rx::Sub) {
+            if (sinceSubFilterEdit_.isValid()
+                && sinceSubFilterEdit_.elapsed() < 2000) return;  // mid/just-dragged
             if (bw != subBwHz_) { subBwHz_ = bw; pushVfoB(); }
             return;
         }
@@ -1019,6 +1163,8 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     });
     connect(&radio_, &TenTecOrion::pbtReported, this, [this](Rx rx, int pbt) {
         if (rx == Rx::Sub) {
+            if (sinceSubFilterEdit_.isValid()
+                && sinceSubFilterEdit_.elapsed() < 2000) return;  // mid/just-dragged
             if (pbt != subPbtHz_) { subPbtHz_ = pbt; pushVfoB(); }
             return;
         }
@@ -1064,7 +1210,47 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (!afTx_->isActive()) afTx_->start();
         statusBar()->showMessage(QString("VFO A -> %1 MHz").arg(hz / 1e6, 0, 'f', 6));
     });
+    // B filter edge drags -> sub RX filter (*RSF/*RSP), decomposed with the
+    // same exact edgesFromRig inverse as A (the sub runs the main's mode).
+    // Only useful when the Orion's sub-filter tracking of the main is off —
+    // with sync on, the radio re-slaves the sub and the drag won't stick.
+    sfTx_ = new QTimer(this);
+    sfTx_->setInterval(40);
+    connect(sfTx_, &QTimer::timeout, this, [this] {
+        if (!subFilterDirty_) { sfTx_->stop(); return; }
+        subFilterDirty_ = false;
+        radio_.setBandwidthHz(Rx::Sub, pendSubBw_);
+        radio_.setPbtHz(Rx::Sub, pendSubPbt_);
+        subBwHz_  = pendSubBw_;                     // optimistic; poll confirms
+        subPbtHz_ = pendSubPbt_;
+    });
+    connect(pan_, &PanadapterWidget::vfoBEditBegan, this, [this](int lo, int hi) {
+        anchorSubLoHz_ = lo;   anchorSubHiHz_ = hi;
+        anchorSubBwHz_ = subBwHz_;  anchorSubPbtHz_ = subPbtHz_;
+    });
+    connect(pan_, &PanadapterWidget::vfoBPassbandChanged, this, [this](int lo, int hi) {
+        int dWidth = (hi - lo) - (anchorSubHiHz_ - anchorSubLoHz_);
+        if (rigMode_ == Mode::AM) dWidth /= 2;      // drawn = 2x indicated in AM
+        int dPbt;
+        switch (rigMode_) {
+            case Mode::USB: dPbt = lo - anchorSubLoHz_;  break;
+            case Mode::LSB: dPbt = anchorSubHiHz_ - hi;  break;
+            default:
+                dPbt = pbtRfSign(rigMode_)
+                       * (((hi + lo) - (anchorSubHiHz_ + anchorSubLoHz_)) / 2);
+                break;
+        }
+        pendSubBw_  = std::clamp(anchorSubBwHz_ + dWidth, 100, bwMaxFor(rigMode_));
+        pendSubPbt_ = std::clamp(anchorSubPbtHz_ + dPbt, -8000, 8000);
+        subFilterDirty_ = true;
+        sinceSubFilterEdit_.restart();
+        if (!sfTx_->isActive()) sfTx_->start();
+        statusBar()->showMessage(QString("B filter -> bw %1 Hz  pbt %2 Hz")
+                                     .arg(pendSubBw_).arg(pendSubPbt_));
+    });
     connect(pan_, &PanadapterWidget::vfoBTuneRequested, this, [this](int off) {
+        if (vfoLockB_) { statusBar()->showMessage("VFO B is LOCKED"); return; }
+        if (!bViewBtn_->isChecked()) bViewBtn_->setChecked(true);  // deliberate B use
         const uint64_t hz =
             static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
         radio_.setFrequencyHz(Rx::Sub, hz);
@@ -1220,13 +1406,18 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryAudioRouting();
         // The startup burst can flood the Orion's UART servicing and drop a
         // few query responses — re-ask for the audio state once it settles.
+        // (Seen live: mic slider stuck at 0 against the radio's 51 because
+        // the barrage ate the ?TM answer.)
         QTimer::singleShot(2500, this, [this] {
             radio_.queryAfVolume(Rx::Main);
             radio_.queryAfVolume(Rx::Sub);
             radio_.queryAudioRouting();
+            radio_.queryTxAudio();                  // mic / proc / TX BW / monitor
         });
         radio_.queryAuxInputGain();
         radio_.queryTuner();
+        radio_.queryVfoLock('A');
+        radio_.queryVfoLock('B');
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);
@@ -1241,7 +1432,7 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 11) {
+                    switch ((pollTick_ / 25) % 13) {
                         case 0:  radio_.queryAgc(Rx::Main);
                                  radio_.queryAgcThreshold(Rx::Main); break;
                         case 9:  radio_.queryAgcHang(Rx::Main);
@@ -1255,6 +1446,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
                         case 7:  radio_.queryAfVolume(Rx::Main);   // front-panel knobs
                                  radio_.queryAfVolume(Rx::Sub);    break;
                         case 8:  radio_.queryAudioRouting();       break;
+                        case 10: radio_.queryTxFilter();           // front-panel TX
+                                 radio_.querySpeechProc();         // audio changes
+                                 radio_.queryMicGain();
+                                 break;
+                        case 11: radio_.queryVfoLock('A');         // front-panel lock
+                                 radio_.queryVfoLock('B');         // button presses
+                                 break;
                         default: radio_.queryNotch(Rx::Main);      break;
                     }
                 } else {
@@ -1301,6 +1499,10 @@ void MainWindow::onTuneRequested(int offsetHz) {
 }
 
 void MainWindow::tuneAbsolute(uint64_t f) {
+    if (vfoLockA_) {                               // every console A-tune funnels
+        statusBar()->showMessage("VFO A is LOCKED");  // here: one guard covers all
+        return;
+    }
     f = std::clamp<uint64_t>(f, 100000, 60000000);
     radio_.setFrequencyHz(Rx::Main, f);
     rigctld_.cacheFrequency(f);
@@ -1367,28 +1569,103 @@ void MainWindow::stopManualTune() {
 void MainWindow::setDigitalMode(bool on) {
     if (on == digital_) return;
     if (on) {
-        QSettings s;                                // remember the voice setup
-        s.setValue("audio/voiceMic", lastMicGain_);
-        s.setValue("audio/voiceSpeech", lastSpeechProc_);
+        if (lastMicGain_ > 0) {                     // remember the voice setup
+            QSettings s;                            // (never persist the zeros
+            s.setValue("audio/voiceMic", lastMicGain_);       // of a digital
+            s.setValue("audio/voiceSpeech", lastSpeechProc_); // state)
+        }
         digital_ = true;                            // (gates the "learn" slots)
         radio_.setMicGain(0);
         radio_.setSpeechProc(0);
         radio_.setAuxInputGain(100);
+        txBar_->showSpeechProc(0);
         statusBar()->showMessage("DIGITAL: line-in 100, mic/speech off");
     } else {
         digital_ = false;
+        if (lastMicGain_ <= 0) {
+            // The learned value was poisoned (zeros captured from an old
+            // digital session): fall back to the persisted voice setup,
+            // then to sane defaults.
+            QSettings s;
+            const int vm = s.value("audio/voiceMic", 51).toInt();
+            lastMicGain_ = vm > 0 ? std::min(vm, 100) : 51;   // stored 0 = poisoned too
+            lastSpeechProc_ = std::clamp(s.value("audio/voiceSpeech", 2).toInt(), 0, 9);
+        }
         radio_.setAuxInputGain(0);
         radio_.setMicGain(lastMicGain_);
         radio_.setSpeechProc(lastSpeechProc_);
         txBar_->showMicGain(lastMicGain_);
+        txBar_->showSpeechProc(lastSpeechProc_);
         statusBar()->showMessage(QString("VOICE: mic %1, speech %2, line-in off")
                                      .arg(lastMicGain_).arg(lastSpeechProc_));
     }
     panel_->showDigital(on);
 }
 
+// TX profiles (KE9NS TXProfile idea, sized to the Orion's CAT surface): a
+// bundle of TX filter BW, speech-proc level, mic gain and power, recalled in
+// one click from the TX bar. Slots ship with sensible defaults and are
+// overwritten in place by right-clicking the button (saveTxProfile).
+struct TxProf { int bw, proc, mic, pwr; };
+static const TxProf kTxProfDefault[4] = {
+    {3000, 0, 50, 100},   // RAG  — natural ragchew audio, no processing
+    {2400, 5, 55, 100},   // DX   — mid-focused punch, moderate compression
+    {2100, 7, 55, 100},   // CONT — narrow and dense for contest runs
+    {3900, 0, 45, 100},   // ESSB — the Orion's widest, processor off
+};
+static const char* kTxProfName[4] = {"RAGCHEW", "DX", "CONTEST", "ESSB"};
+
+void MainWindow::applyTxProfile(int slot) {
+    slot = std::clamp(slot, 0, 3);
+    QSettings st;
+    const QString k = QString("txprof/%1/").arg(slot);
+    const TxProf& d = kTxProfDefault[slot];
+    const int bw   = std::clamp(st.value(k + "bw",   d.bw).toInt(), 900, 3900);
+    const int proc = std::clamp(st.value(k + "proc", d.proc).toInt(), 0, 9);
+    const int mic  = std::clamp(st.value(k + "mic",  d.mic).toInt(), 0, 100);
+    int pwr        = std::clamp(st.value(k + "pwr",  d.pwr).toInt(), 0, 100);
+    if (txBar_->ampMode()) pwr = std::min(pwr, txBar_->ampLimit());
+    txBwHz_ = bw;
+    lastSpeechProc_ = proc;
+    lastMicGain_ = mic;
+    radio_.setTxFilter(bw);
+    radio_.setTxPower(pwr);
+    txBar_->showTxFilter(bw);
+    txBar_->showTxPower(pwr);
+    if (digital_) {
+        // Mic and processor are parked at 0 as the line-in switch; the
+        // profile's values land when voice comes back (setDigitalMode).
+        statusBar()->showMessage(QString("TX profile %1: bw %2 Hz, pwr %3 "
+                                         "(mic %4 / proc %5 queued for voice)")
+                                     .arg(kTxProfName[slot]).arg(bw).arg(pwr)
+                                     .arg(mic).arg(proc));
+        return;
+    }
+    radio_.setSpeechProc(proc);
+    radio_.setMicGain(mic);
+    txBar_->showSpeechProc(proc);
+    txBar_->showMicGain(mic);
+    statusBar()->showMessage(QString("TX profile %1: bw %2 Hz  proc %3  mic %4  pwr %5")
+                                 .arg(kTxProfName[slot]).arg(bw).arg(proc)
+                                 .arg(mic).arg(pwr));
+}
+
+void MainWindow::saveTxProfile(int slot) {
+    slot = std::clamp(slot, 0, 3);
+    QSettings st;
+    const QString k = QString("txprof/%1/").arg(slot);
+    st.setValue(k + "bw",   txBwHz_);
+    st.setValue(k + "proc", lastSpeechProc_);      // voice values even in digital
+    st.setValue(k + "mic",  lastMicGain_);
+    st.setValue(k + "pwr",  lastTxPwr_);
+    statusBar()->showMessage(QString("TX profile %1 saved: bw %2 Hz  proc %3  mic %4  pwr %5")
+                                 .arg(kTxProfName[slot]).arg(txBwHz_)
+                                 .arg(lastSpeechProc_).arg(lastMicGain_).arg(lastTxPwr_));
+}
+
 void MainWindow::saveBandMemory() {
     if (curBand_ < 0 || curBand_ >= kBandCount) return;
+    if (is60m(curBand_)) return;                 // 60 m channels are locked
     // Only stamp the register if the current frequency actually belongs to this
     // band — otherwise a client (WSJT-X/cqrlog) that moved the VFO elsewhere
     // would corrupt the outgoing register with an unrelated frequency.
@@ -1414,7 +1691,7 @@ void MainWindow::syncBandRegister() {
         curBand_ = idx;
         panel_->showBand(idx);
         lastBandPress_ = -1;                    // band moved under the buttons:
-        if (idx >= 0) {                         // next press recalls, not cycles
+        if (idx >= 0 && !is60m(idx)) {          // next press recalls, not cycles
             QSettings s;
             curReg_ = std::clamp(
                 s.value(QString("band/%1/reg").arg(kBands[idx].label), 0).toInt(),
@@ -1431,6 +1708,17 @@ void MainWindow::syncBandRegister() {
             }
         }
     }
+    if (is60m(curBand_)) {
+        // Locked channels: label whichever channel the dial sits on ("--"
+        // when between channels inside the band) and never stamp anything.
+        int ch = -1;
+        for (int i = 0; i < kChan60Count; ++i)
+            if (kUs60mChans[i].dialHz == centerHz_) { ch = i; break; }
+        if (ch >= 0) curReg_ = ch;
+        panel_->showBandStackText(
+            ch >= 0 ? QString("STACK %1").arg(kUs60mChans[ch].name) : "STACK --");
+        return;
+    }
     panel_->showBandStack(curBand_ >= 0 ? curReg_ : -1);
     if (curBand_ >= 0 && bandStamp_) bandStamp_->start();
 }
@@ -1444,7 +1732,8 @@ void MainWindow::recallStack(int band, int reg) {
         s.value(key + "freq", QVariant::fromValue<qulonglong>(seed.hz)).toULongLong();
     const Mode m = static_cast<Mode>(
         s.value(key + "mode", static_cast<int>(seed.mode)).toInt());
-    const int bw  = std::clamp(s.value(key + "bw",  seed.bwHz).toInt(), 100, 6000);
+    const int bw  = std::clamp(s.value(key + "bw",  seed.bwHz).toInt(),
+                               100, bwMaxFor(m));
     const int pbt = std::clamp(s.value(key + "pbt", seed.pbtHz).toInt(), -8000, 8000);
 
     // The Orion silently drops CAT commands that arrive while it is busy with
@@ -1477,6 +1766,59 @@ void MainWindow::recallStack(int band, int reg) {
                                  .arg(f / 1e6, 0, 'f', 4));
 }
 
+// US 60 m channel recall: everything comes from the hard-coded kUs60mChans
+// table — no QSettings override, no radio read-back adoption; the channels
+// are locked. Sequenced like recallStack (the Orion drops commands during a
+// mode switch), with the channel's transmit profile trailing once the DSP
+// traffic has settled. CH3 flips to line-in for FT8; voice channels restore
+// the mic with the channel's processor level.
+void MainWindow::recall60m(int chan) {
+    chan = std::clamp(chan, 0, kChan60Count - 1);
+    const Chan60& c = kUs60mChans[chan];
+    tuneAbsolute(c.dialHz);
+    curReg_ = chan;                             // channel index rides curReg_
+    QTimer::singleShot(120, this, [this, m = c.mode] {
+        applyMode(m);
+        panel_->showMode(m);
+    });
+    QTimer::singleShot(450, this, [this, bw = c.bwHz] {
+        radio_.setBandwidthHz(Rx::Main, bw);
+        radio_.setPbtHz(Rx::Main, 0);
+    });
+    QTimer::singleShot(650, this, [this, chan] {
+        const Chan60& c = kUs60mChans[chan];
+        int pwr = c.txPwrPct;
+        if (txBar_->ampMode()) pwr = std::min(pwr, txBar_->ampLimit());
+        radio_.setTxFilter(c.txBwHz);
+        radio_.setTxPower(pwr);
+        txBwHz_ = c.txBwHz;
+        lastTxPwr_ = pwr;
+        txBar_->showTxFilter(c.txBwHz);
+        txBar_->showTxPower(pwr);
+        if (c.digital) {
+            setDigitalMode(true);               // FT8: line-in, mic/proc parked
+        } else {
+            lastSpeechProc_ = c.procLvl;
+            if (digital_) {
+                setDigitalMode(false);          // restores mic + our proc level
+            } else {
+                radio_.setSpeechProc(c.procLvl);
+                txBar_->showSpeechProc(c.procLvl);
+            }
+        }
+    });
+    rigBwHz_  = c.bwHz;                         // optimistic UI; poll confirms
+    rigPbtHz_ = 0;
+    rigctld_.cacheBandwidth(c.bwHz);
+    panel_->showPbt(0);
+    refreshPassbandOverlay();
+    panel_->showBandStackText(QString("STACK %1").arg(c.name));
+    QSettings().setValue("band/60/chan", chan);
+    statusBar()->showMessage(QString("60m %1  %2 MHz  ->  pwr %3, TX bw %4 (locked)")
+                                 .arg(c.name).arg(c.dialHz / 1e6, 0, 'f', 4)
+                                 .arg(c.txPwrPct).arg(c.txBwHz));
+}
+
 // PBT sign in RF space: positive PBT conventionally shifts the passband toward
 // higher AUDIO frequencies, which in LSB/CWL means LOWER RF. Measured semantics
 // (set/read-back verified live): *RMP is signed ASCII, *RMF never disturbs PBT.
@@ -1490,16 +1832,26 @@ static int pbtRfSign(Mode m) {
 // offset isn't CAT-readable, so this can sit a couple hundred Hz off — harmless,
 // because drags are delta-anchored to the radio's real state, never absolute.
 static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi) {
+    // AM: the indicated bandwidth is the AUDIO width — the RF passband spans
+    // BOTH sidebands, so the true width is twice the number ([vendor] manual,
+    // confirmed live: AM filter values run to 8000 = 16 kHz on the air).
+    const int half = (m == Mode::AM) ? bw : bw / 2;
     int centerRf;
     switch (m) {
-        case Mode::USB: centerRf = +bw / 2; break;
-        case Mode::LSB: centerRf = -bw / 2; break;
-        default:        centerRf = 0;       break;
+        case Mode::USB: centerRf = +half; break;
+        case Mode::LSB: centerRf = -half; break;
+        default:        centerRf = 0;     break;
     }
     centerRf += pbtRfSign(m) * pbt;
-    lo = centerRf - bw / 2;
-    hi = centerRf + bw / 2;
+    lo = centerRf - half;
+    hi = centerRf + half;
 }
+
+// The Orion's per-mode filter ceiling (live-verified: AM accepts up to 9000
+// — matching the front-panel knob — and silently REJECTS anything higher,
+// it does not clamp; SSB/CW cap at 6000). Drag math needs the real ceiling
+// or wide-AM drags peg early.
+static int bwMaxFor(Mode m) { return m == Mode::AM ? 9000 : 6000; }
 
 // VFO B's on-screen representation: dial + sub-RX filter edges + TX state.
 // Sideband placement uses the main mode — the radio is set to copy the mode
@@ -1528,7 +1880,10 @@ void MainWindow::onPassbandChanged(int loHz, int hiHz) {
     // The PBT delta is the exact inverse of edgesFromRig, so the (bw, pbt)
     // sent reproduces the drawn edges: in SSB the nominal placement rides
     // the zero-beat edge (USB lo = pbt, LSB hi = -pbt), elsewhere the center.
-    const int dWidth = (hiHz - loHz) - (anchorHiHz_ - anchorLoHz_);
+    // In AM the drawn width is TWICE the radio's bandwidth number (both
+    // sidebands), so the width delta halves on the way back to the radio.
+    int dWidth = (hiHz - loHz) - (anchorHiHz_ - anchorLoHz_);
+    if (rigMode_ == Mode::AM) dWidth /= 2;
     int dPbt;
     switch (rigMode_) {
         case Mode::USB: dPbt = loHz - anchorLoHz_;    break;
@@ -1538,7 +1893,7 @@ void MainWindow::onPassbandChanged(int loHz, int hiHz) {
                    * (((hiHz + loHz) - (anchorHiHz_ + anchorLoHz_)) / 2);
             break;
     }
-    pendBwHz_  = std::clamp(anchorBwHz_ + dWidth, 100, 6000);
+    pendBwHz_  = std::clamp(anchorBwHz_ + dWidth, 100, bwMaxFor(rigMode_));
     pendPbtHz_ = std::clamp(anchorPbtHz_ + dPbt, -8000, 8000);
     filterDirty_ = true;
     sinceFilterEdit_.restart();
@@ -1551,7 +1906,16 @@ void MainWindow::onPassbandChanged(int loHz, int hiHz) {
 // carrier demodulates to audio |d| regardless of PBT (PBT moves the passband
 // filter, not the BFO). So marker RF offset = sideband sign x audio center.
 void MainWindow::refreshNotchOverlay() {
-    pan_->setNotch(notchOn_, pbtRfSign(rigMode_) * notchCenter_, notchWidth_);
+    pan_->setNotch(notchOn_, pbtRfSign(rigMode_) * notchCenter_, notchWidth_, safOn_);
+}
+
+// One place derives every notch/SAF display from the state trio: the marker
+// draws whenever the engine runs (green when peaking), the NOTCH button only
+// lights when the engine is in reject flavor.
+void MainWindow::syncNotchUi() {
+    refreshNotchOverlay();
+    panel_->showNotch(notchOn_ && !safOn_, notchCenter_, notchWidth_);
+    panel_->showSaf(safOn_);
 }
 
 void MainWindow::sendPendingNotch() {

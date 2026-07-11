@@ -69,7 +69,8 @@ public:
     void setBwAnchor(int a);                       // -1 lock lo, +1 lock hi, 0 sym
     // Manual-notch marker, in display (RF-offset) space; caller maps the
     // radio's audio-Hz notch through the mode sideband. Ignored mid-drag.
-    void setNotch(bool on, int rfOffsetHz, int widthHz);
+    // peak = SAF flavor (green, passes the band instead of rejecting it).
+    void setNotch(bool on, int rfOffsetHz, int widthHz, bool peak = false);
     void setSpectrum(const std::vector<float>& magsDb);
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
@@ -83,6 +84,15 @@ public:
     // that frequency (pileup TX placement). The A dial line is grabbable too
     // (vfoADragged with an absolute target).
     void setVfoB(uint64_t hz, char role, int loHz, int hiHz);
+    void setVfoBVisible(bool on);                  // hide B entirely when unused
+    // Console-side tune locks (mirror the Orion's *AL/*BL, which only freeze
+    // the front panel): locked VFOs stop being drag/click-tune targets here.
+    // Filter-edge gestures stay live — the lock is about frequency.
+    void setVfoLocks(bool a, bool b);
+    // Regulatory zones (channelized allocations, e.g. US 60 m): green boxes
+    // with labels drawn whenever they fall inside the view.
+    struct BandZone { qint64 loHz, hiHz; QString label; };
+    void setBandZones(const QVector<BandZone>& zones);
 
     void setDisplaySettings(const DisplaySettings& s);
     const DisplaySettings& displaySettings() const { return ds_; }
@@ -102,6 +112,8 @@ signals:
     void vfoADragged(uint64_t hz);                 // A dial line slid (absolute target)
     void vfoBDragged(int rfOffsetHz);              // B slid (streamed, offset from center)
     void vfoBTuneRequested(int rfOffsetHz);        // right-click: put B here
+    void vfoBEditBegan(int loHz, int hiHz);        // B edge grabbed (anchor sub state)
+    void vfoBPassbandChanged(int loHz, int hiHz);  // B filter drag (offsets from B dial)
     // In-widget edits (dB-axis drag, range wheel, divider drag) changed ds_;
     // owner persists and syncs the DISPLAY panel.
     void displaySettingsEdited(const DisplaySettings& s);
@@ -122,6 +134,7 @@ private:
     void   pushWaterfallRow(const std::vector<float>& db);
     void   renderWfLine(const float* src, QRgb* dst, int w, int binLo, int binHi) const;
     void   ensureWaterfallImage(int w, int h, int binLo, int binHi);
+    void   drawBandZones(QPainter& p, int hSpec);  // regulatory zone boxes
     void   drawFreqGrid(QPainter& p, int hSpec);   // gridlines, spectrum area only
     void   drawScaleBand(QPainter& p, int hSpec);  // freq scale strip on the divider
     void   drawDbScale(QPainter& p, int hSpec);    // horizontal dB lines + labels
@@ -136,6 +149,7 @@ private:
     int dragStartX_  = 0;
     int dragStartY_  = 0;
     int dragStartLo_ = 0, dragStartHi_ = 0;
+    int dragStartBLo_ = 0, dragStartBHi_ = 0;      // B filter edges at grab
     float dragStartRef_   = 0.0f;                  // refDb at dB-axis grab
     float dragStartSplit_ = 0.42f;                 // split at divider grab
 
@@ -146,7 +160,9 @@ private:
     int pbLoHz_ = -1200;
     int pbHiHz_ = 1200;
     int bwAnchor_ = 0;                             // see setBwAnchor
+    QVector<BandZone> zones_;                      // regulatory overlays
     bool notchOn_     = false;
+    bool notchPeak_   = false;                     // SAF flavor (green marker)
     int  notchRfHz_   = 0;                         // marker center, RF offset
     int  notchWidthHz_ = 0;
 
@@ -177,6 +193,8 @@ private:
     QString callsign_;                             // watermark (empty = off)
 
     uint64_t vfoBHz_ = 0;                          // 0 = marker off
+    bool     vfoBVisible_ = true;                  // user toggle (VIEW button)
+    bool     lockA_ = false, lockB_ = false;       // tune locks (see setVfoLocks)
     char     vfoBRole_ = 'N';                      // 'T' tx / 'R' main rx / 'N' parked
     int      vfoBLo_ = -1250, vfoBHi_ = 1250;      // B filter edges (offsets from B)
     qint64   dragStartBOff_ = 0;                   // B offset at grab time
@@ -199,6 +217,8 @@ private:
         Notch,
         VfoA,               // slide the A dial line (drag-to-tune)
         VfoB,               // slide VFO B (split TX placement)
+        BLoEdge, BHiEdge,   // VFO B filter edges: same gestures as A's
+        BSymEdge,           //   (drives the sub RX filter)
         Divider,            // drag the freq-scale band: move the wf split
         DbAxis,             // drag the left dB scale: shift ref level
     } drag_ = Drag::None;

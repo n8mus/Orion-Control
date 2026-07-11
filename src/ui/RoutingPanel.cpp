@@ -11,8 +11,9 @@ namespace ttc {
 
 namespace {
 QLabel* mini(const QString& text, QWidget* parent) {
+    // 10px bold to match the rest of the top strip (vol labels, MUTE/LOCK).
     auto* l = new QLabel(text, parent);
-    l->setStyleSheet("color: #8fa3b8; font-size: 9px; font-weight: bold;");
+    l->setStyleSheet("color: #8fa3b8; font-size: 10px; font-weight: bold;");
     l->setAlignment(Qt::AlignCenter);
     return l;
 }
@@ -21,7 +22,7 @@ QLabel* mini(const QString& text, QWidget* parent) {
 QToolButton* RoutingPanel::cell(const char* accent, const QString& tip) {
     auto* b = new QToolButton(this);
     b->setCheckable(true);
-    b->setFixedSize(28, 17);
+    b->setFixedSize(36, 21);
     b->setFocusPolicy(Qt::NoFocus);
     b->setProperty("accent", accent);
     b->setToolTip(tip);
@@ -39,17 +40,17 @@ RoutingPanel::RoutingPanel(QWidget* parent) : QWidget(parent) {
         "QToolButton[accent=\"rx\"]:checked { background: #1f7a45; border-color: #3ecf7a; }"
         "QToolButton[accent=\"sub\"]:checked { background: #2f6d9e; border-color: #5db2f0; }"
         "QToolButton[accent=\"ant\"]:checked { background: #2f6d9e; border-color: #5db2f0; }"
-        "QToolButton[accent=\"xfer\"] { color: #c8d4e0; font-size: 9px; font-weight: bold;"
-        " padding: 0 4px; }"
+        "QToolButton[accent=\"xfer\"] { color: #c8d4e0; font-size: 10px; font-weight: bold;"
+        " padding: 0 6px; }"
         "QToolButton[accent=\"xfer\"]:pressed { background: #2a3644; }");
 
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
-    lay->setSpacing(12);
+    lay->setSpacing(14);
 
     // --- antenna routing: vertical port columns, like the radio ------------
     auto* ag = new QGridLayout;
-    ag->setSpacing(2);
+    ag->setSpacing(3);
     ag->addWidget(mini("ANT", this), 0, 0);
     ag->addWidget(mini("MAIN", this), 0, 1);
     ag->addWidget(mini("SUB", this), 0, 2);
@@ -76,7 +77,7 @@ RoutingPanel::RoutingPanel(QWidget* parent) : QWidget(parent) {
 
     // --- dial transfers ---------------------------------------------------
     auto* xc = new QVBoxLayout;
-    xc->setSpacing(2);
+    xc->setSpacing(3);
     static const struct { const char* text; const char* tip; } xfers[] = {
         {"A▸B", "copy dial A to B"},
         {"A⇄B", "swap dials"},
@@ -87,7 +88,7 @@ RoutingPanel::RoutingPanel(QWidget* parent) : QWidget(parent) {
         b->setProperty("accent", "xfer");
         b->setText(xfers[i].text);
         b->setToolTip(xfers[i].tip);
-        b->setFixedHeight(17);
+        b->setFixedHeight(21);
         b->setFocusPolicy(Qt::NoFocus);
         xc->addWidget(b);
         if (i == 0) connect(b, &QToolButton::clicked, this, &RoutingPanel::copyABRequested);
@@ -98,7 +99,7 @@ RoutingPanel::RoutingPanel(QWidget* parent) : QWidget(parent) {
 
     // --- VFO assignment: A and B columns, functions down the side ----------
     auto* vg = new QGridLayout;
-    vg->setSpacing(2);
+    vg->setSpacing(3);
     vg->addWidget(mini("VFO", this), 0, 0);
     vg->addWidget(mini("A", this), 0, 1);
     vg->addWidget(mini("B", this), 0, 2);

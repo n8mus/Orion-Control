@@ -293,18 +293,28 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
 
     lay->addWidget(makeDspRow("AUTO NOTCH", an_, anVal_));
 
-    // Manual notch: engage button + live center x width readout. Placement is
-    // on the panadapter itself (drag the orange marker; wheel over it = width).
-    auto* notchBox = makeGroup("MANUAL NOTCH");
+    // Manual notch / SAF: one DSP engine in the radio, two flavors — NOTCH
+    // rejects the marked band, SAF (v3) peaks it instead (CW pileup picker).
+    // Same center/width parameters drive both; engaging one steals the
+    // engine from the other, exactly like the front-panel menu toggle.
+    // Placement is on the panadapter (drag the marker; wheel = width).
+    auto* notchBox = makeGroup("MANUAL NOTCH / SAF");
     auto* notchRow = new QHBoxLayout(notchBox);
     notchRow->setContentsMargins(0, 4, 0, 0);
     notchBtn_ = makeButton("NOTCH");
+    notchBtn_->setToolTip("Reject the marked band");
+    safBtn_ = makeButton("SAF");
+    safBtn_->setToolTip("Spot Audio Filter: peak the marked band instead of "
+                        "rejecting it (same marker, same width)");
     notchVal_ = new QLabel("--");
     notchVal_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     notchRow->addWidget(notchBtn_);
+    notchRow->addWidget(safBtn_);
     notchRow->addWidget(notchVal_, 1);
     connect(notchBtn_, &QPushButton::toggled, this,
             [this](bool on) { emit notchToggled(on); });
+    connect(safBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit safToggled(on); });
     lay->addWidget(notchBox);
     connect(nr_, &QSlider::valueChanged, this, [this](int v) {
         nrVal_->setText(v ? QString::number(v) : "off");
@@ -356,6 +366,10 @@ void ControlPanel::showBandStack(int regIdx) {
     else stackLbl_->setText(QString("STACK %1").arg(kStackNames[regIdx]));
 }
 
+void ControlPanel::showBandStackText(const QString& text) {
+    stackLbl_->setText(text);                 // channelized bands (60 m CH1..CH5)
+}
+
 void ControlPanel::showMode(Mode m) {
     for (int i = 0; i < 6; ++i)
         if (kModes[i].mode == m) {
@@ -405,6 +419,11 @@ void ControlPanel::showNotch(bool on, int centerHz, int widthHz) {
     QSignalBlocker block(notchBtn_);
     notchBtn_->setChecked(on);
     notchVal_->setText(QString("%1 Hz x %2").arg(centerHz).arg(widthHz));
+}
+
+void ControlPanel::showSaf(bool on) {
+    QSignalBlocker block(safBtn_);
+    safBtn_->setChecked(on);
 }
 
 void ControlPanel::showHwNb(bool on) {

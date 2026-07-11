@@ -13,7 +13,10 @@ static int clampi(int v, int lo, int hi) { return std::max(lo, std::min(hi, v));
 TenTecOrion::TenTecOrion(QObject* parent) : QObject(parent) {
     caps_.name             = "Ten-Tec Orion 565/566";
     caps_.bandwidthMinHz   = 100;
-    caps_.bandwidthMaxHz   = 6000;
+    caps_.bandwidthMaxHz   = 9000;   // AM reaches 9000 (front-panel parity,
+                                     // live-verified); the radio REJECTS (not
+                                     // clamps) over-range values per mode, so
+                                     // callers must send in-range numbers
     caps_.bandwidthStepHz  = 1;       // on-the-fly, 1 Hz resolution
     caps_.pbtRangeHz       = 8000;
     caps_.continuousFilter = true;    // the flagship: smooth passband drag
@@ -136,6 +139,18 @@ void TenTecOrion::setPtt(bool on)        { send(on ? "*TK" : "*TU"); }
 void TenTecOrion::setTxPower(int pct)    { send("*TP" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setMicGain(int pct)    { send("*TM" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setSpeechProc(int lvl) { send("*TS" + QByteArray::number(clampi(lvl, 0, 9))); }
+void TenTecOrion::setTxFilter(int hz)    { send("*TF" + QByteArray::number(clampi(hz, 900, 3900))); }
+void TenTecOrion::setVfoLock(char vfo, bool on) {
+    send(QByteArray("*") + (vfo == 'B' ? 'B' : 'A') + (on ? 'L' : 'U'));
+}
+
+void TenTecOrion::queryVfoLock(char vfo) {
+    send(QByteArray("?") + (vfo == 'B' ? 'B' : 'A') + 'L');
+}
+
+void TenTecOrion::queryTxFilter()        { send("?TF"); }
+void TenTecOrion::querySpeechProc()      { send("?TS"); }
+void TenTecOrion::queryMicGain()         { send("?TM"); }
 void TenTecOrion::setAuxInputGain(int p) { send("*TI" + QByteArray::number(clampi(p, 0, 100))); }
 void TenTecOrion::setMonitor(int pct)    { send("*TO" + QByteArray::number(clampi(pct, 0, 100))); }
 void TenTecOrion::setAfVolume(Rx rx, int pct) {
@@ -163,6 +178,7 @@ void TenTecOrion::queryAuxInputGain()    { send("?TI"); }
 void TenTecOrion::queryTxAudio() {
     send("?TM");
     send("?TS");
+    send("?TF");
     send("?TO");
     send("?UM");                                   // volume query is speculative
 }
@@ -177,6 +193,7 @@ void TenTecOrion::queryNotch(Rx rx) {
     send(QByteArray("?R") + rxLetter(rx) + "NC");
     send(QByteArray("?R") + rxLetter(rx) + "NW");
     send(QByteArray("?R") + rxLetter(rx) + "NM");
+    send(QByteArray("?R") + rxLetter(rx) + "NS");  // SAF flavor engaged?
 }
 
 void TenTecOrion::setHardwareNb(Rx rx, bool on) {
@@ -270,6 +287,12 @@ void TenTecOrion::onLine(const QByteArray& line) {
             && v >= 100000 && v <= 60000000) {        // sanity: 100 kHz .. 60 MHz
             Rx rx = (line[1] == 'A') ? Rx::Main : Rx::Sub;
             emit frequencyReported(rx, static_cast<uint64_t>(v));
+        } else if (line.size() == 3 && (line[2] == 'L' || line[2] == 'U')) {
+            // ?AL/?BL (undocumented query, live-verified): @AL locked, @AU
+            // unlocked, same letters for B. Lock only freezes the front
+            // panel — CAT tuning still works, so the console enforces its
+            // own side of the lock.
+            emit vfoLockReported(line[1], line[2] == 'L');
         }
         return;
     }
@@ -307,6 +330,8 @@ void TenTecOrion::onLine(const QByteArray& line) {
             emit micGainReported(static_cast<int>(v));
         else if (line[2] == 'S' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 9)
             emit speechProcReported(static_cast<int>(v));
+        else if (line[2] == 'F' && parseLeadingInt(line.mid(3), v) && v >= 900 && v <= 3900)
+            emit txFilterReported(static_cast<int>(v));
         else if (line[2] == 'I' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
             emit auxInputGainReported(static_cast<int>(v));
         else if (line[2] == 'O' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
@@ -350,7 +375,9 @@ void TenTecOrion::onLine(const QByteArray& line) {
     }
     if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M/A/G/T]<val>
         Rx rx = (line[2] == 'M') ? Rx::Main : Rx::Sub;
-        if (line[3] == 'F' && parseLeadingInt(line.mid(4), v) && v >= 100 && v <= 6000)
+        if (line[3] == 'F' && parseLeadingInt(line.mid(4), v) && v >= 100 && v <= 9000)
+            // 9000 cap, not 6000: AM mode filters run 100-9000 (live-verified;
+            // the old 6000 cap silently dropped every AM bandwidth report).
             emit bandwidthReported(rx, static_cast<int>(v));
         else if (line[3] == 'P' && parseLeadingInt(line.mid(4), v) && v >= -8000 && v <= 8000)
             emit pbtReported(rx, static_cast<int>(v));

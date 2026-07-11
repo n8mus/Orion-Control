@@ -36,6 +36,7 @@ private slots:
 private:
     void refreshPassbandOverlay();     // radio state -> mode-sided on-screen passband
     void refreshNotchOverlay();        // radio notch (audio Hz) -> RF-offset marker
+    void syncNotchUi();                // notch/SAF state -> marker + sidebar buttons
     void sendPendingFilter();          // coalesced drag-to-filter serial writes
     void sendPendingNotch();           // coalesced drag-to-notch serial writes
     void tuneAbsolute(uint64_t hz);    // every tune path funnels through here
@@ -43,10 +44,13 @@ private:
     void startManualTune();            // steady carrier for amp/external tuner
     void stopManualTune();
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
+    void applyTxProfile(int slot);     // recall a stored TX-audio bundle
+    void saveTxProfile(int slot);      // store current TX BW/PROC/MIC/PWR
     void pushVfoB();                   // VFO B dial+filter+TX state -> panadapter
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
     void syncBandRegister();           // mirror any dial move into the band stack
     void recallStack(int band, int reg); // recall a band-stack register
+    void recall60m(int chan);          // locked US 60 m channel (CH1..CH5)
     TenTecOrion      radio_;
     RigctldServer    rigctld_{&radio_};
     SpotClient       spotClient_;                  // DX-cluster telnet feed
@@ -74,6 +78,15 @@ private:
     QTimer*  bfTx_ = nullptr;                 // coalesced *BF stream for B drags
     uint64_t pendBHz_ = 0;
     bool     bfDirty_ = false;
+    QToolButton* bViewBtn_ = nullptr;         // show/hide B on the panadapter
+    QToolButton* lockBtn_[2] = {};            // per-VFO tune locks (*AL/*BL)
+    bool vfoLockA_ = false, vfoLockB_ = false;
+    QTimer* sfTx_ = nullptr;                  // coalesced sub-filter drag stream
+    int  pendSubBw_ = 0, pendSubPbt_ = 0;
+    bool subFilterDirty_ = false;
+    QElapsedTimer sinceSubFilterEdit_;        // suppress poll snap-back after a drag
+    int anchorSubLoHz_ = 0, anchorSubHiHz_ = 0;   // B overlay edges at drag start
+    int anchorSubBwHz_ = 2500, anchorSubPbtHz_ = 0; // sub radio state at drag start
     QTimer*  afTx_ = nullptr;                 // coalesced tune stream for A drags
     uint64_t pendAHz_ = 0;
     bool     afDirty_ = false;
@@ -103,8 +116,10 @@ private:
     // Digital/voice audio switching ([vendor]-style). Voice settings are learned
     // from the radio when entering digital, and persisted (defaults 51/2).
     bool digital_       = false;
-    int  lastMicGain_   = 51;                  // most recent polled values, used
-    int  lastSpeechProc_ = 2;                  // to snapshot voice settings
+    int  lastMicGain_   = 51;                  // learned VOICE values (never 0 —
+    int  lastSpeechProc_ = 2;                  // see the poisoning guards)
+    int  micNow_        = 0;                   // radio's mic as last reported
+    int  txBwHz_        = 2850;                // TX filter, from polling (?TF)
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;
@@ -124,7 +139,9 @@ private:
     int anchorBwHz_ = 2400, anchorPbtHz_ = 0;  // radio state at drag start
 
     // Manual notch state (audio Hz, from polling; see refreshNotchOverlay).
+    // safOn_ = the shared DSP engine is in SAF (peak) flavor, not reject.
     bool notchOn_      = false;
+    bool safOn_        = false;
     int  notchCenter_  = 550;
     int  notchWidth_   = 30;
     QElapsedTimer sinceNotchEdit_;             // suppress poll snap-back after a drag

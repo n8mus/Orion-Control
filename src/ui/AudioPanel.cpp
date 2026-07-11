@@ -3,6 +3,8 @@
 
 #include <QGridLayout>
 #include <QLabel>
+#include <QSlider>
+#include <QTimer>
 #include <QToolButton>
 
 namespace ttc {
@@ -35,7 +37,10 @@ AudioPanel::AudioPanel(QWidget* parent) : QWidget(parent) {
         // Routing cells: A green, B blue, A+B teal — the console's VFO colors.
         "QToolButton[accent=\"a\"]:checked { background: #1f7a45; border-color: #3ecf7a; color: #eafff2; }"
         "QToolButton[accent=\"b\"]:checked { background: #2f6d9e; border-color: #5db2f0; color: #eaf6ff; }"
-        "QToolButton[accent=\"ab\"]:checked { background: #2f7d7d; border-color: #4ad0d0; color: #eafcfc; }");
+        "QToolButton[accent=\"ab\"]:checked { background: #2f7d7d; border-color: #4ad0d0; color: #eafcfc; }"
+        "QSlider::groove:horizontal { height: 5px; background: #2a3644; border-radius: 2px; }"
+        "QSlider::handle:horizontal { width: 14px; margin: -6px 0; border-radius: 7px;"
+        " background: #6aa5d8; }");
 
     auto* g = new QGridLayout(this);
     g->setContentsMargins(16, 14, 16, 14);
@@ -63,7 +68,35 @@ AudioPanel::AudioPanel(QWidget* parent) : QWidget(parent) {
         }
     }
 
+    // TX monitor level (sidetone of your own transmit audio) — set-and-forget,
+    // so it rides in the popup instead of the TX bar.
+    g->addWidget(caption("MON", this), 4, 0);
+    mon_ = new QSlider(Qt::Horizontal, this);
+    mon_->setRange(0, 100);
+    mon_->setToolTip("TX audio monitor level (0 = off)");
+    monVal_ = new QLabel("--", this);
+    monVal_->setFixedWidth(28);
+    monTx_ = new QTimer(this);
+    monTx_->setSingleShot(true);
+    monTx_->setInterval(40);
+    connect(monTx_, &QTimer::timeout, this, [this] {
+        if (pendMon_ >= 0) { emit monitorChanged(pendMon_); pendMon_ = -1; }
+    });
+    connect(mon_, &QSlider::valueChanged, this, [this](int v) {
+        monVal_->setText(QString::number(v));
+        pendMon_ = v;
+        if (!monTx_->isActive()) monTx_->start();
+    });
+    g->addWidget(mon_, 4, 1, 1, 2);
+    g->addWidget(monVal_, 4, 3);
+
     showRouting('B', 'B', 'B');                     // sane default until ?UC answers
+}
+
+void AudioPanel::showMonitor(int pct) {
+    const QSignalBlocker b(mon_);
+    mon_->setValue(pct);
+    monVal_->setText(QString::number(pct));
 }
 
 void AudioPanel::emitRouting() {

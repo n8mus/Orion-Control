@@ -2,6 +2,9 @@
 #pragma once
 #include <QWidget>
 
+class QLabel;
+class QSlider;
+class QTimer;
 class QToolButton;
 
 namespace ttc {
@@ -14,23 +17,30 @@ namespace ttc {
 //   PH R    [ ]  [x]  [ ]
 //   SPKR    [ ]  [ ]  [x]
 //
-// showRouting() never emits.
+// plus the TX audio monitor level (rarely touched, so it lives here rather
+// than spending TX-bar space). show*() never emit.
 class AudioPanel : public QWidget {
     Q_OBJECT
 public:
     explicit AudioPanel(QWidget* parent = nullptr);
 
     void showRouting(char left, char right, char speaker);
+    void showMonitor(int pct);
 
 signals:
     void routingEdited(char left, char right, char speaker);
+    void monitorChanged(int pct);                  // coalesced while sliding
 
 private:
     void emitRouting();
     QToolButton* cell(const QString& tip);
 
     QToolButton* route_[3][3] = {}; // [row L/R/SPKR][col A/B/A+B]
-    bool         updating_ = false;
+    QSlider* mon_ = nullptr;
+    QLabel*  monVal_ = nullptr;
+    QTimer*  monTx_ = nullptr;
+    int      pendMon_ = -1;
+    bool     updating_ = false;
 };
 
 } // namespace ttc

@@ -36,6 +36,7 @@ signals:
     void nbChanged(int level);
     void autoNotchChanged(int level);
     void notchToggled(bool on);           // manual notch engage
+    void safToggled(bool on);             // SAF peak filter (shares the notch engine)
     void hwNbToggled(bool on);            // hardware noise blanker
     void pbtZeroRequested();              // "PBT 0" button
     void pbtChanged(int hz);              // slider, coalesced while sliding
@@ -43,6 +44,7 @@ signals:
 public slots:
     void showBand(int bandIdx);           // -1 = out of every band
     void showBandStack(int regIdx);       // 0..3 = A..D, -1 = none
+    void showBandStackText(const QString& text);  // channelized bands (60 m)
     void showMode(Mode m);
     void showSam(bool on);                // no emit
     void setSamLabel(const QString& t);   // "SAM" / "SAM-U" / "SAM-L"
@@ -61,6 +63,7 @@ public slots:
     void showNb(int level);
     void showAutoNotch(int level);
     void showNotch(bool on, int centerHz, int widthHz);
+    void showSaf(bool on);
     void showHwNb(bool on);
     void showPbt(int pbtHz);              // live off-center readout
 
@@ -77,6 +80,7 @@ private:
     QSlider* nb_     = nullptr;   QLabel* nbVal_     = nullptr;
     QSlider* an_     = nullptr;   QLabel* anVal_     = nullptr;
     QPushButton* notchBtn_ = nullptr;  QLabel* notchVal_ = nullptr;
+    QPushButton* safBtn_   = nullptr;
     QPushButton* hwNbBtn_  = nullptr;
     QPushButton* preBtn_   = nullptr;
     QPushButton* samBtn_   = nullptr;

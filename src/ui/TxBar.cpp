@@ -26,6 +26,8 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         QPushButton:hover { background: #26303e; }
         QPushButton:checked { background: #2b5c8a; color: #ffffff; border-color: #3f7cb4; }
         QPushButton#amp:checked { background: #8a5c2b; border-color: #b47c3f; }
+        QPushButton#prof { padding: 0 7px; font-size: 10px; border-radius: 8px; }
+        QPushButton#prof:checked { background: #1f7a45; border-color: #3ecf7a; }
         QSpinBox { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;
                    font-size: 11px; }
         QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }
@@ -98,16 +100,72 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     lay->addWidget(mic_);
     lay->addWidget(micVal_);
 
-    lay->addWidget(new QLabel("MON"));
-    mon_ = makeSlider("MON", monVal_, monTx_, pendMon_, &TxBar::monitorChanged);
-    lay->addWidget(mon_);
-    lay->addWidget(monVal_);
+    // TX audio shaping: the Orion's whole CAT-visible surface is the TX
+    // filter bandwidth (900-3900 Hz continuous, hi-cut in effect — the low
+    // corner is fixed in firmware, no EQ/rolloff commands exist) and the
+    // speech processor level.
+    lay->addSpacing(8);
+    lay->addWidget(new QLabel("TX BW"));
+    txbw_ = makeSlider("TXBW", txbwVal_, txbwTx_, pendTxbw_, &TxBar::txFilterChanged);
+    {
+        const QSignalBlocker b(txbw_);             // range change must not command
+        txbw_->setRange(900, 3900);                // the radio before its state is in
+        txbw_->setSingleStep(50);
+    }
+    txbw_->setToolTip("SSB transmit filter bandwidth (Orion range 900-3900 Hz)");
+    txbwVal_->setFixedWidth(32);
+    lay->addWidget(txbw_);
+    lay->addWidget(txbwVal_);
 
-    lay->addWidget(new QLabel("AF"));
-    af_ = makeSlider("AF", afVal_, afTx_, pendAf_, &TxBar::afVolumeChanged);
-    lay->addWidget(af_);
-    lay->addWidget(afVal_);
+    lay->addWidget(new QLabel("PROC"));
+    proc_ = makeSlider("PROC", procVal_, procTx_, pendProc_, &TxBar::speechProcChanged);
+    {
+        const QSignalBlocker b(proc_);
+        proc_->setRange(0, 9);
+    }
+    proc_->setFixedWidth(56);
+    proc_->setToolTip("Speech processor level (0 = off)");
+    connect(proc_, &QSlider::valueChanged, this,   // after makeSlider's handler:
+            [this](int v) { if (v == 0) procVal_->setText("OFF"); });
+    lay->addWidget(proc_);
+    lay->addWidget(procVal_);
+
+    // TX profiles: one click mid-pileup, no popup. The lit button shows the
+    // active profile; touching any TX slider clears it (settings have drifted).
+    lay->addSpacing(10);
+    static const char* kProfNames[4] = {"RAG", "DX", "CONT", "ESSB"};
+    static const char* kProfTips[4]  = {"normal ragchew", "DX / pileup",
+                                        "contest", "wide clean audio"};
+    for (int i = 0; i < 4; ++i) {
+        auto* b = new QPushButton(kProfNames[i]);
+        b->setObjectName("prof");
+        b->setCheckable(true);
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setToolTip(QString("TX profile: %1\nclick = recall   right-click = "
+                              "save current TX BW/PROC/MIC/PWR here").arg(kProfTips[i]));
+        b->setContextMenuPolicy(Qt::CustomContextMenu);
+        profBtn_[i] = b;
+        lay->addWidget(b);
+        connect(b, &QPushButton::clicked, this, [this, i] {
+            markProfile(i);
+            emit profileRecalled(i);
+        });
+        connect(b, &QPushButton::customContextMenuRequested, this, [this, i] {
+            markProfile(i);                        // saved = current, so it's active
+            emit profileSaveRequested(i);
+        });
+    }
+    // Manual edits to anything a profile bundles un-light the profile button.
+    for (QSlider* s : {pwr_, mic_, txbw_, proc_})
+        connect(s, &QSlider::valueChanged, this, [this] { markProfile(-1); });
     lay->addStretch(1);
+}
+
+void TxBar::markProfile(int slot) {
+    for (int j = 0; j < 4; ++j) {
+        const QSignalBlocker b(profBtn_[j]);
+        profBtn_[j]->setChecked(j == slot);
+    }
 }
 
 QSlider* TxBar::makeSlider(const QString&, QLabel*& value, QTimer*& tx, int& pend,
@@ -167,8 +225,12 @@ static void showVal(QSlider* s, QLabel* l, int v) {
 
 void TxBar::showTxPower(int pct)  { showVal(pwr_, pwrVal_, pct); }
 void TxBar::showMicGain(int pct)  { showVal(mic_, micVal_, pct); }
-void TxBar::showMonitor(int pct)  { showVal(mon_, monVal_, pct); }
-void TxBar::showAfVolume(int pct) { showVal(af_, afVal_, pct); }
+void TxBar::showTxFilter(int hz)  { showVal(txbw_, txbwVal_, hz); }
+
+void TxBar::showSpeechProc(int level) {
+    showVal(proc_, procVal_, level);
+    if (level == 0) procVal_->setText("OFF");
+}
 
 void TxBar::showTuner(bool on) {
     QSignalBlocker block(tunerBtn_);

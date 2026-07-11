@@ -37,9 +37,10 @@ inline constexpr BandDef kBands[] = {
     {"80",  3500000, 4000000,
      {{3525000, Mode::CWU, 500, 0},  {3573000, Mode::USB, 3000, 0},
       {3610000, Mode::LSB, 3000, 0}, {3850000, Mode::LSB, 3000, 0}}},
-    {"60",  5250000, 5450000,       // channelized, USB only — all registers USB
-     {{5358500, Mode::USB, 2800, 0}, {5357000, Mode::USB, 3000, 0},
-      {5358500, Mode::USB, 2800, 0}, {5403500, Mode::USB, 2800, 0}}},
+    {"60",  5250000, 5450000,       // channelized + locked: these seeds are
+                                    // bypassed — recall60m uses kUs60mChans
+     {{5357000, Mode::USB, 3000, 0}, {5357000, Mode::USB, 3000, 0},
+      {5357000, Mode::USB, 3000, 0}, {5357000, Mode::USB, 3000, 0}}},
     {"40",  7000000, 7300000,
      {{7025000, Mode::CWU, 500, 0},  {7074000, Mode::USB, 3000, 0},
       {7130000, Mode::LSB, 3000, 0}, {7200000, Mode::LSB, 3000, 0}}},
@@ -66,6 +67,38 @@ inline constexpr BandDef kBands[] = {
       {50125000, Mode::USB, 3000, 0}, {50200000, Mode::USB, 3000, 0}}},
 };
 inline constexpr int kBandCount = static_cast<int>(std::size(kBands));
+
+// US 60 m runs channelized and LOCKED: pressing the 60 button cycles these
+// five hard-coded channels; dial moves never stamp them and QSettings never
+// overrides them (see MainWindow::recall60m). Modes follow the on-air
+// conventions — CH3 (5357.0 dial) is the worldwide FT8 channel, now inside
+// the FCC 25-60 contiguous band so 15 W EIRP applies there; the four 100 W
+// ERP channels are USB voice, CH5 being the international DX channel. Each
+// entry carries its acceptable transmit profile (power, TX filter, speech
+// processor, mic vs line-in).
+struct Chan60 {
+    uint64_t dialHz;     // USB suppressed-carrier dial (center - 1.5 kHz)
+    Mode     mode;
+    int      bwHz;       // RX filter
+    const char* name;    // stack readout + status text
+    int      txPwrPct;   // -- transmit profile --
+    int      txBwHz;
+    int      procLvl;
+    bool     digital;    // line-in (FT8) instead of mic
+};
+inline constexpr Chan60 kUs60mChans[] = {
+    {5330500, Mode::USB, 2800, "CH1 voice", 100, 2800, 3, false},
+    {5346500, Mode::USB, 2800, "CH2 voice", 100, 2800, 3, false},
+    {5357000, Mode::USB, 3000, "CH3 FT8",    15, 3000, 0, true},
+    {5371500, Mode::USB, 2800, "CH4 voice", 100, 2800, 3, false},
+    {5403500, Mode::USB, 2800, "CH5 DX",    100, 2800, 3, false},
+};
+inline constexpr int kChan60Count = static_cast<int>(std::size(kUs60mChans));
+
+inline bool is60m(int bandIdx) {
+    return bandIdx >= 0 && bandIdx < kBandCount
+           && kBands[bandIdx].label[0] == '6' && kBands[bandIdx].label[1] == '0';
+}
 
 inline int bandIndexOf(uint64_t hz) {
     for (int i = 0; i < kBandCount; ++i)

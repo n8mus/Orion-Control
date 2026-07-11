@@ -62,6 +62,9 @@ public:
     void setTxPower(int pct);                     // *TP<0-100> (percent of 100 W)
     void setMicGain(int pct);                     // *TM<0-100>
     void setSpeechProc(int level);                // *TS<0-9> (0 = off)
+    void setTxFilter(int hz);                     // *TF<900-3900>, continuous (live-
+                                                  // verified hard clamp; the Orion I
+                                                  // has no TX EQ/rolloff over CAT)
     void setAuxInputGain(int pct);                // *TI<0-100> (rear line input)
     void setMonitor(int pct);                     // *TO<0-100> (TX audio monitor)
     void setAfVolume(Rx rx, int pct);             // *UM/*US (percent -> 0-255 byte)
@@ -83,6 +86,11 @@ public:
     // *KA[ant1][ant2][rxant], query ?KA -> @KA...
     void setAntennaRouting(char ant1, char ant2, char rxAnt);
     void queryAntennaRouting();
+    // VFO lock: *AL/*AU and *BL/*BU. Freezes the front-panel knob only —
+    // CAT tuning still works (live-verified), so the console must also
+    // refuse its own tune gestures while a lock is on.
+    void setVfoLock(char vfo, bool on);           // vfo = 'A' or 'B'
+    void queryVfoLock(char vfo);                  // ?AL/?BL -> @AL/@AU/@BL/@BU
 
     // Queries (responses arrive asynchronously via the signals below).
     void queryFrequency(Rx rx);
@@ -95,7 +103,10 @@ public:
     void queryPreamp(Rx rx);                      // ?R<M/S>E
     void queryNotch(Rx rx);                       // ?R.NC / ?R.NW / ?R.NM (undocumented)
     void queryTxPower();                          // ?TP
-    void queryTxAudio();                          // ?TM / ?TS / ?TO / ?UM (some speculative)
+    void queryTxAudio();                          // ?TM / ?TS / ?TF / ?TO / ?UM
+    void queryTxFilter();                         // ?TF
+    void querySpeechProc();                       // ?TS
+    void queryMicGain();                          // ?TM
     void queryAuxInputGain();                     // ?TI (undocumented query)
     void queryTuner();                            // ?TT
     void queryAfVolume(Rx rx);                    // ?UM / ?US
@@ -130,6 +141,7 @@ signals:
     void txPowerReported(int pct);
     void micGainReported(int pct);
     void speechProcReported(int level);
+    void txFilterReported(int hz);
     void auxInputGainReported(int pct);
     void monitorReported(int pct);
     void afVolumeReported(Rx rx, int pct);
@@ -137,6 +149,7 @@ signals:
     void tunerReported(bool on);
     void vfoAssignmentReported(char mainRx, char subRx, char tx);
     void antennaRoutingReported(char ant1, char ant2, char rxAnt);
+    void vfoLockReported(char vfo, bool locked);
     void rawLine(const QByteArray& line);
 
 private slots:

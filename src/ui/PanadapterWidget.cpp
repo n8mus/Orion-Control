@@ -230,8 +230,19 @@ void PanadapterWidget::setCallsign(const QString& call) {
     update();
 }
 
+void PanadapterWidget::setVfoBVisible(bool on) {
+    vfoBVisible_ = on;
+    update();
+}
+
+void PanadapterWidget::setVfoLocks(bool a, bool b) {
+    lockA_ = a;
+    lockB_ = b;
+}
+
 void PanadapterWidget::setVfoB(uint64_t hz, char role, int loHz, int hiHz) {
-    if (drag_ == Drag::VfoB) return;               // don't snap it mid-drag
+    if (drag_ == Drag::VfoB || drag_ == Drag::BLoEdge || drag_ == Drag::BHiEdge
+        || drag_ == Drag::BSymEdge) return;        // don't snap it mid-drag
     if (hz == vfoBHz_ && role == vfoBRole_ && loHz == vfoBLo_ && hiHz == vfoBHi_)
         return;
     vfoBHz_ = hz;
@@ -242,7 +253,7 @@ void PanadapterWidget::setVfoB(uint64_t hz, char role, int loHz, int hiHz) {
 }
 
 bool PanadapterWidget::overVfoB(int x) const {
-    if (!vfoBHz_ || !centerHz_) return false;
+    if (!vfoBVisible_ || !vfoBHz_ || !centerHz_) return false;
     const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
     if (std::llabs(off) > viewSpanHz_) return false;
     const int xb  = hzToX(static_cast<int>(off));
@@ -303,13 +314,19 @@ void PanadapterWidget::setPassband(int loHz, int hiHz) {
     update();
 }
 
+void PanadapterWidget::setBandZones(const QVector<BandZone>& zones) {
+    zones_ = zones;
+    update();
+}
+
 void PanadapterWidget::setBwAnchor(int a) {
     bwAnchor_ = a < 0 ? -1 : (a > 0 ? 1 : 0);
 }
 
-void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz) {
+void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz, bool peak) {
     if (drag_ == Drag::Notch) return;              // never fight an active drag
     notchOn_ = on;
+    notchPeak_ = peak;
     notchRfHz_ = rfOffsetHz;
     notchWidthHz_ = widthHz;
     update();
@@ -453,6 +470,31 @@ int PanadapterWidget::hzToX(int hz) const {
 int PanadapterWidget::xToHz(int x) const {
     const double frac = static_cast<double>(x) / std::max(1, width());
     return static_cast<int>(std::lround(frac * viewSpanHz_ - viewSpanHz_ / 2.0));
+}
+
+// Regulatory zone boxes (KE9NS BandText style): translucent green segments
+// with a label riding the top edge, drawn wherever an allocation falls inside
+// the view. Spectrum area only, under the trace and passband tints.
+void PanadapterWidget::drawBandZones(QPainter& p, int hSpec) {
+    if (zones_.isEmpty() || !centerHz_) return;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    p.setFont(f);
+    const qint64 c = static_cast<qint64>(centerHz_);
+    for (const auto& z : zones_) {
+        const qint64 lo = z.loHz - c, hi = z.hiHz - c;
+        if (hi < -viewSpanHz_ / 2 || lo > viewSpanHz_ / 2) continue;
+        const int xLo = hzToX(static_cast<int>(std::max<qint64>(lo, -viewSpanHz_ / 2)));
+        const int xHi = hzToX(static_cast<int>(std::min<qint64>(hi, viewSpanHz_ / 2)));
+        p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, hSpec)), QColor(60, 190, 90, 22));
+        p.setPen(QPen(QColor(80, 210, 110, 130), 1));
+        p.drawLine(xLo, 0, xLo, hSpec);
+        p.drawLine(xHi, 0, xHi, hSpec);
+        p.drawLine(xLo, 1, xHi, 1);
+        p.setPen(QColor(140, 235, 160, 200));
+        p.drawText(QRect(xLo + 3, 3, std::max(10, xHi - xLo - 5), 13),
+                   Qt::AlignLeft | Qt::AlignTop, z.label);
+    }
 }
 
 void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
@@ -657,6 +699,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // Frequency gridlines and the (draggable) dB scale, over the fill.
     drawFreqGrid(p, hSpec);
     drawDbScale(p, hSpec);
+    drawBandZones(p, hSpec);
 
     QPainterPath tracePath;
     if (!colT.empty()) {
@@ -674,15 +717,20 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     p.drawLine(xLo, 0, xLo, height());
     p.drawLine(xHi, 0, xHi, height());
 
-    // Manual-notch marker: orange band, full height, over the passband tint.
+    // Manual-notch / SAF marker over the passband tint, full height. Orange =
+    // notch (rejecting that band), green = SAF (peaking it — same engine).
     if (notchOn_) {
+        const QColor fill = notchPeak_ ? QColor(60, 200, 110, 70)
+                                       : QColor(255, 140, 0, 70);
+        const QColor line = notchPeak_ ? QColor(80, 225, 130)
+                                       : QColor(255, 160, 40);
         const int xnLo = hzToX(notchRfHz_ - notchWidthHz_ / 2);
         const int xnHi = hzToX(notchRfHz_ + notchWidthHz_ / 2);
-        p.fillRect(QRect(QPoint(xnLo, 0), QPoint(xnHi, height())), QColor(255, 140, 0, 70));
-        p.setPen(QPen(QColor(255, 160, 40), 1));
+        p.fillRect(QRect(QPoint(xnLo, 0), QPoint(xnHi, height())), fill);
+        p.setPen(QPen(line, 1));
         const int xnC = hzToX(notchRfHz_);
         p.drawLine(xnC, 0, xnC, height());
-        p.drawText(xnC + 3, hSpec - 6, "N");
+        p.drawText(xnC + 3, hSpec - 6, notchPeak_ ? "SAF" : "N");
     }
 
     // Frequency scale band on the divider (after the tints, so it stays clean),
@@ -716,7 +764,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.setPen(aCol);
         p.drawLine(width() / 2, 0, width() / 2, height());
         flag(width() / 2, aText, aCol);
-        if (vfoBHz_ && centerHz_) {                // VFO B, if inside the view
+        if (vfoBVisible_ && vfoBHz_ && centerHz_) { // VFO B, if inside the view
             const qint64 off = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
             const int xb = hzToX(static_cast<int>(off));
             if (std::llabs(off) < viewSpanHz_ / 2 && xb >= 0 && xb <= width()) {
@@ -867,8 +915,35 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         emit passbandEditBegan(pbLoHz_, pbHiHz_);   // consumer anchors radio state
         return;
     }
+    // VFO B filter edges: same gesture language as A's (plain outer edge =
+    // width, plain zero-beat edge = cut, Shift = explicit cut) driving the
+    // sub RX filter. Checked before the B body grab so the edges win.
+    if (vfoBVisible_ && vfoBHz_ && centerHz_) {
+        const int bOff = static_cast<int>(static_cast<qint64>(vfoBHz_)
+                                          - static_cast<qint64>(centerHz_));
+        bool onBLo = std::abs(x - hzToX(bOff + vfoBLo_)) <= edgeTol;
+        bool onBHi = std::abs(x - hzToX(bOff + vfoBHi_)) <= edgeTol;
+        if (onBLo && onBHi) {                       // narrow filter: closer wins
+            if (std::abs(x - hzToX(bOff + vfoBLo_))
+                <= std::abs(x - hzToX(bOff + vfoBHi_))) onBHi = false;
+            else                                        onBLo = false;
+        }
+        if (onBLo || onBHi) {
+            if (e->modifiers() & Qt::ShiftModifier)
+                drag_ = onBLo ? Drag::BLoEdge : Drag::BHiEdge;
+            else if (bwAnchor_ < 0 && onBLo) drag_ = Drag::BLoEdge;
+            else if (bwAnchor_ > 0 && onBHi) drag_ = Drag::BHiEdge;
+            else                             drag_ = Drag::BSymEdge;
+            wheelVfo_ = 'B';
+            dragStartBLo_ = vfoBLo_;
+            dragStartBHi_ = vfoBHi_;
+            emit vfoBEditBegan(vfoBLo_, vfoBHi_);   // consumer anchors sub state
+            return;
+        }
+    }
     // Grab VFO B (line or its passband tint) to slide it — split TX placement.
     if (overVfoB(x)) {
+        if (lockB_) return;                         // locked: not a tune target
         drag_ = Drag::VfoB;
         wheelVfo_ = 'B';
         dragStartBOff_ = static_cast<qint64>(vfoBHz_) - static_cast<qint64>(centerHz_);
@@ -876,6 +951,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     }
     // Grab the A dial line to drag-tune the main VFO.
     if (std::abs(x - width() / 2) <= 4 && centerHz_) {
+        if (lockA_) return;
         drag_ = Drag::VfoA;
         wheelVfo_ = 'A';
         dragStartCenter_ = centerHz_;
@@ -884,23 +960,30 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     if (x > hzToX(pbLoHz_) && x < hzToX(pbHiHz_)) {
         // Inside the passband: dragging moves the VFO itself (drag-to-tune);
         // Ctrl+drag slides the PBT instead. Released without moving it's a
-        // click-to-tune. Decided on first move.
-        drag_ = Drag::BodyPending;
+        // click-to-tune. Decided on first move. A locked A still allows the
+        // Ctrl+PBT slide — the lock protects the dial, not the filter.
         bodyPbt_ = e->modifiers() & Qt::ControlModifier;
+        if (lockA_ && !bodyPbt_) return;
+        drag_ = Drag::BodyPending;
         dragStartCenter_ = centerHz_;
         return;
     }
     drag_ = Drag::None;
     wheelVfo_ = 'A';
+    if (lockA_) return;                             // locked: no click-to-tune
     emit tuneRequested(xToHz(x));                   // click-to-tune
 }
 
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     if (drag_ == Drag::None) {
-        // Hover feedback: vertical-drag targets, and VFO B's horizontal grab.
+        // Hover feedback: vertical-drag targets, then every horizontal grab —
+        // VFO B (line/passband), the A dial line, and BOTH of A's filter
+        // edges (the outer edge used to miss the double arrow).
         const int hx = e->pos().x(), hy = e->pos().y();
+        const bool onAEdge = std::abs(hx - hzToX(pbLoHz_)) <= 6
+                          || std::abs(hx - hzToX(pbHiHz_)) <= 6;
         if (inScaleBand(hy) || inDbAxis(hx, hy)) setCursor(Qt::SizeVerCursor);
-        else if (overVfoB(hx)
+        else if (overVfoB(hx) || onAEdge
                  || std::abs(hx - width() / 2) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();
         return;
@@ -942,6 +1025,34 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         vfoBHz_ = static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
         update();
         emit vfoBDragged(static_cast<int>(off));    // consumer streams *BF
+        return;
+    }
+    if (drag_ == Drag::BSymEdge || drag_ == Drag::BLoEdge || drag_ == Drag::BHiEdge) {
+        // B's filter edges, in offsets from B's own dial — same math as A's
+        // edges including the SSB zero-beat anchor.
+        const int bOff = static_cast<int>(static_cast<qint64>(vfoBHz_)
+                                          - static_cast<qint64>(centerHz_));
+        const int hzB = hz - bOff;
+        if (drag_ == Drag::BSymEdge) {
+            if (bwAnchor_ < 0) {
+                vfoBLo_ = dragStartBLo_;
+                vfoBHi_ = std::max(hzB, dragStartBLo_ + 50);
+            } else if (bwAnchor_ > 0) {
+                vfoBHi_ = dragStartBHi_;
+                vfoBLo_ = std::min(hzB, dragStartBHi_ - 50);
+            } else {
+                const int center = (dragStartBLo_ + dragStartBHi_) / 2;
+                const int half = std::max(25, std::abs(hzB - center));
+                vfoBLo_ = center - half;
+                vfoBHi_ = center + half;
+            }
+        } else if (drag_ == Drag::BLoEdge) {
+            vfoBLo_ = std::min(hzB, vfoBHi_ - 50);
+        } else {
+            vfoBHi_ = std::max(hzB, vfoBLo_ + 50);
+        }
+        update();
+        emit vfoBPassbandChanged(vfoBLo_, vfoBHi_);
         return;
     }
     if (drag_ == Drag::VfoA) {

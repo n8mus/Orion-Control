@@ -83,8 +83,15 @@ QByteArray RigctldServer::handleLine(const QByteArray& line) {
             return "RPRT 0\n";
         case 'v':                                   // get current VFO
             return "VFOA\n";
-        case 't':                                   // get PTT (TODO: real state)
-            return "0\n";
+        case 't':                                   // get PTT (cache tracks T/R
+            return ptt_ ? "1\n" : "0\n";            // via the metering replies)
+        case 'T':                                   // set PTT
+            if (tok.size() >= 2) {
+                const bool on = tok[1].toInt() != 0;
+                ptt_ = on;                          // optimistic; polls confirm
+                emit pttRequested(on);
+            }
+            return "RPRT 0\n";
         default: break;
     }
 

@@ -27,6 +27,7 @@ add_executable(tentec-console
   src/ui/SMeterWidget.cpp       src/ui/SMeterWidget.h
   src/ui/ControlPanel.cpp       src/ui/ControlPanel.h
   src/ui/FrequencyDisplay.cpp   src/ui/FrequencyDisplay.h
+  src/ui/TxBar.cpp              src/ui/TxBar.h
   src/dsp/Fft.cpp               src/dsp/Fft.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h

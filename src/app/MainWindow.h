@@ -9,6 +9,7 @@ class QTimer;
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
 #include "ui/FrequencyDisplay.h"
+#include "ui/TxBar.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
 #include "dsp/SpectrumComputer.h"
@@ -41,8 +42,10 @@ private:
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;
     FrequencyDisplay* freqDisp_ = nullptr;
+    TxBar*            txBar_ = nullptr;
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)
+    QElapsedTimer sinceEnforce_;               // rate-limit amp drive-limit corrections
     uint64_t centerHz_ = 7150000;              // open on 40 m where the Orion lives
     bool awaitingFreq_ = false;                // one ?AF in flight at a time
     QElapsedTimer freqQueryAge_;

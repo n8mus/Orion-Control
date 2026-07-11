@@ -122,6 +122,22 @@ void TenTecOrion::setSaf(Rx rx, bool on) {
     send(QByteArray("*R") + rxLetter(rx) + "NS" + (on ? "1" : "0"));
 }
 
+void TenTecOrion::setPtt(bool on)        { send(on ? "*TK" : "*TU"); }
+void TenTecOrion::setTxPower(int pct)    { send("*TP" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setMicGain(int pct)    { send("*TM" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setMonitor(int pct)    { send("*TO" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setAfVolume(int pct)   { send("*UM" + QByteArray::number(clampi(pct, 0, 100))); }
+void TenTecOrion::setTunerEnabled(bool on) { send(on ? "*TT1" : "*TT0"); }
+void TenTecOrion::startTune()            { send("*TTT"); }
+
+void TenTecOrion::queryTxPower()         { send("?TP"); }
+void TenTecOrion::queryTuner()           { send("?TT"); }
+void TenTecOrion::queryTxAudio() {
+    send("?TM");
+    send("?TO");
+    send("?UM");                                   // volume query is speculative
+}
+
 void TenTecOrion::querySMeter()          { send("?S"); }
 void TenTecOrion::queryAgc(Rx rx)        { send(QByteArray("?R") + rxLetter(rx) + "A"); }
 void TenTecOrion::queryRfGain(Rx rx)     { send(QByteArray("?R") + rxLetter(rx) + "G"); }
@@ -214,6 +230,23 @@ void TenTecOrion::onLine(const QByteArray& line) {
                                      swr);
             }
         }
+        return;
+    }
+    if (line[1] == 'T' && line.size() >= 4) {         // transmitter group @T<P/M/O/T>
+        if (line[2] == 'P' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit txPowerReported(static_cast<int>(v));
+        else if (line[2] == 'M' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit micGainReported(static_cast<int>(v));
+        else if (line[2] == 'O' && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit monitorReported(static_cast<int>(v));
+        else if (line[2] == 'T' && (line[3] == '0' || line[3] == '1'))
+            emit tunerReported(line[3] == '1');
+        return;
+    }
+    if (line[1] == 'U' && line.size() >= 4) {         // audio group @U<M/B><val>
+        if ((line[2] == 'M' || line[2] == 'B')
+            && parseLeadingInt(line.mid(3), v) && v >= 0 && v <= 100)
+            emit afVolumeReported(static_cast<int>(v));
         return;
     }
     if (line[1] == 'R' && line.size() >= 4) {         // @R[M/S][F/P/M/A/G/T]<val>

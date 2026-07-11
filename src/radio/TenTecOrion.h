@@ -47,6 +47,15 @@ public:
     void setNotchEngaged(Rx rx, bool on);         // *R<M/S>NM<0/1>
     void setSaf(Rx rx, bool on);                  // *R<M/S>NS<0/1>
 
+    // Transmitter / audio group.
+    void setPtt(bool on);                         // *TK key / *TU unkey
+    void setTxPower(int pct);                     // *TP<0-100> (percent of 100 W)
+    void setMicGain(int pct);                     // *TM<0-100>
+    void setMonitor(int pct);                     // *TO<0-100> (TX audio monitor)
+    void setAfVolume(int pct);                    // *UM<0-100> (main RX volume)
+    void setTunerEnabled(bool on);                // *TT<0/1> (internal tuner)
+    void startTune();                             // *TTT (tune cycle)
+
     // Queries (responses arrive asynchronously via the signals below).
     void queryFrequency(Rx rx);
     void queryFilter(Rx rx);
@@ -57,6 +66,9 @@ public:
     void queryAttenuator(Rx rx);                  // ?R<M/S>T
     void queryPreamp(Rx rx);                      // ?R<M/S>E
     void queryNotch(Rx rx);                       // ?R.NC / ?R.NW / ?R.NM (undocumented)
+    void queryTxPower();                          // ?TP
+    void queryTxAudio();                          // ?TM / ?TO / ?UM (volume query speculative)
+    void queryTuner();                            // ?TT
     // Speculative: NR/NB/AN level queries appear in no document, but neither
     // did the notch ones and the radio answered those. Unanswered queries are
     // harmless; if replies come back the *Reported signals below fire.
@@ -81,6 +93,11 @@ signals:
     void nbReported(Rx rx, int level);
     void autoNotchReported(Rx rx, int level);
     void hardwareNbReported(Rx rx, bool on);
+    void txPowerReported(int pct);
+    void micGainReported(int pct);
+    void monitorReported(int pct);
+    void afVolumeReported(int pct);
+    void tunerReported(bool on);
     void rawLine(const QByteArray& line);
 
 private slots:

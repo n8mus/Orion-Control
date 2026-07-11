@@ -94,6 +94,13 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             });
     left->addWidget(topStrip);
     left->addWidget(pan_, 1);
+    txBar_ = new TxBar(this);
+    {
+        QSettings s;
+        txBar_->setAmpMode(s.value("amp/enabled", false).toBool(),
+                           s.value("amp/limit", 40).toInt());
+    }
+    left->addWidget(txBar_);
     lay->addLayout(left, 1);
     lay->addWidget(panel_);
     setCentralWidget(central);
@@ -197,11 +204,77 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             if (++n % 4 == 1) std::fprintf(stderr, "[radio] S-meter main raw %d\n", mainRaw);
         }
         smeter_->setRawLevel(mainRaw);
+        rigctld_.cachePtt(false);                   // radio answered in receive
     });
     connect(&radio_, &TenTecOrion::txMeterReported, this,
             [this](double fwd, double ref, double swr) {
                 smeter_->setTxLevel(fwd, ref, swr);
+                rigctld_.cachePtt(true);            // radio is provably keyed
+                // Amp protection, fast path: actual forward power well above
+                // the drive limit while keyed -> command the power back down.
+                if (txBar_->ampMode() && fwd > txBar_->ampLimit() * 1.15
+                    && (!sinceEnforce_.isValid() || sinceEnforce_.elapsed() > 1000)) {
+                    sinceEnforce_.restart();
+                    radio_.setTxPower(txBar_->ampLimit());
+                    txBar_->showTxPower(txBar_->ampLimit());
+                    statusBar()->showMessage(
+                        QString("AMP LIMIT: %1 W measured, drive forced to %2")
+                            .arg(fwd, 0, 'f', 0).arg(txBar_->ampLimit()));
+                }
             });
+
+    // TX bar <-> radio.
+    connect(txBar_, &TxBar::txPowerChanged, this,
+            [this](int p) { radio_.setTxPower(p); });
+    connect(txBar_, &TxBar::micGainChanged, this,
+            [this](int p) { radio_.setMicGain(p); });
+    connect(txBar_, &TxBar::monitorChanged, this,
+            [this](int p) { radio_.setMonitor(p); });
+    connect(txBar_, &TxBar::afVolumeChanged, this,
+            [this](int p) { radio_.setAfVolume(p); });
+    connect(txBar_, &TxBar::tunerEnableToggled, this,
+            [this](bool on) { radio_.setTunerEnabled(on); });
+    connect(txBar_, &TxBar::tuneRequested, this, [this] {
+        radio_.startTune();
+        statusBar()->showMessage("tuner: tune cycle started");
+    });
+    connect(txBar_, &TxBar::ampModeChanged, this, [this](bool on, int limit) {
+        QSettings s;
+        s.setValue("amp/enabled", on);
+        s.setValue("amp/limit", limit);
+        if (on) radio_.queryTxPower();              // check the current drive now
+        statusBar()->showMessage(on ? QString("amp mode: drive capped at %1 W").arg(limit)
+                                    : "amp mode off");
+    });
+    connect(&radio_, &TenTecOrion::txPowerReported, this, [this](int p) {
+        // Amp protection, slow path: the periodic ?TP poll catches a front-
+        // panel PWR change above the limit even when not transmitting.
+        if (txBar_->ampMode() && p > txBar_->ampLimit()) {
+            if (!sinceEnforce_.isValid() || sinceEnforce_.elapsed() > 1000) {
+                sinceEnforce_.restart();
+                radio_.setTxPower(txBar_->ampLimit());
+                statusBar()->showMessage(
+                    QString("AMP LIMIT: drive %1 forced back to %2 W")
+                        .arg(p).arg(txBar_->ampLimit()));
+            }
+            txBar_->showTxPower(txBar_->ampLimit());
+            return;
+        }
+        txBar_->showTxPower(p);
+    });
+    connect(&radio_, &TenTecOrion::micGainReported, this,
+            [this](int p) { txBar_->showMicGain(p); });
+    connect(&radio_, &TenTecOrion::monitorReported, this,
+            [this](int p) { txBar_->showMonitor(p); });
+    connect(&radio_, &TenTecOrion::afVolumeReported, this,
+            [this](int p) { txBar_->showAfVolume(p); });
+    connect(&radio_, &TenTecOrion::tunerReported, this,
+            [this](bool on) { txBar_->showTuner(on); });
+
+    // rigctld PTT (WSJT-X / fldigi keying through :4532). The 't' reply
+    // tracks the radio's true T/R state via the metering replies.
+    connect(&rigctld_, &RigctldServer::pttRequested, this,
+            [this](bool on) { radio_.setPtt(on); });
     connect(&radio_, &TenTecOrion::agcReported, this, [this](Rx rx, char a) {
         if (rx == Rx::Main) panel_->showAgc(a);
     });
@@ -369,6 +442,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         radio_.queryPreamp(Rx::Main);
         radio_.queryDspLevels(Rx::Main);            // syncs NR/NB/AN/hw-NB sliders
         radio_.queryNotch(Rx::Main);                // syncs notch center/width/engage
+        radio_.queryTxPower();                      // syncs the TX bar
+        radio_.queryTxAudio();
+        radio_.queryTuner();
         awaitingFreq_ = true;
         freqQueryAge_.start();
         auto* poll = new QTimer(this);
@@ -383,11 +459,12 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
             const int phase = pollTick_ % 5;
             if (phase == 1 || phase == 3) {
                 if (pollTick_ % 25 == 3) {
-                    switch ((pollTick_ / 25) % 5) {
+                    switch ((pollTick_ / 25) % 6) {
                         case 0:  radio_.queryAgc(Rx::Main);        break;
                         case 1:  radio_.queryRfGain(Rx::Main);     break;
                         case 2:  radio_.queryAttenuator(Rx::Main); break;
                         case 3:  radio_.queryPreamp(Rx::Main);     break;
+                        case 4:  radio_.queryTxPower();            break;
                         default: radio_.queryNotch(Rx::Main);      break;
                     }
                 } else {

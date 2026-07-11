@@ -23,14 +23,16 @@ public:
     quint16 port() const { return server_.serverPort(); }
 
 public slots:
-    // Fed from the radio driver so `f`/`m` queries answer from cached state.
+    // Fed from the radio driver so `f`/`m`/`t` queries answer from cached state.
     void cacheFrequency(uint64_t hz) { freqHz_ = hz; }
     void cacheBandwidth(int bwHz)    { bwHz_ = bwHz; }
     void cacheMode(Mode m)           { mode_ = m; }
+    void cachePtt(bool on)           { ptt_ = on; }
 
 signals:
     void clientConnected(const QString& peer);
     void commandReceived(const QString& line);
+    void pttRequested(bool on);       // client sent 'T 1' / 'T 0'
 
 private slots:
     void onNewConnection();
@@ -44,6 +46,7 @@ private:
     uint64_t freqHz_ = 14000000;
     int bwHz_ = 2400;
     Mode mode_ = Mode::USB;
+    bool ptt_ = false;
 };
 
 } // namespace ttc

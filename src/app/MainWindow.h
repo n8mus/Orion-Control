@@ -48,6 +48,7 @@ private:
     TxBar*            txBar_ = nullptr;
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)
+    int lastBandPress_ = -1;                   // band button last pressed (for cycling)
     QElapsedTimer sinceEnforce_;               // rate-limit amp drive-limit corrections
 
     // Manual tune carrier (TUNE with the internal tuner disabled).

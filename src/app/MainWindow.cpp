@@ -397,12 +397,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         if (idx < 0 || idx >= kBandCount) return;
         QSettings s;
         int reg;
-        if (idx == curBand_) {
-            reg = (curReg_ + 1) % kStackCount;      // same band: next register
+        // Cycle A->B->C->D on repeated presses of the SAME button. Keyed off the
+        // last button pressed, not the radio's current band — an external client
+        // (WSJT-X/cqrlog) moving the VFO must not break the cycle.
+        if (idx == lastBandPress_) {
+            reg = (curReg_ + 1) % kStackCount;      // same button again: next reg
         } else {
             reg = s.value(QString("band/%1/reg").arg(kBands[idx].label), 0).toInt();
             reg = std::clamp(reg, 0, kStackCount - 1);
         }
+        lastBandPress_ = idx;
         saveBandMemory();                           // stash the outgoing register
         recallStack(idx, reg);
     });
@@ -687,6 +691,10 @@ void MainWindow::setDigitalMode(bool on) {
 
 void MainWindow::saveBandMemory() {
     if (curBand_ < 0 || curBand_ >= kBandCount) return;
+    // Only stamp the register if the current frequency actually belongs to this
+    // band — otherwise a client (WSJT-X/cqrlog) that moved the VFO elsewhere
+    // would corrupt the outgoing register with an unrelated frequency.
+    if (centerHz_ < kBands[curBand_].loHz || centerHz_ > kBands[curBand_].hiHz) return;
     QSettings s;
     const QString key = QString("band/%1/%2/")
                             .arg(kBands[curBand_].label).arg(kStackNames[curReg_]);

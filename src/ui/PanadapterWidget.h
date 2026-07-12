@@ -35,6 +35,7 @@ struct DisplaySettings {
     int   traceColor = 0;       // 0 soft, 1 white, 2 green, 3 yellow, 4 cyan
     bool  bigVfo     = false;   // ~25 % larger VFO digits (applied by owner)
     bool  showClock  = true;    // UTC/local clock (radio panel bottom)
+    bool  cwZap      = true;    // CW click snaps to the carrier peak (owner)
 };
 
 // A DX-cluster spot to mark on the display (absolute frequency). atSecs
@@ -125,7 +126,9 @@ public:
     static QStringList backgroundNames();
 
 signals:
-    void tuneRequested(int offsetHz);              // click-to-tune (offset from center)
+    // Click-to-tune (offset from center). exact = Shift held: tune the raw
+    // clicked frequency, bypassing owner-side snapping (CW zap).
+    void tuneRequested(int offsetHz, bool exact = false);
     void tuneStepRequested(int steps, bool fine);  // wheel tune A; fine = Shift held
     void vfoBStepRequested(int steps, bool fine);  // wheel tune B (B touched last)
     void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state

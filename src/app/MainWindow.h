@@ -3,6 +3,7 @@
 #include <QMainWindow>
 #include <QElapsedTimer>
 #include <cmath>
+#include <vector>
 class QTimer;
 class QSlider;
 class QLabel;
@@ -36,10 +37,14 @@ public:
     ~MainWindow() override;
 
 private slots:
-    void onTuneRequested(int offsetHz);
+    void onTuneRequested(int offsetHz, bool exact);
     void onPassbandChanged(int loHz, int hiHz);
 
 private:
+    int  snapToCwPeak(int offsetHz, int windowHz) const; // CW zap peak finder
+    void zeroBeat();                   // Z: zap strongest signal in the passband
+    void zeroBeatPass();               // refinement passes (fresh FFT each time)
+    void flipCwSideband();             // X: CW<->CWR aural zero-beat check
     void refreshPassbandOverlay();     // radio state -> mode-sided on-screen passband
     void refreshNotchOverlay();        // radio notch (audio Hz) -> RF-offset marker
     void syncNotchUi();                // notch/SAF state -> marker + sidebar buttons
@@ -184,6 +189,14 @@ private:
     double sdrCalDb_      = 0.0;
     double lastRadioDbS9_ = NAN;               // radio's latest RX reading
     double lastSdrMeasDb_ = NAN;               // SDR measurement, pre-offset
+    // CW zap: click in CW snaps the dial onto the true carrier peak found in
+    // the averaged spectrum (both Ten-Tecs read the carrier on the dial in
+    // CW, so this alone puts the note on the sidetone pitch).
+    std::vector<float> lastSpectrum_;          // latest averaged FFT frame
+    int  sdrSpanHz_ = 0;                       // capture span of that frame
+    bool cwZap_     = true;                    // DISPLAY "CW zap" checkbox
+    int      zbPassesLeft_ = 0;                // 0-beat refinement passes pending
+    uint64_t zbExpectHz_   = 0;                // abort if anything else retunes
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

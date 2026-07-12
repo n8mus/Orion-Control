@@ -18,8 +18,11 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QApplication>
 #include <QInputDialog>
+#include <QLineEdit>
 #include <QSet>
+#include <QShortcut>
 #include <QStandardPaths>
 #include "ui/DisplayPanel.h"
 #include "net/SpotClient.h"
@@ -393,6 +396,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/trace",      d.traceColor);
         s.setValue("display/bigVfo",     d.bigVfo);
         s.setValue("display/clock",      d.showClock);
+        s.setValue("display/cwZap",      d.cwZap);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
     // Editable in the DISPLAY panel (CALL field), persisted immediately.
@@ -461,6 +465,8 @@ MainWindow::MainWindow(QWidget* parent)
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();
         d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
+        d.cwZap      = s.value("display/cwZap",      d.cwZap).toBool();
+        cwZap_       = d.cwZap;
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
         freqDisp_->setLargeDigits(d.bigVfo);
@@ -481,6 +487,7 @@ MainWindow::MainWindow(QWidget* parent)
                 freqDispB_->setLargeDigits(d.bigVfo);
                 panel_->setClockVisible(d.showClock);
                 solarClient_.setEnabled(d.showSolar);
+                cwZap_ = d.cwZap;
                 saveDisplay(d);
             });
     // In-widget edits (dB-axis drag/wheel, divider drag) flow back the other
@@ -924,7 +931,8 @@ MainWindow::MainWindow(QWidget* parent)
     };
     connect(pan_, &PanadapterWidget::tuneStepRequested, this,
             [this, wheelUnit](int steps, bool fine) {
-        onTuneRequested(steps * wheelUnit(fine));
+        // exact: wheel steps are deliberate nudges — never zap-snap them.
+        onTuneRequested(steps * wheelUnit(fine), true);
     });
     connect(pan_, &PanadapterWidget::vfoBStepRequested, this,
             [this, wheelUnit](int steps, bool fine) {
@@ -1779,6 +1787,20 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             });
 
+    // CW keys — Z: 0-beat the strongest signal in the passband; X: CW⇄CWR
+    // flip (same note pitch both ways = exactly zero-beat, works by ear).
+    // Guarded so typing a Z or X into the CALL/GRID fields never fires them.
+    const auto keyGuard = [](auto fn) {
+        return [fn] {
+            if (qobject_cast<QLineEdit*>(QApplication::focusWidget())) return;
+            fn();
+        };
+    };
+    connect(new QShortcut(QKeySequence(Qt::Key_Z), this), &QShortcut::activated,
+            this, keyGuard([this] { zeroBeat(); }));
+    connect(new QShortcut(QKeySequence(Qt::Key_X), this), &QShortcut::activated,
+            this, keyGuard([this] { flipCwSideband(); }));
+
     // Start the interop seam. Clients (cqrlog/WSJT-X/fldigi/GridTracker) connect
     // here. TTC_RIGCTLD_PORT overrides for side-by-side protocol testing.
     const char* rcpEnv = std::getenv("TTC_RIGCTLD_PORT");
@@ -1800,6 +1822,7 @@ MainWindow::MainWindow(QWidget* parent)
     constexpr int    kDecim      = 4;                 // 500 kHz capture
     const int spanHz = static_cast<int>(kSampleRate / kDecim);
     pan_->setSpanHz(spanHz);
+    sdrSpanHz_ = spanHz;                              // CW zap peak finder
     pan_->setDialOffsetHz(kLoOffsetHz);
     spectrum_.setOutput([this](const std::vector<float>& db) {
         if (std::getenv("TTC_SELFTEST")) {          // headless evidence the FFT is live
@@ -1844,6 +1867,7 @@ MainWindow::MainWindow(QWidget* parent)
                 + kRsp2LnaDb[std::clamp(sdr_.lnaState(), 0, 8)];
             lastSdrMeasDb_ = meas;
             smeter_->setSdrLevel(meas + sdrCalDb_);
+            lastSpectrum_ = std::move(copy);          // CW zap reads this
         }, Qt::QueuedConnection);
     });
     sdr_.setIqCallback([this](const IqBlock& iq) { spectrum_.addSamples(iq); });
@@ -1999,8 +2023,118 @@ MainWindow::~MainWindow() {
 #endif
 }
 
-void MainWindow::onTuneRequested(int offsetHz) {
+void MainWindow::onTuneRequested(int offsetHz, bool exact) {
+    // CW zap: a click is ~a pixel wide but the ear wants single-digit Hz.
+    // Snap to the true carrier near the click; Shift (exact) bypasses.
+    if (!exact && cwZap_
+        && (rigMode_ == Mode::CWU || rigMode_ == Mode::CWL)) {
+        const int snapped = snapToCwPeak(offsetHz, 150);
+        if (snapped != offsetHz) {
+            statusBar()->showMessage(
+                QString("CW zap: snapped %1%2 Hz onto the carrier")
+                    .arg(snapped > offsetHz ? "+" : "")
+                    .arg(snapped - offsetHz), 4000);
+            offsetHz = snapped;
+        }
+    }
     tuneAbsolute(centerHz_ + offsetHz);
+}
+
+// 0-BEAT (Z key): zap the strongest signal already inside the passband —
+// PowerSDR's zero-beat button, fused with the same peak finder the click
+// uses. One press runs up to three measure-tune-settle passes: the FFT is
+// temporally averaged and the SDR LO moves with each correction, so the
+// spectrum right after a retune is still smeared with pre-tune energy —
+// a single measurement lands close, the follow-ups (on fresh frames ~700 ms
+// apart) mop up the residual. Converges early when within a couple Hz;
+// aborts if anything else retunes mid-sequence.
+void MainWindow::zeroBeat() {
+    if (rigMode_ != Mode::CWU && rigMode_ != Mode::CWL) {
+        statusBar()->showMessage("0-beat (Z) works in CW modes", 3000);
+        return;
+    }
+    int lo = 0, hi = 0;
+    edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+    const int peak = snapToCwPeak((lo + hi) / 2, (hi - lo) / 2);
+    tuneAbsolute(centerHz_ + peak);
+    statusBar()->showMessage(
+        QString("0-beat: %1%2 Hz onto the carrier, refining…")
+            .arg(peak > 0 ? "+" : "").arg(peak), 4000);
+    zbPassesLeft_ = 2;
+    zbExpectHz_   = centerHz_;
+    QTimer::singleShot(700, this, [this] { zeroBeatPass(); });
+}
+
+void MainWindow::zeroBeatPass() {
+    if (zbPassesLeft_ <= 0) return;
+    // User (or a spot click) moved the dial, or mode left CW: stand down.
+    if (centerHz_ != zbExpectHz_
+        || (rigMode_ != Mode::CWU && rigMode_ != Mode::CWL)) {
+        zbPassesLeft_ = 0;
+        return;
+    }
+    --zbPassesLeft_;
+    // The carrier is near the dial now — a tight window so a louder
+    // neighbor can't steal the refinement.
+    const int err = snapToCwPeak(0, 75);
+    if (std::abs(err) < 3) {                    // close enough to be inaudible
+        zbPassesLeft_ = 0;
+        statusBar()->showMessage("0-beat locked", 3000);
+        return;
+    }
+    tuneAbsolute(centerHz_ + err);
+    zbExpectHz_ = centerHz_;
+    statusBar()->showMessage(
+        QString("0-beat refine: %1%2 Hz%3").arg(err > 0 ? "+" : "").arg(err)
+            .arg(zbPassesLeft_ > 0 ? "…" : " — done"), 3000);
+    if (zbPassesLeft_ > 0)
+        QTimer::singleShot(700, this, [this] { zeroBeatPass(); });
+}
+
+// CW⇄CWR flip (X key): the aural zero-beat check — the BFO mirrors around
+// the dial, so if the note's pitch doesn't change across the flip, the dial
+// is exactly on the carrier. Works by ear with no spectrum at all; the
+// verifier for signals too weak for the FFT peak to be trusted.
+void MainWindow::flipCwSideband() {
+    if (rigMode_ == Mode::CWU || rigMode_ == Mode::CWL) {
+        const Mode other = rigMode_ == Mode::CWU ? Mode::CWL : Mode::CWU;
+        applyMode(other);
+        panel_->showMode(other);
+        statusBar()->showMessage(
+            QString("CW flip -> %1 (same pitch both ways = zero-beat)")
+                .arg(other == Mode::CWU ? "CWU" : "CWL"), 4000);
+    } else {
+        statusBar()->showMessage("CW/CWR flip (X) works in CW modes", 3000);
+    }
+}
+
+// Find the true carrier near offsetHz (relative to the dial): strongest bin
+// within ±windowHz in the averaged display spectrum (averaging matters — it
+// steadies the peak against keying and QSB, the same reason PowerSDR's
+// zero-beat reads its averaged buffer), refined to sub-bin accuracy with a
+// parabola through the three bins at the peak (~±5 Hz at 61 Hz bins). Both
+// Ten-Tecs read the carrier on the dial in CW — dial onto the carrier means
+// the note sits exactly on the sidetone/SPOT pitch, no offset arithmetic.
+int MainWindow::snapToCwPeak(int offsetHz, int windowHz) const {
+    const int n = static_cast<int>(lastSpectrum_.size());
+    if (n < 8 || sdrSpanHz_ <= 0) return offsetHz;      // no SDR: tune as clicked
+    const double binHz = double(sdrSpanHz_) / n;
+    const auto binOf = [&](int off) {
+        return n / 2 + static_cast<int>(std::lround((off - kLoOffsetHz) / binHz));
+    };
+    const int i0 = std::clamp(binOf(offsetHz - windowHz), 1, n - 2);
+    const int i1 = std::clamp(binOf(offsetHz + windowHz), i0, n - 2);
+    int ip = i0;
+    for (int i = i0; i <= i1; ++i)
+        if (lastSpectrum_[i] > lastSpectrum_[ip]) ip = i;
+    const double ym = lastSpectrum_[ip - 1], y0 = lastSpectrum_[ip],
+                 yp = lastSpectrum_[ip + 1];
+    const double den = ym - 2.0 * y0 + yp;
+    const double d = std::abs(den) > 1e-9
+        ? std::clamp(0.5 * (ym - yp) / den, -0.5, 0.5) : 0.0;
+    // Bin i sits at (i - n/2)*binHz from the SDR's LO, which is kLoOffsetHz
+    // above the dial — same mapping as binOf, inverted.
+    return static_cast<int>(std::lround((ip - n / 2 + d) * binHz)) + kLoOffsetHz;
 }
 
 void MainWindow::tuneAbsolute(uint64_t f) {

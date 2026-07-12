@@ -1398,7 +1398,8 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     drag_ = Drag::None;
     wheelVfo_ = 'A';
     if (lockA_) return;                             // locked: no click-to-tune
-    emit tuneRequested(xToHz(x));                   // click-to-tune
+    emit tuneRequested(xToHz(x),                    // click-to-tune
+                       e->modifiers().testFlag(Qt::ShiftModifier));
 }
 
 void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
@@ -1567,7 +1568,8 @@ void PanadapterWidget::mouseReleaseEvent(QMouseEvent* e) {
     // A press inside the passband that never moved is a click-to-tune.
     if (drag_ == Drag::BodyPending) {
         wheelVfo_ = 'A';
-        emit tuneRequested(xToHz(e->pos().x()));
+        emit tuneRequested(xToHz(e->pos().x()),
+                           e->modifiers().testFlag(Qt::ShiftModifier));
     }
     drag_ = Drag::None;
 }

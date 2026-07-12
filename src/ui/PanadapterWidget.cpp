@@ -115,7 +115,8 @@ QImage renderBlueRays(int w, int h) {
 // the map fills only the upper band of the spectrum area and fades to dark
 // where the trace floor lives. dayPct/nightPct = user brightness (percent).
 QImage renderWorldMap(int w, int h, const QImage& earth,
-                      int dayPct, int nightPct) {
+                      int dayPct, int nightPct, bool drawSun,
+                      int sfi, int aIdx, double kIdx) {
     if (earth.isNull()) return renderBlueRays(w, h);  // basemap missing
     const int mapH = std::max(1, static_cast<int>(h * 0.84));
     QImage img = earth.scaled(w, mapH, Qt::IgnoreAspectRatio,
@@ -165,6 +166,44 @@ QImage renderWorldMap(int w, int h, const QImage& earth,
                            std::min(255, (qBlue(c)  * f) >> 8));
         }
     }
+    // Sun marker at the subsolar point (already computed for the grayline),
+    // with the KE9NS/Thetis-style space-weather caption beside it. Rides the
+    // same "Solar data panel" toggle as the corner readout.
+    if (drawSun) {
+        const double latDeg = decl * 180.0 / M_PI;
+        double lonDeg = (12.0 - hours) * 15.0;
+        while (lonDeg > 180.0) lonDeg -= 360.0;
+        while (lonDeg < -180.0) lonDeg += 360.0;
+        const double sx = (lonDeg + 180.0) / 360.0 * w;
+        const double sy = (90.0 - latDeg) / 180.0 * mapH;
+        QPainter sp(&img);
+        sp.setRenderHint(QPainter::Antialiasing);
+        QRadialGradient glow(QPointF(sx, sy), 24);
+        glow.setColorAt(0.0, QColor(255, 170, 40, 160));
+        glow.setColorAt(1.0, QColor(255, 170, 40, 0));
+        sp.setPen(Qt::NoPen);
+        sp.setBrush(glow);
+        sp.drawEllipse(QPointF(sx, sy), 24, 24);
+        sp.setBrush(QColor(255, 176, 32));
+        sp.setPen(QPen(QColor(120, 70, 0), 1));
+        sp.drawEllipse(QPointF(sx, sy), 5, 5);
+        if (sfi > 0) {
+            QFont f = sp.font();
+            f.setPixelSize(10);
+            f.setBold(true);
+            sp.setFont(f);
+            QString cap = QString("SFI %1").arg(sfi);
+            if (aIdx >= 0) cap += QString("  A %1").arg(aIdx);
+            if (kIdx >= 0) cap += QString("  K %1").arg(kIdx, 0, 'f', 1);
+            const int tw = sp.fontMetrics().horizontalAdvance(cap);
+            double tx = sx + 12;                    // flip side near the edge
+            if (tx + tw > w - 4) tx = sx - 12 - tw;
+            sp.setPen(QColor(0, 0, 0, 190));        // shadow for readability
+            sp.drawText(QPointF(tx + 1, sy + 4 + 1), cap);
+            sp.setPen(QColor(255, 214, 90));
+            sp.drawText(QPointF(tx, sy + 4), cap);
+        }
+    }
     // Composite: map up top, dark trace floor below, soft fade between.
     QImage out(w, h, QImage::Format_RGB32);
     out.fill(QColor(12, 16, 22));
@@ -185,7 +224,8 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
         ? QDateTime::currentSecsSinceEpoch() / 60 : 0;      // grayline advances
     if (bgMode_ != ds_.background || bgW_ != w || bgH_ != h
         || bgMinute_ != minute
-        || bgDay_ != ds_.mapDay || bgNight_ != ds_.mapNight) {
+        || bgDay_ != ds_.mapDay || bgNight_ != ds_.mapNight
+        || bgSun_ != ds_.showSolar) {
         if (isMap) {
             // Pick + decode the basemap only when the source changes; the
             // custom entry re-reads its path so a new pick applies live.
@@ -201,7 +241,8 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
                 mapSrc_ = QImage(key).convertToFormat(QImage::Format_RGB32);
                 mapSrcKey_ = key;
             }
-            bgCache_ = renderWorldMap(w, h, mapSrc_, ds_.mapDay, ds_.mapNight);
+            bgCache_ = renderWorldMap(w, h, mapSrc_, ds_.mapDay, ds_.mapNight,
+                                      ds_.showSolar, solSfi_, solA_, solK_);
         } else {
             bgCache_ = renderBlueRays(w, h);
         }
@@ -211,6 +252,7 @@ const QImage& PanadapterWidget::backgroundImage(int w, int h) {
         bgMinute_ = minute;
         bgDay_ = ds_.mapDay;
         bgNight_ = ds_.mapNight;
+        bgSun_ = ds_.showSolar;
     }
     return bgCache_;
 }
@@ -248,6 +290,51 @@ void PanadapterWidget::setCenterHz(uint64_t hz) {
     if (hz == centerHz_) return;
     centerHz_ = hz;
     update();
+}
+
+void PanadapterWidget::setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
+                                    const QString& xray) {
+    solSfi_ = sfi;
+    solA_   = aIdx;
+    solK_   = kIdx;
+    solSsn_ = ssn;
+    solXray_ = xray;
+    bgMinute_ = -1;                                // sun caption re-renders
+    update();
+}
+
+// Thetis-style green space-weather block, bottom-right of the spectrum,
+// over the trace floor where it doesn't fight signals or spot labels.
+void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
+    if (!ds_.showSolar || solSfi_ < 0 || hSpec < 90) return;
+    QFont f = p.font();
+    f.setPixelSize(10);
+    f.setBold(true);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    QStringList lines;
+    lines << QString("SFI %1   SSN %2").arg(solSfi_)
+                 .arg(solSsn_ >= 0 ? QString::number(solSsn_) : QString("--"));
+    lines << QString("A %1   K %2")
+                 .arg(solA_ >= 0 ? QString::number(solA_) : QString("--"))
+                 .arg(solK_ >= 0 ? QString::number(solK_, 'f', 1) : QString("--"));
+    if (!solXray_.isEmpty()) lines << QString("X-RAY %1").arg(solXray_);
+    int wBox = 0;
+    for (const QString& l : lines)
+        wBox = std::max(wBox, fm.horizontalAdvance(l));
+    wBox += 16;
+    const int lineH = fm.height() + 1;
+    const int hBox = static_cast<int>(lines.size()) * lineH + 10;
+    const QRect box(width() - wBox - 8, hSpec - hBox - 6, wBox, hBox);
+    p.fillRect(box, QColor(4, 12, 6, 175));
+    p.setPen(QColor(30, 90, 45));
+    p.drawRect(box.adjusted(0, 0, -1, -1));
+    p.setPen(QColor(80, 230, 120));
+    int y = box.top() + 5 + fm.ascent();
+    for (const QString& l : lines) {
+        p.drawText(box.left() + 8, y, l);
+        y += lineH;
+    }
 }
 
 void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
@@ -888,6 +975,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.setPen(QColor(210, 245, 215));
         p.drawPath(tracePath);
         drawSpots(p, hSpec);                       // cluster spots, on top
+        drawSolarPanel(p, hSpec);                  // space-weather corner box
     } else {
         p.setPen(QColor(120, 220, 140));
         p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,

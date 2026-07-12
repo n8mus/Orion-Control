@@ -336,6 +336,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/mapNight",   d.mapNight);
         s.setValue("display/grid",       d.showGrid);
         s.setValue("display/callsign",   d.showCall);
+        s.setValue("display/solar",      d.showSolar);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
     // Editable in the DISPLAY panel (CALL field), persisted immediately.
@@ -379,12 +380,21 @@ MainWindow::MainWindow(QWidget* parent)
         d.mapNight   = s.value("display/mapNight",   d.mapNight).toInt();
         d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
         d.showCall   = s.value("display/callsign",   d.showCall).toBool();
+        d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
+        // The "Solar data panel" toggle governs everything solar (corner
+        // panel AND the map sun marker), so it alone gates the NOAA poller.
+        solarClient_.setEnabled(d.showSolar);
     }
+    connect(&solarClient_, &SolarClient::updated, this, [this] {
+        const SolarData sd = solarClient_.data();
+        pan_->setSolarInfo(sd.sfi, sd.aIdx, sd.kIdx, sd.ssn, sd.xray);
+    });
     connect(dispPanel, &DisplayPanel::settingsChanged, this,
             [this, saveDisplay](const DisplaySettings& d) {
                 pan_->setDisplaySettings(d);
+                solarClient_.setEnabled(d.showSolar);
                 saveDisplay(d);
             });
     // In-widget edits (dB-axis drag/wheel, divider drag) flow back the other

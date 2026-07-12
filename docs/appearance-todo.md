@@ -28,14 +28,13 @@ domain), no third-party asset files enter the repo.
 - [x] Grayline on every variant; terminator smoothsteps widened for a soft
       Thetis-style blend.
 
-## 3. Solar / space-weather layer
-- [ ] **Sun marker on the map** at the subsolar point (we already compute it
-      for the grayline): small orange sun icon with `SFI nnn  A nn  Kn`
-      caption, KE9NS/Thetis style.
-- [ ] **Solar-Terrestrial data panel** (green-on-black text block, corner of
-      the panadapter or a DISPLAY toggle): SFI, sunspot number, A-index,
-      K-index, X-ray class. Source: NOAA SWPC JSON (or hamqsl.com XML);
-      poll ~15 min, cache last good values, never block the UI.
+## 3. Solar / space-weather layer — DONE
+- [x] **Sun marker on the map** at the subsolar point: orange glow + core,
+      `SFI nnn  A nn  K n.n` caption (flips side near the map edge).
+- [x] **Solar-Terrestrial data panel** bottom-right of the spectrum
+      (green-on-black, DISPLAY "Solar data panel" toggle): SFI, SSN, A, K,
+      X-ray class. NOAA SWPC (wwv.txt + daily indices + GOES X-ray JSON),
+      polled every 15 min, last good values kept, fully async.
 - [ ] Optional: band-condition hint line derived from the same data.
 
 ## 4. Azimuth compass rose (Thetis bottom-left widget)

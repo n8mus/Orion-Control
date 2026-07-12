@@ -116,16 +116,21 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
     grid_ = new QCheckBox("Grid lines", this);
+    solar_ = new QCheckBox("Solar data panel", this);
+    solar_->setToolTip("SFI / sunspots / A / K / X-ray from NOAA, refreshed "
+                       "every 15 minutes; the map backdrops also get the sun "
+                       "marker with the same numbers");
     call_ = new QCheckBox("Callsign watermark", this);
     g->addWidget(fill_, 8, 0, 1, 3);
     g->addWidget(peak_, 9, 0, 1, 3);
     g->addWidget(grid_, 10, 0, 1, 3);
-    g->addWidget(call_, 11, 0, 1, 3);
+    g->addWidget(solar_, 11, 0, 1, 3);
+    g->addWidget(call_, 12, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 12, 0);
+    g->addWidget(makeCaption("CALL", this), 13, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 12, 1, 1, 2);
+    g->addWidget(callEdit_, 13, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -181,6 +186,7 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(fill_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(peak_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(solar_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(call_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(callEdit_, &QLineEdit::textEdited, this, [this](const QString& t) {
         emit callsignChanged(t.trimmed().toUpper());
@@ -203,6 +209,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.mapNight   = mapNight_->value();
     s.showGrid   = grid_->isChecked();
     s.showCall   = call_->isChecked();
+    s.showSolar  = solar_->isChecked();
     s.split      = split_;
     return s;
 }
@@ -211,7 +218,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
-        b11(mapDay_), b12(mapNight_);
+        b11(mapDay_), b12(mapNight_), b13(solar_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -228,6 +235,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     peak_->setChecked(s.peakHold);
     grid_->setChecked(s.showGrid);
     call_->setChecked(s.showCall);
+    solar_->setChecked(s.showSolar);
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
     mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));

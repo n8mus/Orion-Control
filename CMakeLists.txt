@@ -27,6 +27,7 @@ add_executable(tentec-console
   src/net/RigctldServer.cpp     src/net/RigctldServer.h
   src/net/SpotClient.cpp        src/net/SpotClient.h
   src/net/PotaClient.cpp        src/net/PotaClient.h
+  src/net/SolarClient.cpp       src/net/SolarClient.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h

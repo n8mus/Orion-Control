@@ -10,6 +10,7 @@ class QToolButton;
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
 #include "net/PotaClient.h"
+#include "net/SolarClient.h"
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -62,6 +63,7 @@ private:
     RigctldServer    rigctld_;
     SpotClient       spotClient_;                  // DX-cluster telnet feed
     PotaClient       potaClient_;                  // POTA activator API feed
+    SolarClient      solarClient_;                 // NOAA space-weather poller
     QStringList      parkFilter_;                  // POTA park countries in area
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;

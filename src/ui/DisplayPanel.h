@@ -47,6 +47,7 @@ private:
     QCheckBox* fill_   = nullptr;
     QCheckBox* peak_   = nullptr;
     QCheckBox* grid_   = nullptr;
+    QCheckBox* solar_  = nullptr;
     QCheckBox* call_   = nullptr;
     QLineEdit* callEdit_ = nullptr;
     float split_ = 0.42f;   // no UI control (dragged in the panadapter); pass through

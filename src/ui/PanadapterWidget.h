@@ -29,6 +29,7 @@ struct DisplaySettings {
     int   mapNight   = 18;      // map night-side brightness, percent
     bool  showGrid   = true;    // freq/dB gridlines on or off
     bool  showCall   = true;    // subtle callsign watermark in the spectrum
+    bool  showSolar  = true;    // space-weather panel in the spectrum corner
 };
 
 // A DX-cluster spot to mark on the display (absolute frequency). atSecs
@@ -83,6 +84,10 @@ public:
     void setCenterHz(uint64_t hz);                 // dial freq, for grid labels
     void setSpots(const QVector<SpotLabel>& s);    // empty = feature off
     void setCallsign(const QString& call);         // watermark text (ds_.showCall)
+    // Space weather for the sun marker (on map backdrops) + the green
+    // corner panel (ds_.showSolar). Values < 0 / empty = unknown, not drawn.
+    void setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
+                      const QString& xray);
     // VFO B: drawn like the main VFO (passband tint + center line + flag)
     // when its dial falls inside the view. role = 'T' (B transmits — red),
     // 'R' (B is the main RX — green) or 'N' (parked sub dial — blue); A's
@@ -219,8 +224,14 @@ private:
     int    bgMode_ = -1, bgW_ = 0, bgH_ = 0;
     qint64 bgMinute_ = -1;
     int    bgDay_ = -1, bgNight_ = -1;             // brightness cache keys
+    bool   bgSun_ = false;                         // sun marker cache key
     QImage  mapSrc_;                               // decoded basemap
     QString mapSrcKey_;                            // resource path / custom file
+    // Space weather (fed by MainWindow's SolarClient; -1/empty = unknown).
+    int     solSfi_ = -1, solA_ = -1, solSsn_ = -1;
+    double  solK_ = -1.0;
+    QString solXray_;
+    void drawSolarPanel(QPainter& p, int hSpec);   // green corner readout
 
     enum class Drag {
         None,

@@ -141,6 +141,22 @@ void RoutingPanel::emitVfo() {
     emit vfoAssignmentEdited(colOf(1), colOf(2), colOf(0));
 }
 
+void RoutingPanel::setSplitOnly(bool on) {
+    const bool en = !on;
+    const QString tip = en ? QString()
+                           : QStringLiteral("Not available on this radio");
+    for (int r = 0; r < 2; ++r)
+        for (int p = 0; p < 3; ++p) {              // whole antenna matrix
+            ant_[r][p]->setEnabled(en);
+            if (!en) ant_[r][p]->setToolTip(tip);
+        }
+    for (int r = 0; r < 2; ++r)                    // RX + SUB rows (TX = split stays)
+        for (int f = 1; f < 3; ++f) {
+            vfo_[r][f]->setEnabled(en);
+            if (!en) vfo_[r][f]->setToolTip(tip);
+        }
+}
+
 void RoutingPanel::emitAnt() {
     if (updating_) return;
     char out[3];

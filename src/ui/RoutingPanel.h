@@ -25,6 +25,9 @@ public:
 
     void showVfoAssignment(char mainRx, char subRx, char tx);   // no emit
     void showAntennaRouting(char ant1, char ant2, char rxAnt);  // no emit
+    // Single-receiver radio (Omni 8): only the TX row (split) and the dial
+    // transfers do anything — gray out the antenna matrix and sub-RX rows.
+    void setSplitOnly(bool on);
 
 signals:
     void vfoAssignmentEdited(char mainRx, char subRx, char tx);

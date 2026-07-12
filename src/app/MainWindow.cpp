@@ -1533,6 +1533,20 @@ MainWindow::MainWindow(QWidget* parent)
     } else {
         statusBar()->showMessage("radio: could not open " + QString::fromStdString(radioDev));
     }
+
+    // Capability gating — gray out what the connected radio can't do rather
+    // than leave live-looking controls that silently do nothing. Omni 8:
+    // single receiver, no hardware NB, no manual notch/SAF, and the whole
+    // TX-audio/power/tuner group answers only in REMOTE mode.
+    if (!radio_->caps().dualReceiver) {
+        txBar_->setCatTxControlsEnabled(false);
+        panel_->setReducedCatSet(true);
+        volSl_[1]->setEnabled(false);              // one receiver: B has no audio
+        volLbl_[1]->setEnabled(false);
+        muteBtn_[1]->setEnabled(false);
+        audioPanel_->setEnabled(false);            // Orion output routing / monitor
+        routing_->setSplitOnly(true);              // ANT + sub rows are Orion-only
+    }
 }
 
 MainWindow::~MainWindow() {

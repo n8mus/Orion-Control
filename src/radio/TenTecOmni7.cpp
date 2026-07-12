@@ -173,8 +173,10 @@ void TenTecOmni7::setAgc(Rx, char agc) {
 void TenTecOmni7::queryAgc(Rx) { send("?G"); }
 
 void TenTecOmni7::setRfGain(Rx, int pct) {
-    // Omni scale is inverted: 0 = full gain, 127 = minimum.
-    send(QByteArray("*I") + char((100 - clampi(pct, 0, 100)) * 127 / 100));
+    // Doc claims 0 = full gain / 127 = minimum, but the real radio runs the
+    // scale the ordinary way up (on-air verified: the doc's inversion made
+    // the console slider work backwards). Third doc error on this rig.
+    send(QByteArray("*I") + char(clampi(pct, 0, 100) * 127 / 100));
 }
 
 void TenTecOmni7::queryRfGain(Rx) { send("?I"); }
@@ -349,7 +351,7 @@ void TenTecOmni7::handleMsg(const QByteArray& m) {
             return;
         case 'I':
             if (m.size() < 2) return;
-            emit rfGainReported(Rx::Main, 100 - u8(1) * 100 / 127);
+            emit rfGainReported(Rx::Main, u8(1) * 100 / 127);
             return;
         case 'U':
             if (m.size() < 2) return;

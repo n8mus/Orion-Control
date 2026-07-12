@@ -25,6 +25,9 @@ public:
     bool ampMode() const;
     int  ampLimit() const;
     int  tuneLevel() const;                       // carrier watts for manual tune
+    // Gray out every control that rides CAT commands the connected radio
+    // can't take (Omni 8 in RADIO mode: the whole C1/C2 config group).
+    void setCatTxControlsEnabled(bool on);
 
 signals:
     void txPowerChanged(int pct);

@@ -485,4 +485,20 @@ void ControlPanel::showPbt(int pbtHz) {
     pbtVal_->setStyleSheet(pbtHz == 0 ? "color: #c8d4e0;" : "color: #f0b040;");
 }
 
+void ControlPanel::setReducedCatSet(bool reduced) {
+    const bool on = !reduced;
+    const QString tip = on ? QString()
+                           : QStringLiteral("Not available on this radio");
+    const std::initializer_list<QWidget*> ws = {
+        hwNbBtn_, notchBtn_, safBtn_, notchVal_, preBtn_,
+        agcThr_, agcThrVal_, agcHang_, agcHangVal_, agcDecay_, agcDecayVal_,
+        agcGroup_ ? agcGroup_->button(3) : nullptr,   // 'P' — no programmable AGC
+    };
+    for (QWidget* w : ws) {
+        if (!w) continue;
+        w->setEnabled(on);
+        if (!on) w->setToolTip(tip);
+    }
+}
+
 } // namespace ttc

@@ -168,6 +168,20 @@ void TxBar::markProfile(int slot) {
     }
 }
 
+void TxBar::setCatTxControlsEnabled(bool on) {
+    const QString tip = on ? QString()
+                           : QStringLiteral("Not controllable on this radio over "
+                                            "CAT (Omni: REMOTE mode only)");
+    const std::initializer_list<QWidget*> ws = {
+        pwr_, pwrVal_, ampBtn_, ampLimit_, tuneBtn_, tuneLvl_, tunerBtn_,
+        mic_, micVal_, txbw_, txbwVal_, proc_, procVal_,
+        profBtn_[0], profBtn_[1], profBtn_[2], profBtn_[3]};
+    for (QWidget* w : ws) {
+        w->setEnabled(on);
+        if (!on) w->setToolTip(tip);
+    }
+}
+
 QSlider* TxBar::makeSlider(const QString&, QLabel*& value, QTimer*& tx, int& pend,
                            void (TxBar::*sig)(int)) {
     auto* s = new QSlider(Qt::Horizontal);

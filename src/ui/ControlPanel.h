@@ -66,6 +66,10 @@ public slots:
     void showSaf(bool on);
     void showHwNb(bool on);
     void showPbt(int pbtHz);              // live off-center readout
+    // Gray out controls the connected radio doesn't have: hardware NB and
+    // manual notch/SAF don't exist on the Omni, programmable AGC and the
+    // preamp aren't reachable over CAT in its RADIO mode.
+    void setReducedCatSet(bool reduced);
 
 private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);

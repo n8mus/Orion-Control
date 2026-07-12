@@ -136,7 +136,8 @@ MainWindow::MainWindow(QWidget* parent)
     topGrid->setColumnMinimumWidth(4, 28);
     auto* topLay = new QHBoxLayout;
     topLay->setContentsMargins(0, 0, 0, 0);
-    topGrid->addWidget(smeter_, 0, 0, Qt::AlignLeft | Qt::AlignVCenter);
+    // Spans both decks: the needle meter styles are taller than one row.
+    topGrid->addWidget(smeter_, 0, 0, 2, 1, Qt::AlignLeft | Qt::AlignVCenter);
     topGrid->addLayout(topLay, 0, 7, Qt::AlignRight | Qt::AlignVCenter);
     // Zoom (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel on
     // the panadapter still works and keeps the slider in sync. Level with

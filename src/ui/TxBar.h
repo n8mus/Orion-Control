@@ -40,6 +40,13 @@ signals:
     void speechProcChanged(int level);            // PROC slider (0 = off)
     void profileRecalled(int slot);               // left-click a profile button
     void profileSaveRequested(int slot);          // right-click: store current
+    // DVR intents — TxBar only renders state (showDvr* below); MainWindow
+    // owns the clip deck, the files and PTT. Any click while the deck is
+    // busy means "stop", which MainWindow resolves.
+    void dvrRecordClicked();                      // off-air REC toggle
+    void dvrPlayClicked(bool overAir);            // false = speakers, true = retransmit
+    void vkClicked(int slot);                     // voice keyer: play (or stop)
+    void vkRecordClicked(int slot);               // right-click: record the slot
 
 public slots:
     void setAmpMode(bool on, int limitPct);       // restore from settings
@@ -50,6 +57,10 @@ public slots:
     void showTxFilter(int hz);
     void showSpeechProc(int level);
     void showTuner(bool on);
+    void showDvrIdle();                           // all DVR lights off
+    void showDvrRecording(int slot);              // -1 = off-air deck, 0..3 = VK
+    void showDvrPlaying(int slot);
+    void setVkLoaded(int slot, bool loaded);      // dim + tooltip empty slots
 
 private:
     QSlider* makeSlider(const QString& name, QLabel*& value,
@@ -62,6 +73,9 @@ private:
     QSlider* txbw_ = nullptr;  QLabel* txbwVal_ = nullptr;
     QSlider* proc_ = nullptr;  QLabel* procVal_ = nullptr;
     QPushButton* profBtn_[4] = {};
+    QPushButton* recBtn_ = nullptr;    // DVR off-air record
+    QPushButton* playBtn_ = nullptr;   // DVR off-air playback
+    QPushButton* vkBtn_[4] = {};       // voice keyer slots
     QPushButton* ampBtn_   = nullptr;
     QSpinBox*    ampLimit_ = nullptr;
     QPushButton* tuneBtn_  = nullptr;

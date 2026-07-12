@@ -16,6 +16,7 @@ class QToolButton;
 #include "ui/RoutingPanel.h"
 #include "ui/AudioPanel.h"
 #include "ui/TxBar.h"
+#include "audio/ClipDeck.h"
 #include "radio/TenTecOmni7.h"
 #ifdef HAVE_SDRPLAY
 #include "sdr/SdrPlaySource.h"
@@ -52,6 +53,10 @@ private:
     void syncBandRegister();           // mirror any dial move into the band stack
     void recallStack(int band, int reg); // recall a band-stack register
     void recall60m(int chan);          // locked US 60 m channel (CH1..CH5)
+    void dvrStopped();                 // clip deck went idle: lights off, PTT down
+    void dvrPlayOverAir(const QString& wav, int slot); // line-in + PTT + play
+    QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
+    QString vkPath(int slot) const;    // voice keyer message file for a slot
     RadioController* radio_;                  // owned (QObject child); see makeRadio
     RigctldServer    rigctld_;
     SpotClient       spotClient_;                  // DX-cluster telnet feed
@@ -93,6 +98,15 @@ private:
     bool     afDirty_ = false;
     QElapsedTimer sinceVfoBEdit_;             // suppress poll snap-back after an edit
     TxBar*            txBar_ = nullptr;
+
+    // DVR: off-air record/playback + voice keyer, audio over the SignaLink.
+    ClipDeck* dvr_ = nullptr;
+    bool dvrTxPlayback_ = false;       // this playback keyed the radio (drop PTT)
+    bool dvrAutoDig_ = false;          // we engaged line-in for it (restore voice)
+    QString dvrLastRx_;                // newest off-air take this session
+    QString dvrJustRecorded_;          // take to peak-normalize when it lands
+    QString radioSink_, radioSource_;  // SignaLink playback/capture node names
+    QString micSource_;                // VK record source ("" = default mic)
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)
     int lastBandPress_ = -1;                   // band button last pressed (for cycling)

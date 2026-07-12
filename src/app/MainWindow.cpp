@@ -15,6 +15,10 @@
 #include <QMenu>
 #include <QActionGroup>
 #include <QWidgetAction>
+#include <QDateTime>
+#include <QDir>
+#include <QFileInfo>
+#include <QStandardPaths>
 #include "ui/DisplayPanel.h"
 #include "net/SpotClient.h"
 #include <algorithm>
@@ -840,6 +844,113 @@ MainWindow::MainWindow(QWidget* parent)
     });
     txBar_->setTuneLevel(QSettings().value("tune/power", 20).toInt());
 
+    // DVR + voice keyer. Audio rides the same SignaLink (USB codec) path
+    // fldigi uses: off-air takes are captured from its input (the radio's
+    // line out), VK/retransmit playback goes out its output into the radio
+    // with CAT PTT held — the SignaLink's own VOX keys as backup, so this
+    // works on both radios even where CAT TX audio config doesn't.
+    dvr_ = new ClipDeck(this);
+    {
+        QSettings s;
+        const QString radioMatch =
+            s.value("dvr/radioAudioMatch", "USB_AUDIO_CODEC").toString();
+        radioSink_   = ClipDeck::findSink(radioMatch);
+        radioSource_ = ClipDeck::findSource(radioMatch);
+        micSource_   = s.value("dvr/micSource").toString();
+        // No mic configured: never fall back to the system default source —
+        // on a SignaLink station that IS the radio codec, and the voice keyer
+        // would record the receiver instead of the operator.
+        if (micSource_.isEmpty())
+            micSource_ = ClipDeck::findSourceExcluding(radioMatch);
+    }
+    QDir().mkpath(dvrDir());
+    for (int i = 0; i < 4; ++i)
+        txBar_->setVkLoaded(i, QFileInfo::exists(vkPath(i)));
+    // Any DVR click while the deck runs means "stop that" — the finished()
+    // handler clears the lights and drops PTT, so just stop and swallow. A
+    // keyed-but-not-yet-playing state is the arming window (line-in switch
+    // settling): unwind it directly, the deck has nothing to stop yet.
+    const auto dvrBusy = [this] {
+        if (dvr_->state() != ClipDeck::State::Idle) {
+            dvr_->stop();
+            return true;
+        }
+        if (dvrTxPlayback_) {
+            dvrStopped();
+            return true;
+        }
+        return false;
+    };
+    connect(txBar_, &TxBar::dvrRecordClicked, this, [this, dvrBusy] {
+        if (dvrBusy()) return;
+        if (radioSource_.isEmpty()) {
+            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
+            return;
+        }
+        dvrLastRx_ = dvrDir() + QString("/rx-%1.wav").arg(
+            QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss"));
+        if (dvr_->record(dvrLastRx_, radioSource_)) {
+            dvrJustRecorded_ = dvrLastRx_;
+            txBar_->showDvrRecording(-1);
+            statusBar()->showMessage("DVR: recording off air -> "
+                + QFileInfo(dvrLastRx_).fileName() + "   (REC again to stop)");
+        }
+    });
+    connect(txBar_, &TxBar::dvrPlayClicked, this, [this, dvrBusy](bool overAir) {
+        if (dvrBusy()) return;
+        QString f = dvrLastRx_;
+        if (f.isEmpty()) {                         // newest take from an earlier run
+            const QFileInfoList takes = QDir(dvrDir()).entryInfoList(
+                {"rx-*.wav"}, QDir::Files, QDir::Name);
+            if (!takes.isEmpty()) f = takes.last().filePath();
+        }
+        if (f.isEmpty() || !QFileInfo::exists(f)) {
+            statusBar()->showMessage("DVR: nothing recorded yet");
+            return;
+        }
+        if (overAir && radioSink_.isEmpty()) {
+            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
+            return;
+        }
+        if (overAir) {
+            dvrPlayOverAir(f, -1);
+        } else if (dvr_->play(f, QString())) {
+            txBar_->showDvrPlaying(-1);
+            statusBar()->showMessage(
+                QString("DVR: playing %1 on the speakers  (right-click PLAY "
+                        "sends it over the air)").arg(QFileInfo(f).fileName()));
+        }
+    });
+    connect(txBar_, &TxBar::vkClicked, this, [this, dvrBusy](int slot) {
+        if (dvrBusy()) return;
+        const QString f = vkPath(slot);
+        if (!QFileInfo::exists(f)) {
+            statusBar()->showMessage(QString(
+                "VK%1 is empty — right-click it to record a message").arg(slot + 1));
+            return;
+        }
+        if (radioSink_.isEmpty()) {
+            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
+            return;
+        }
+        dvrPlayOverAir(f, slot);
+        statusBar()->showMessage(QString(
+            "VK%1 on the air — click it again to abort").arg(slot + 1));
+    });
+    connect(txBar_, &TxBar::vkRecordClicked, this, [this, dvrBusy](int slot) {
+        if (dvrBusy()) return;
+        if (dvr_->record(vkPath(slot), micSource_)) {
+            dvrJustRecorded_ = vkPath(slot);
+            txBar_->showDvrRecording(slot);
+            statusBar()->showMessage(QString(
+                "VK%1: recording from the mic — click it to stop").arg(slot + 1));
+        }
+    });
+    connect(dvr_, &ClipDeck::finished, this, &MainWindow::dvrStopped);
+    connect(dvr_, &ClipDeck::failed, this, [this](const QString& why) {
+        statusBar()->showMessage("DVR: " + why);
+    });
+
     // Digital/voice audio switch: line-in for digital, mic for voice.
     {
         QSettings s;
@@ -1558,6 +1669,11 @@ MainWindow::MainWindow(QWidget* parent)
 
 MainWindow::~MainWindow() {
     stopManualTune();                            // never leave a carrier up
+    dvr_->stop();                                // finalize an in-flight take
+    if (dvrTxPlayback_) {
+        radio_->setPtt(false);                   // never leave the rig keyed
+        if (dvrAutoDig_) setDigitalMode(false);  // nor on line-in with mic parked
+    }
     saveBandMemory();                            // remember this band across runs
 #ifdef HAVE_SDRPLAY
     // Stop the SDRplay streaming thread (Uninit drains callbacks) BEFORE the
@@ -1618,6 +1734,61 @@ void MainWindow::startManualTune() {
     tuneTimeout_->start();
     statusBar()->showMessage(
         QString("TUNE: %1 W carrier — click again to stop (auto-stop 15 s)").arg(level));
+}
+
+// Over-the-air playback (voice keyer or retransmit). The clip goes in on the
+// rig's rear line input, so ride the same source swap the DIG button does:
+// line-in gain up / mic+proc parked, key, then start the audio only after the
+// gain commands have had time to land (no clipped first syllable). dvrStopped
+// unwinds it all — un-key first, then voice settings back.
+void MainWindow::dvrPlayOverAir(const QString& wav, int slot) {
+    dvrAutoDig_ = !digital_;                       // already in DIG (FT8)? leave it
+    if (dvrAutoDig_) setDigitalMode(true);
+    dvrTxPlayback_ = true;
+    radio_->setPtt(true);
+    txBar_->showDvrPlaying(slot);
+    QTimer::singleShot(300, this, [this, wav] {
+        if (!dvrTxPlayback_) return;               // aborted while arming
+        dvr_->play(wav, radioSink_);               // a start failure lands in
+    });                                            // finished() -> dvrStopped
+}
+
+// The clip deck went idle — a take or playback ended on its own or by a
+// stop-click. Un-key if this playback held PTT (after a short drain so the
+// sink empties: pw-play exits at its last buffer write, not the last sample),
+// then hand the audio source back to the mic.
+void MainWindow::dvrStopped() {
+    if (dvrTxPlayback_) {
+        dvrTxPlayback_ = false;
+        QTimer::singleShot(250, this, [this] {
+            radio_->setPtt(false);                 // un-key BEFORE the mic is hot
+            if (dvrAutoDig_) {
+                dvrAutoDig_ = false;
+                setDigitalMode(false);             // voice mic/proc come back
+            }
+        });
+    }
+    // A fresh take gets peak-normalized on the way in: the radio's line out
+    // and a mic both record tens of dB below full scale, which played back
+    // as almost no TX drive. Normalizing the file (not the playback) means
+    // what you audition on the speakers is exactly what goes over the air.
+    if (!dvrJustRecorded_.isEmpty()) {
+        ClipDeck::normalizeWav(dvrJustRecorded_);
+        dvrJustRecorded_.clear();
+    }
+    txBar_->showDvrIdle();
+    for (int i = 0; i < 4; ++i)                    // a VK record may have landed
+        txBar_->setVkLoaded(i, QFileInfo::exists(vkPath(i)));
+    statusBar()->showMessage("DVR: stopped");
+}
+
+QString MainWindow::dvrDir() const {
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+           + "/dvr";
+}
+
+QString MainWindow::vkPath(int slot) const {
+    return dvrDir() + QString("/vk%1.wav").arg(slot + 1);
 }
 
 void MainWindow::stopManualTune() {

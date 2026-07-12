@@ -53,6 +53,14 @@ cmake --build build
   windowed FFT → power spectrum, marshaled to the GUI thread and drawn as a live
   250 kHz panadapter centered on the dial. Click-to-tune recenters; the
   passband-edge-drag overlay maps to the radio filter. Verified headless end-to-end.
+- **DVR + voice keyer** (`src/audio/ClipDeck.*`, DVR group on the TX bar) —
+  REC captures RX audio off the air from the station sound interface
+  (SignaLink-style USB codec, auto-detected; `dvr/radioAudioMatch` setting
+  overrides), PLAY replays the last take on the speakers or retransmits it
+  (right-click). VK1–VK4 store voice-keyer messages: right-click records from
+  the mic (`dvr/micSource`, default input if unset), click transmits the
+  message with CAT PTT held. Rides `pw-record`/`pw-play`, WAVs live in
+  `~/.local/share/n8mus/tentec-console/dvr/`.
 
 ## Layout
 

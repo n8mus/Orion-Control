@@ -6,6 +6,7 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStyle>
 #include <QTimer>
 #include <algorithm>
 
@@ -28,6 +29,12 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         QPushButton#amp:checked { background: #8a5c2b; border-color: #b47c3f; }
         QPushButton#prof { padding: 0 7px; font-size: 10px; border-radius: 8px; }
         QPushButton#prof:checked { background: #1f7a45; border-color: #3ecf7a; }
+        QPushButton#dvr { padding: 0 7px; font-size: 10px; border-radius: 8px; }
+        QPushButton#dvr[dvrState="rec"] { background: #8a2727; color: #ffffff;
+                                          border-color: #e05d5d; }
+        QPushButton#dvr[dvrState="play"] { background: #1f7a45; color: #ffffff;
+                                           border-color: #3ecf7a; }
+        QPushButton#dvr[vkEmpty="true"] { color: #5c6b7a; }
         QSpinBox { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;
                    font-size: 11px; }
         QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }
@@ -158,6 +165,51 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     // Manual edits to anything a profile bundles un-light the profile button.
     for (QSlider* s : {pwr_, mic_, txbw_, proc_})
         connect(s, &QSlider::valueChanged, this, [this] { markProfile(-1); });
+
+    // DVR (Record/Playback + VKx voice keyer idea): REC/PLAY work the off-air
+    // deck, VK1-4 are canned voice messages. Buttons only emit intents —
+    // MainWindow lights them back through showDvr*() once the deck confirms,
+    // so a click can never show a state the audio engine isn't actually in.
+    lay->addSpacing(10);
+    lay->addWidget(new QLabel("DVR"));
+    recBtn_ = new QPushButton("REC");
+    recBtn_->setObjectName("dvr");
+    recBtn_->setFocusPolicy(Qt::NoFocus);
+    recBtn_->setToolTip(
+        "Off-air recorder\n"
+        "click:  start recording the receiver audio (button goes red)\n"
+        "click again:  stop and save — the take is auto-leveled for retransmit\n"
+        "Each take is its own timestamped file; PLAY uses the newest one.");
+    lay->addWidget(recBtn_);
+    connect(recBtn_, &QPushButton::clicked, this,
+            [this] { emit dvrRecordClicked(); });
+    playBtn_ = new QPushButton("PLAY");
+    playBtn_->setObjectName("dvr");
+    playBtn_->setFocusPolicy(Qt::NoFocus);
+    playBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
+    playBtn_->setToolTip(
+        "Off-air playback\n"
+        "left-click:  play the newest take on the SPEAKERS (audition only,\n"
+        "    nothing is transmitted)\n"
+        "right-click:  TRANSMIT the newest take — rig switches to line-in,\n"
+        "    keys up, plays it over the air, then restores your voice setup\n"
+        "click while lit:  stop / abort");
+    lay->addWidget(playBtn_);
+    connect(playBtn_, &QPushButton::clicked, this,
+            [this] { emit dvrPlayClicked(false); });
+    connect(playBtn_, &QPushButton::customContextMenuRequested, this,
+            [this] { emit dvrPlayClicked(true); });
+    for (int i = 0; i < 4; ++i) {
+        auto* b = new QPushButton(QString("VK%1").arg(i + 1));
+        b->setObjectName("dvr");
+        b->setFocusPolicy(Qt::NoFocus);
+        b->setContextMenuPolicy(Qt::CustomContextMenu);
+        vkBtn_[i] = b;
+        lay->addWidget(b);
+        connect(b, &QPushButton::clicked, this, [this, i] { emit vkClicked(i); });
+        connect(b, &QPushButton::customContextMenuRequested, this,
+                [this, i] { emit vkRecordClicked(i); });
+    }
     lay->addStretch(1);
 }
 
@@ -249,6 +301,48 @@ void TxBar::showSpeechProc(int level) {
 void TxBar::showTuner(bool on) {
     QSignalBlocker block(tunerBtn_);
     tunerBtn_->setChecked(on);
+}
+
+// Qt only re-reads [property] stylesheet selectors on repolish.
+static void setDvrLight(QPushButton* b, const char* stateName) {
+    b->setProperty("dvrState", stateName);
+    b->style()->unpolish(b);
+    b->style()->polish(b);
+}
+
+void TxBar::showDvrIdle() {
+    setDvrLight(recBtn_, "");
+    setDvrLight(playBtn_, "");
+    for (auto* b : vkBtn_) setDvrLight(b, "");
+}
+
+void TxBar::showDvrRecording(int slot) {
+    showDvrIdle();
+    setDvrLight(slot < 0 ? recBtn_ : vkBtn_[slot], "rec");
+}
+
+void TxBar::showDvrPlaying(int slot) {
+    showDvrIdle();
+    setDvrLight(slot < 0 ? playBtn_ : vkBtn_[slot], "play");
+}
+
+void TxBar::setVkLoaded(int slot, bool loaded) {
+    QPushButton* b = vkBtn_[slot];
+    b->setProperty("vkEmpty", !loaded);
+    b->style()->unpolish(b);
+    b->style()->polish(b);
+    b->setToolTip(loaded
+        ? QString("Voice keyer message %1\n"
+                  "left-click:  TRANSMIT the message — rig switches to line-in,\n"
+                  "    keys up, plays it, then restores your mic/speech settings\n"
+                  "right-click:  RE-RECORD it from the mic (red while recording,\n"
+                  "    click to stop; the old message is replaced)\n"
+                  "click while on the air:  abort and un-key").arg(slot + 1)
+        : QString("Voice keyer slot %1 — EMPTY\n"
+                  "right-click:  record a message from the mic (button goes red),\n"
+                  "    click it again to stop and save\n"
+                  "left-click:  transmits the message (once one is recorded)")
+              .arg(slot + 1));
 }
 
 } // namespace ttc

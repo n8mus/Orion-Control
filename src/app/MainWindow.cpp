@@ -472,7 +472,7 @@ MainWindow::MainWindow(QWidget* parent)
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked())
             for (const Spot& s : spotClient_.spots())
-                labels.push_back({s.call, s.hz});
+                labels.push_back({s.call, s.hz, s.atSecs});
         pan_->setSpots(labels);
     };
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);

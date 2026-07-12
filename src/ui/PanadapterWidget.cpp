@@ -5,9 +5,12 @@
 #include <QPainterPath>
 #include <QLinearGradient>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QMouseEvent>
+#include <QUrl>
 #include <QWheelEvent>
 #include <algorithm>
+#include <climits>
 #include <cmath>
 #include <cstring>
 
@@ -262,33 +265,69 @@ bool PanadapterWidget::overVfoB(int x) const {
     return x >= std::min(xLo, xb) - 4 && x <= std::max(xHi, xb) + 4;
 }
 
-// KE9NS-style spot markers: a thin vertical line at the spotted frequency
-// with the callsign running down it. Labels are click-to-tune (hit rects
-// collected here, tested in mousePressEvent).
+// KE9NS-style spot markers, horizontal-stack flavor (his spotter as of
+// v2.8.0.330: horizontal calls on dark boxes since .261, vertical indicator
+// optional since .269 and shortened to half height in .300). A short low-key
+// line marks the exact frequency; the callsign is drawn HORIZONTALLY on a
+// dark box, packed into the topmost row where it doesn't cover another call —
+// readable at contest density, where rotated labels turn into a picket
+// fence. Labels sit right of the marker on USB bands and left on LSB
+// (160/80/40) so the signal itself stays clear. Left-click tunes there,
+// right-click looks the call up on QRZ; fresh spots draw brighter than ones
+// about to expire.
 void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
     spotHits_.clear();
     if (spots_.isEmpty() || centerHz_ == 0 || hSpec < 60) return;
     QFont f = p.font();
     f.setPixelSize(10);
-    f.setBold(false);
+    f.setBold(true);
     p.setFont(f);
     const QFontMetrics fm(f);
     const qint64 half = viewSpanHz_ / 2;
+    struct Vis { int x; const SpotLabel* s; bool lsb; };
+    std::vector<Vis> vis;
     for (const SpotLabel& s : spots_) {
         const qint64 off = s.hz - static_cast<qint64>(centerHz_);
         if (off < -half || off > half) continue;
-        const int x = hzToX(static_cast<int>(off));
-        p.setPen(QColor(150, 120, 255, 110));           // KE9NS violet marker
-        p.drawLine(x, 20, x, hSpec);
-        const int textLen = fm.horizontalAdvance(s.call);
-        p.save();
-        p.translate(x - 2, 22);
-        p.rotate(90);                                    // callsign runs downward
-        p.setPen(QColor(255, 216, 50));
-        p.drawText(0, 0, s.call);
-        p.restore();
-        spotHits_.push_back({QRect(x - 8, 20, 14, std::min(textLen + 6, hSpec - 24)),
-                             s.hz});
+        const bool lsb = s.hz < 5250000                  // voice below 10 MHz is
+                      || (s.hz > 6000000 && s.hz < 8000000); // LSB (60 m excepted)
+        vis.push_back({hzToX(static_cast<int>(off)), &s, lsb});
+    }
+    if (vis.empty()) return;
+    std::sort(vis.begin(), vis.end(),
+              [](const Vis& a, const Vis& b) { return a.x < b.x; });
+    const int topY = 18;
+    const int rowH = fm.height() + 2;
+    const int maxRows = std::clamp((hSpec / 2 - topY) / rowH, 1, 8);
+    // Marker lines first so every label draws over them (KE9NS draw order).
+    p.setPen(QColor(150, 120, 255, 80));
+    const int lineBot = std::min(topY + maxRows * rowH + 8, hSpec);
+    for (const Vis& v : vis) p.drawLine(v.x, topY, v.x, lineBot);
+    // Pack each label into the topmost row with room at its x. The input is
+    // x-sorted, so per row it's enough to remember the rightmost occupied
+    // edge; sorting also keeps row assignments stable frame to frame. When a
+    // pileup fills every row at some x, further calls there are dropped
+    // (their marker line still shows) instead of smearing over each other.
+    std::vector<int> rowEdge(maxRows, INT_MIN);
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    for (const Vis& v : vis) {
+        const int w = fm.horizontalAdvance(v.s->call);
+        int xt = v.lsb ? v.x - w - 5 : v.x + 5;
+        xt = std::clamp(xt, 2, std::max(2, width() - w - 2));
+        int row = -1;
+        for (int r = 0; r < maxRows; ++r)
+            if (xt - 4 > rowEdge[r]) { row = r; break; }
+        if (row < 0) continue;
+        rowEdge[row] = xt + w;
+        const QRect box(xt - 3, topY + row * rowH, w + 6, rowH - 1);
+        // Fade with age toward the 20-minute expiry (unknown age = fresh).
+        const qint64 age = v.s->atSecs > 0
+            ? std::clamp<qint64>(now - v.s->atSecs, 0, 1200) : 0;
+        const int alpha = 255 - static_cast<int>(age * 115 / 1200);
+        p.fillRect(box, QColor(8, 10, 16, 185));         // dark box (.261 idea)
+        p.setPen(QColor(255, 216, 50, alpha));
+        p.drawText(xt, box.top() + fm.ascent(), v.s->call);
+        spotHits_.push_back({box, v.s->hz, v.s->call});
     }
 }
 
@@ -859,10 +898,17 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     dragStartY_  = y;
     dragStartLo_ = pbLoHz_;
     dragStartHi_ = pbHiHz_;
-    // Right-click = drop VFO B on that frequency (get the TX dead on the
+    // Right-click on a spot callsign = QRZ lookup in the browser (KE9NS);
+    // anywhere else = drop VFO B on that frequency (get the TX dead on the
     // station the DX just worked, one click).
     if (e->button() == Qt::RightButton) {
         drag_ = Drag::None;
+        for (const SpotHit& h : spotHits_)
+            if (h.rect.contains(e->pos())) {
+                QDesktopServices::openUrl(
+                    QUrl("https://www.qrz.com/db/" + h.call));
+                return;
+            }
         if (!inScaleBand(y) && !inDbAxis(x, y)) {
             wheelVfo_ = 'B';                        // wheel now nudges B
             emit vfoBTuneRequested(xToHz(x));
@@ -882,11 +928,11 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         return;
     }
     // A click on a spot callsign tunes to the spotted frequency.
-    for (const auto& [rect, hz] : spotHits_) {
-        if (rect.contains(e->pos())) {
+    for (const SpotHit& h : spotHits_) {
+        if (h.rect.contains(e->pos())) {
             drag_ = Drag::None;
             wheelVfo_ = 'A';
-            emit tuneRequested(static_cast<int>(hz - static_cast<qint64>(centerHz_)));
+            emit tuneRequested(static_cast<int>(h.hz - static_cast<qint64>(centerHz_)));
             return;
         }
     }
@@ -982,7 +1028,11 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         const int hx = e->pos().x(), hy = e->pos().y();
         const bool onAEdge = std::abs(hx - hzToX(pbLoHz_)) <= 6
                           || std::abs(hx - hzToX(pbHiHz_)) <= 6;
+        bool onSpot = false;                     // spot labels are clickable
+        for (const SpotHit& h : spotHits_)
+            if (h.rect.contains(e->pos())) { onSpot = true; break; }
         if (inScaleBand(hy) || inDbAxis(hx, hy)) setCursor(Qt::SizeVerCursor);
+        else if (onSpot)                         setCursor(Qt::PointingHandCursor);
         else if (overVfoB(hx) || onAEdge
                  || std::abs(hx - width() / 2) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();

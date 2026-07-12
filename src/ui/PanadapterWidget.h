@@ -29,10 +29,12 @@ struct DisplaySettings {
     bool  showCall   = true;    // subtle callsign watermark in the spectrum
 };
 
-// A DX-cluster spot to mark on the display (absolute frequency).
+// A DX-cluster spot to mark on the display (absolute frequency). atSecs
+// (epoch) lets fresh spots draw brighter than ones about to expire.
 struct SpotLabel {
     QString call;
     qint64  hz = 0;
+    qint64  atSecs = 0;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:
@@ -187,9 +189,10 @@ private:
     QImage fillImg_;                               // level-colored fill (reused buffer)
 
     // DX-cluster spots: markers + callsigns in the spectrum area; hit rects
+    struct SpotHit { QRect rect; qint64 hz; QString call; };
     // (rebuilt each paint) make the labels click-to-tune targets.
     QVector<SpotLabel> spots_;
-    QVector<QPair<QRect, qint64>> spotHits_;       // label rect -> spot freq
+    QVector<SpotHit>   spotHits_;                  // label rect -> freq + call
 
     QString callsign_;                             // watermark (empty = off)
 

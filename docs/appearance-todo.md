@@ -37,11 +37,15 @@ domain), no third-party asset files enter the repo.
       polled every 15 min, last good values kept, fully async.
 - [ ] Optional: band-condition hint line derived from the same data.
 
-## 4. Azimuth compass rose (Thetis bottom-left widget)
-- [ ] Small azimuthal-equidistant world disc centered on Jon's QTH with a
-      beam-heading pointer and degree readout.
-- [ ] Click a spot label (or the map) → rose shows the great-circle bearing
-      to it. Pure display for now — no rotor control wired.
+## 4. Azimuth compass rose — DONE
+- [x] Azimuthal-equidistant world disc bottom-left of the spectrum, centered
+      on the station grid (DISPLAY → GRID field, station/grid setting),
+      day/night tinted, sun-bearing tick on the ring, N/E/S/W labels.
+- [x] Click a spot label → rose swings to that station with bearing° +
+      distance km (POTA park coords from the API; DX calls placed via the
+      bundled AD1C cty.dat). Click inside the rose = manual heading;
+      right-click clears. DISPLAY "Compass rose" toggle, persisted.
+      pointRoseAt() is public for future rotor integration.
 
 ## 5. VFO / top-strip cosmetics
 - [ ] Band label under each VFO readout ("40m band"), auto from kBands.

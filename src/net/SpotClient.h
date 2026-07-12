@@ -17,6 +17,8 @@ struct Spot {
     qint64  atSecs = 0;      // epoch seconds of the last sighting
     char    kind   = 'D';
     QString tag;
+    double  lat = 999.0;     // station location if known (999 = unknown);
+    double  lon = 999.0;     // POTA park coords, or cty.dat country center
 };
 
 // Minimal DX-cluster telnet client (the same feed KE9NS PowerSDR's Spotter

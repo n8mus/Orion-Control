@@ -292,6 +292,182 @@ void PanadapterWidget::setCenterHz(uint64_t hz) {
     update();
 }
 
+namespace {
+// Great-circle bearing (deg from north) and distance (km) between two points.
+void greatCircle(double lat1d, double lon1d, double lat2d, double lon2d,
+                 double& bearingDeg, double& distKm) {
+    const double la1 = lat1d * M_PI / 180.0, la2 = lat2d * M_PI / 180.0;
+    const double dLon = (lon2d - lon1d) * M_PI / 180.0;
+    bearingDeg = std::atan2(std::sin(dLon) * std::cos(la2),
+                            std::cos(la1) * std::sin(la2)
+                                - std::sin(la1) * std::cos(la2) * std::cos(dLon))
+                 * 180.0 / M_PI;
+    if (bearingDeg < 0.0) bearingDeg += 360.0;
+    const double c = std::acos(std::clamp(
+        std::sin(la1) * std::sin(la2)
+            + std::cos(la1) * std::cos(la2) * std::cos(dLon), -1.0, 1.0));
+    distKm = 6371.0 * c;
+}
+
+// Azimuthal-equidistant world disc centered on the QTH (Thetis rose look):
+// up = north, edge = the antipode, so a straight line from center IS the
+// great-circle path at that bearing. Day/night tinted from the current sun.
+QImage renderRoseDisc(int R, double lat0d, double lon0d) {
+    static QImage earth;                            // classic map, decoded once
+    if (earth.isNull())
+        earth = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
+    const int D = 2 * R;
+    QImage img(D, D, QImage::Format_ARGB32);
+    img.fill(Qt::transparent);
+    if (earth.isNull()) return img;
+    const double lat0 = lat0d * M_PI / 180.0, lon0 = lon0d * M_PI / 180.0;
+    const QDateTime utc = QDateTime::currentDateTimeUtc();
+    const double hours = utc.time().hour() + utc.time().minute() / 60.0;
+    const double decl = 23.44 * std::sin(2.0 * M_PI * (utc.date().dayOfYear() - 81)
+                                         / 365.25) * M_PI / 180.0;
+    const double subLon = (12.0 - hours) * 15.0 * M_PI / 180.0;
+    for (int y = 0; y < D; ++y) {
+        QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
+        for (int x = 0; x < D; ++x) {
+            const double dx = x + 0.5 - R, dy = y + 0.5 - R;
+            const double r = std::hypot(dx, dy);
+            if (r > R - 1.0) continue;
+            const double c  = r / R * M_PI;
+            const double th = std::atan2(dx, -dy);  // bearing from north
+            const double la = std::asin(std::sin(lat0) * std::cos(c)
+                              + std::cos(lat0) * std::sin(c) * std::cos(th));
+            const double lo = lon0
+                + std::atan2(std::sin(th) * std::sin(c) * std::cos(lat0),
+                             std::cos(c) - std::sin(lat0) * std::sin(la));
+            int mx = static_cast<int>((lo / M_PI + 1.0) * 0.5 * earth.width())
+                     % earth.width();
+            if (mx < 0) mx += earth.width();
+            const int my = std::clamp(
+                static_cast<int>((0.5 - la / M_PI) * earth.height()),
+                0, earth.height() - 1);
+            const QRgb col = earth.pixel(mx, my);
+            const double sinElev = std::sin(la) * std::sin(decl)
+                + std::cos(la) * std::cos(decl) * std::cos(lo - subLon);
+            const double b = sinElev > 0.0 ? 0.95 : 0.42;   // day / night tint
+            line[x] = qRgba(static_cast<int>(qRed(col) * b),
+                            static_cast<int>(qGreen(col) * b),
+                            static_cast<int>(qBlue(col) * b), 255);
+        }
+    }
+    return img;
+}
+} // namespace
+
+void PanadapterWidget::setQth(double latDeg, double lonDeg) {
+    qthLat_ = latDeg;
+    qthLon_ = lonDeg;
+    roseKey_.clear();                              // disc re-projects
+    update();
+}
+
+void PanadapterWidget::pointRoseAt(double lat, double lon, const QString& label) {
+    greatCircle(qthLat_, qthLon_, lat, lon, roseBearing_, roseDistKm_);
+    roseLabel_ = label;
+    update();
+}
+
+bool PanadapterWidget::overRose(int x, int y) const {
+    if (!ds_.showRose) return false;
+    const int hSpec = spectrumHeight();
+    if (hSpec < 2 * kRoseR + 30) return false;
+    const int cx = 10 + kRoseR, cy = hSpec - kRoseR - 10;
+    return std::hypot(double(x - cx), double(y - cy)) <= kRoseR;
+}
+
+void PanadapterWidget::drawCompassRose(QPainter& p, int hSpec) {
+    if (!ds_.showRose || hSpec < 2 * kRoseR + 30) return;
+    const int R = kRoseR;
+    const int cx = 10 + R, cy = hSpec - R - 10;
+    const qint64 minute = QDateTime::currentSecsSinceEpoch() / 60;
+    const QString key = QString("%1|%2|%3").arg(R).arg(qthLat_).arg(qthLon_);
+    if (roseKey_ != key || roseMinute_ != minute) {
+        roseCache_ = renderRoseDisc(R, qthLat_, qthLon_);
+        roseKey_ = key;
+        roseMinute_ = minute;
+    }
+    p.setRenderHint(QPainter::Antialiasing);
+    p.drawImage(cx - R, cy - R, roseCache_);
+    // Ring + ticks every 30 degrees, cardinal labels.
+    p.setPen(QPen(QColor(70, 84, 100), 2));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QPoint(cx, cy), R, R);
+    QFont f = p.font();
+    f.setPixelSize(9);
+    f.setBold(true);
+    p.setFont(f);
+    for (int a = 0; a < 360; a += 30) {
+        const double rad = a * M_PI / 180.0;
+        const double sx = std::sin(rad), sy = -std::cos(rad);
+        const bool cardinal = a % 90 == 0;
+        p.setPen(QPen(QColor(150, 165, 182), cardinal ? 2 : 1));
+        p.drawLine(QPointF(cx + sx * (R - (cardinal ? 9 : 5)),
+                           cy + sy * (R - (cardinal ? 9 : 5))),
+                   QPointF(cx + sx * R, cy + sy * R));
+    }
+    p.setPen(QColor(200, 212, 224));
+    static const char* card[] = {"N", "E", "S", "W"};
+    for (int i = 0; i < 4; ++i) {
+        const double rad = i * 90.0 * M_PI / 180.0;
+        const QPointF pt(cx + std::sin(rad) * (R - 17),
+                         cy - std::cos(rad) * (R - 17));
+        p.drawText(QRectF(pt.x() - 7, pt.y() - 7, 14, 14), Qt::AlignCenter,
+                   card[i]);
+    }
+    // Sun bearing tick (grayline aid): where to point for the terminator.
+    {
+        const QDateTime utc = QDateTime::currentDateTimeUtc();
+        const double hours = utc.time().hour() + utc.time().minute() / 60.0;
+        const double decl = 23.44
+            * std::sin(2.0 * M_PI * (utc.date().dayOfYear() - 81) / 365.25);
+        double sunLon = (12.0 - hours) * 15.0;
+        while (sunLon > 180.0) sunLon -= 360.0;
+        while (sunLon < -180.0) sunLon += 360.0;
+        double sb, sd;
+        greatCircle(qthLat_, qthLon_, decl, sunLon, sb, sd);
+        const double rad = sb * M_PI / 180.0;
+        p.setBrush(QColor(255, 190, 40));
+        p.setPen(QPen(QColor(120, 70, 0), 1));
+        p.drawEllipse(QPointF(cx + std::sin(rad) * (R - 4),
+                              cy - std::cos(rad) * (R - 4)), 3, 3);
+    }
+    // Bearing pointer + readout.
+    if (roseBearing_ >= 0.0) {
+        const double rad = roseBearing_ * M_PI / 180.0;
+        const QPointF tip(cx + std::sin(rad) * (R - 10),
+                          cy - std::cos(rad) * (R - 10));
+        p.setPen(QPen(QColor(235, 80, 60), 2.4, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(cx, cy), tip);
+        p.setBrush(QColor(235, 80, 60));
+        p.setPen(Qt::NoPen);
+        p.drawEllipse(QPointF(cx, cy), 3, 3);
+        // Readout box to the right of the disc.
+        QFont rf = p.font();
+        rf.setPixelSize(10);
+        rf.setBold(true);
+        p.setFont(rf);
+        const QFontMetrics fm(rf);
+        const QString l1 = roseLabel_.isEmpty() ? QString("MAN") : roseLabel_;
+        const QString l2 = roseDistKm_ >= 0.0
+            ? QString("%1°  %2 km").arg(qRound(roseBearing_))
+                                   .arg(qRound(roseDistKm_))
+            : QString("%1°").arg(qRound(roseBearing_));
+        const int wBox = std::max(fm.horizontalAdvance(l1),
+                                  fm.horizontalAdvance(l2)) + 14;
+        const int lineH = fm.height() + 1;
+        const QRect box(cx + R + 6, cy - lineH - 4, wBox, 2 * lineH + 8);
+        p.fillRect(box, QColor(10, 14, 20, 175));
+        p.setPen(QColor(235, 120, 90));
+        p.drawText(box.left() + 7, box.top() + 4 + fm.ascent(), l1);
+        p.setPen(QColor(220, 230, 240));
+        p.drawText(box.left() + 7, box.top() + 4 + lineH + fm.ascent(), l2);
+    }
+}
+
 void PanadapterWidget::setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
                                     const QString& xray) {
     solSfi_ = sfi;
@@ -452,7 +628,7 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
             p.setPen(QColor(150, 162, 178, alpha));
             p.drawText(xt + wCall + 4, box.top() + fm.ascent(), v.s->tag);
         }
-        spotHits_.push_back({box, v.s->hz, v.s->call});
+        spotHits_.push_back({box, v.s->hz, v.s->call, v.s->lat, v.s->lon});
     }
 }
 
@@ -976,6 +1152,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.drawPath(tracePath);
         drawSpots(p, hSpec);                       // cluster spots, on top
         drawSolarPanel(p, hSpec);                  // space-weather corner box
+        drawCompassRose(p, hSpec);                 // bearing rose, bottom-left
     } else {
         p.setPen(QColor(120, 220, 140));
         p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,
@@ -1035,6 +1212,12 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
                     QUrl("https://www.qrz.com/db/" + h.call));
                 return;
             }
+        if (overRose(x, y)) {                      // right-click rose = clear
+            roseBearing_ = -1.0;
+            roseLabel_.clear();
+            update();
+            return;
+        }
         if (!inScaleBand(y) && !inDbAxis(x, y)) {
             wheelVfo_ = 'B';                        // wheel now nudges B
             emit vfoBTuneRequested(xToHz(x));
@@ -1053,11 +1236,26 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         drag_ = Drag::Notch;
         return;
     }
-    // A click on a spot callsign tunes to the spotted frequency.
+    // Click inside the compass rose = manual heading (right-click clears).
+    if (overRose(x, y)) {
+        drag_ = Drag::None;
+        const int hSpec = spectrumHeight();
+        const int cx = 10 + kRoseR, cy = hSpec - kRoseR - 10;
+        roseBearing_ = std::atan2(double(x - cx), double(cy - y)) * 180.0 / M_PI;
+        if (roseBearing_ < 0.0) roseBearing_ += 360.0;
+        roseDistKm_ = -1.0;
+        roseLabel_ = "MAN";
+        update();
+        return;
+    }
+    // A click on a spot callsign tunes to the spotted frequency — and swings
+    // the rose to the station when its location is known (POTA park coords
+    // or cty.dat country placement).
     for (const SpotHit& h : spotHits_) {
         if (h.rect.contains(e->pos())) {
             drag_ = Drag::None;
             wheelVfo_ = 'A';
+            if (h.lat < 500.0) pointRoseAt(h.lat, h.lon, h.call);
             emit tuneRequested(static_cast<int>(h.hz - static_cast<qint64>(centerHz_)));
             return;
         }

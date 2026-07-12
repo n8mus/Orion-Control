@@ -62,6 +62,8 @@ void PotaClient::poll() {
             s.hz   = hz;
             s.kind = 'P';
             s.tag  = o.value("reference").toString();
+            s.lat  = o.value("latitude").toDouble(999.0);   // park coordinates
+            s.lon  = o.value("longitude").toDouble(999.0);  // (bearing display)
             // spotTime is ISO with no zone suffix but is UTC.
             QDateTime t = QDateTime::fromString(o.value("spotTime").toString(),
                                                 Qt::ISODate);

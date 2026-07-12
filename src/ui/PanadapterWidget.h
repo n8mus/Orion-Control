@@ -30,6 +30,7 @@ struct DisplaySettings {
     bool  showGrid   = true;    // freq/dB gridlines on or off
     bool  showCall   = true;    // subtle callsign watermark in the spectrum
     bool  showSolar  = true;    // space-weather panel in the spectrum corner
+    bool  showRose   = true;    // compass rose (azimuthal world + bearing)
 };
 
 // A DX-cluster spot to mark on the display (absolute frequency). atSecs
@@ -42,6 +43,8 @@ struct SpotLabel {
     qint64  atSecs = 0;
     char    kind = 'D';
     QString tag;
+    double  lat = 999.0;        // station location (999 = unknown) — clicking
+    double  lon = 999.0;        // the label swings the compass rose to it
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:
@@ -88,6 +91,11 @@ public:
     // corner panel (ds_.showSolar). Values < 0 / empty = unknown, not drawn.
     void setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
                       const QString& xray);
+    // Station location (from the grid square) — centers the compass rose.
+    void setQth(double latDeg, double lonDeg);
+    // Swing the rose to a target (spot clicks use this internally; public
+    // for future rotor/logging integration).
+    void pointRoseAt(double lat, double lon, const QString& label);
     // VFO B: drawn like the main VFO (passband tint + center line + flag)
     // when its dial falls inside the view. role = 'T' (B transmits — red),
     // 'R' (B is the main RX — green) or 'N' (parked sub dial — blue); A's
@@ -200,7 +208,7 @@ private:
     QImage fillImg_;                               // level-colored fill (reused buffer)
 
     // DX-cluster spots: markers + callsigns in the spectrum area; hit rects
-    struct SpotHit { QRect rect; qint64 hz; QString call; };
+    struct SpotHit { QRect rect; qint64 hz; QString call; double lat, lon; };
     // (rebuilt each paint) make the labels click-to-tune targets.
     QVector<SpotLabel> spots_;
     QVector<SpotHit>   spotHits_;                  // label rect -> freq + call
@@ -232,6 +240,20 @@ private:
     double  solK_ = -1.0;
     QString solXray_;
     void drawSolarPanel(QPainter& p, int hSpec);   // green corner readout
+
+    // Compass rose: azimuthal-equidistant world disc centered on the QTH,
+    // bottom-left of the spectrum. Clicking a located spot label points it;
+    // clicking inside the rose sets a manual heading, right-click clears.
+    void drawCompassRose(QPainter& p, int hSpec);
+    bool overRose(int x, int y) const;             // inside the disc?
+    static constexpr int kRoseR = 64;
+    double  qthLat_ = 42.5, qthLon_ = -83.0;       // EN82 until the grid is set
+    double  roseBearing_ = -1.0;                   // pointer heading (-1 = none)
+    double  roseDistKm_  = -1.0;
+    QString roseLabel_;
+    QImage  roseCache_;                            // projected disc, cached
+    qint64  roseMinute_ = -1;                      // grayline advances
+    QString roseKey_;                              // size+QTH cache key
 
     enum class Drag {
         None,

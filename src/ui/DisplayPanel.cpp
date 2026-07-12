@@ -120,17 +120,31 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     solar_->setToolTip("SFI / sunspots / A / K / X-ray from NOAA, refreshed "
                        "every 15 minutes; the map backdrops also get the sun "
                        "marker with the same numbers");
+    rose_ = new QCheckBox("Compass rose", this);
+    rose_->setToolTip("Azimuthal world disc centered on your grid square.\n"
+                      "Click a spot callsign to swing the pointer to that "
+                      "station;\nclick inside the rose for a manual heading, "
+                      "right-click clears.");
     call_ = new QCheckBox("Callsign watermark", this);
     g->addWidget(fill_, 8, 0, 1, 3);
     g->addWidget(peak_, 9, 0, 1, 3);
     g->addWidget(grid_, 10, 0, 1, 3);
     g->addWidget(solar_, 11, 0, 1, 3);
-    g->addWidget(call_, 12, 0, 1, 3);
+    g->addWidget(rose_, 12, 0, 1, 3);
+    g->addWidget(call_, 13, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 13, 0);
+    g->addWidget(makeCaption("CALL", this), 14, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 13, 1, 1, 2);
+    g->addWidget(callEdit_, 14, 1, 1, 2);
+
+    // Station grid square: centers the compass rose (and any future
+    // bearing/distance math). 4 or 6 characters.
+    g->addWidget(makeCaption("GRID", this), 15, 0);
+    gridEdit_ = new QLineEdit(this);
+    gridEdit_->setMaxLength(6);
+    gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
+    g->addWidget(gridEdit_, 15, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -187,9 +201,13 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(peak_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(solar_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(rose_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(call_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(callEdit_, &QLineEdit::textEdited, this, [this](const QString& t) {
         emit callsignChanged(t.trimmed().toUpper());
+    });
+    connect(gridEdit_, &QLineEdit::textEdited, this, [this](const QString& t) {
+        emit gridChanged(t.trimmed().toUpper());
     });
 
     setSettings(DisplaySettings{});                // defaults until owner restores
@@ -210,6 +228,7 @@ DisplaySettings DisplayPanel::settings() const {
     s.showGrid   = grid_->isChecked();
     s.showCall   = call_->isChecked();
     s.showSolar  = solar_->isChecked();
+    s.showRose   = rose_->isChecked();
     s.split      = split_;
     return s;
 }
@@ -218,7 +237,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
-        b11(mapDay_), b12(mapNight_), b13(solar_);
+        b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -236,6 +255,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     grid_->setChecked(s.showGrid);
     call_->setChecked(s.showCall);
     solar_->setChecked(s.showSolar);
+    rose_->setChecked(s.showRose);
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
     mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
@@ -248,6 +268,11 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
 void DisplayPanel::setCallsign(const QString& call) {
     const QSignalBlocker b(callEdit_);
     callEdit_->setText(call);
+}
+
+void DisplayPanel::setGrid(const QString& grid) {
+    const QSignalBlocker b(gridEdit_);
+    gridEdit_->setText(grid);
 }
 
 void DisplayPanel::emitChanged() {

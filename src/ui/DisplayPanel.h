@@ -23,10 +23,12 @@ public:
     DisplaySettings settings() const;
     void setSettings(const DisplaySettings& s);    // no emit (QSignalBlocker)
     void setCallsign(const QString& call);         // no emit
+    void setGrid(const QString& grid);             // no emit
 
 signals:
     void settingsChanged(const DisplaySettings& s);
     void callsignChanged(const QString& call);     // watermark text edited
+    void gridChanged(const QString& grid);         // station grid square edited
 
 private:
     void emitChanged();
@@ -48,8 +50,10 @@ private:
     QCheckBox* peak_   = nullptr;
     QCheckBox* grid_   = nullptr;
     QCheckBox* solar_  = nullptr;
+    QCheckBox* rose_   = nullptr;
     QCheckBox* call_   = nullptr;
     QLineEdit* callEdit_ = nullptr;
+    QLineEdit* gridEdit_ = nullptr;
     float split_ = 0.42f;   // no UI control (dragged in the panadapter); pass through
 };
 

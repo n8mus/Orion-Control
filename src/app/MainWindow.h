@@ -11,6 +11,7 @@ class QToolButton;
 #include "net/SpotClient.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
+#include "util/CtyLookup.h"
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -65,6 +66,8 @@ private:
     PotaClient       potaClient_;                  // POTA activator API feed
     SolarClient      solarClient_;                 // NOAA space-weather poller
     QStringList      parkFilter_;                  // POTA park countries in area
+    CtyLookup        cty_;                         // callsign -> country coords
+    QHash<QString, QPair<double, double>> ctyMemo_; // per-call resolution cache
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;

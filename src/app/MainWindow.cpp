@@ -337,6 +337,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/grid",       d.showGrid);
         s.setValue("display/callsign",   d.showCall);
         s.setValue("display/solar",      d.showSolar);
+        s.setValue("display/rose",       d.showRose);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
     // Editable in the DISPLAY panel (CALL field), persisted immediately.
@@ -347,6 +348,25 @@ MainWindow::MainWindow(QWidget* parent)
     }
     dispPanel->setCallsign(stationCall);
     pan_->setCallsign(stationCall);
+    // Station grid square -> QTH for the compass rose; cty.dat places DX
+    // calls for the bearing pointer. EN82 (SE Michigan) until Jon sets his.
+    cty_.load();
+    {
+        QSettings s;
+        const QString grid = s.value("station/grid", "EN82").toString();
+        dispPanel->setGrid(grid);
+        double la, lo;
+        if (CtyLookup::gridToLatLon(grid, la, lo)) pan_->setQth(la, lo);
+    }
+    connect(dispPanel, &DisplayPanel::gridChanged, this, [this](const QString& g) {
+        QSettings().setValue("station/grid", g);
+        double la, lo;
+        if (CtyLookup::gridToLatLon(g, la, lo)) {
+            pan_->setQth(la, lo);
+            statusBar()->showMessage(QString("QTH grid %1 (%2, %3)")
+                                         .arg(g).arg(la, 0, 'f', 1).arg(lo, 0, 'f', 1));
+        }
+    });
     // US 60 m allocation per FCC 25-60, effective 2026-02-13 (KE9NS-style
     // zone boxes): contiguous 5351.5-5366.5 kHz at 15 W EIRP / 2.8 kHz max
     // bandwidth / any compliant mode, plus the four retained USB channels
@@ -381,6 +401,7 @@ MainWindow::MainWindow(QWidget* parent)
         d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
         d.showCall   = s.value("display/callsign",   d.showCall).toBool();
         d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
+        d.showRose   = s.value("display/rose",       d.showRose).toBool();
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
         // The "Solar data panel" toggle governs everything solar (corner
@@ -542,7 +563,20 @@ MainWindow::MainWindow(QWidget* parent)
     connect(radio_, &RadioController::audioRoutingReported, this,
             [this](char l, char r, char s) { audioPanel_->showRouting(l, r, s); });
 
-    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On] {
+    // Cluster spots carry no location: place them by cty.dat prefix (country
+    // center — good enough for a bearing), memoized per call so the FT8-rate
+    // feed never rescans the prefix table.
+    const auto ctyPlace = [this](SpotLabel& l) {
+        auto it = ctyMemo_.constFind(l.call);
+        if (it == ctyMemo_.constEnd()) {
+            double la = 999.0, lo = 999.0;
+            cty_.lookup(l.call, la, lo);
+            it = ctyMemo_.insert(l.call, qMakePair(la, lo));
+        }
+        l.lat = it->first;
+        l.lon = it->second;
+    };
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
             QSet<QString> seen;                    // POTA API entry wins (has
@@ -553,7 +587,8 @@ MainWindow::MainWindow(QWidget* parent)
                     if (!parkFilter_.isEmpty()
                         && !parkFilter_.contains(s.tag.section('-', 0, 0)))
                         continue;
-                    labels.push_back({s.call, s.hz, s.atSecs, s.kind, s.tag});
+                    labels.push_back({s.call, s.hz, s.atSecs, s.kind, s.tag,
+                                      s.lat, s.lon});
                     seen.insert(s.call);
                 }
             for (const Spot& s : spotClient_.spots()) {
@@ -561,7 +596,9 @@ MainWindow::MainWindow(QWidget* parent)
                 if (s.kind == 'F' && !ft8On->isChecked()) continue;
                 if (s.kind == 'P' && !potaOn->isChecked()) continue;
                 if (seen.contains(s.call)) continue;
-                labels.push_back({s.call, s.hz, s.atSecs, s.kind, s.tag});
+                SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
+                if (l.lat > 500.0) ctyPlace(l);
+                labels.push_back(l);
             }
         }
         pan_->setSpots(labels);

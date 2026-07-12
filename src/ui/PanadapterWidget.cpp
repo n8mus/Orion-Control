@@ -311,7 +311,10 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
     std::vector<int> rowEdge(maxRows, INT_MIN);
     const qint64 now = QDateTime::currentSecsSinceEpoch();
     for (const Vis& v : vis) {
-        const int w = fm.horizontalAdvance(v.s->call);
+        const int wCall = fm.horizontalAdvance(v.s->call);
+        const int wTag  = v.s->tag.isEmpty() ? 0
+                        : fm.horizontalAdvance(v.s->tag) + 4;
+        const int w = wCall + wTag;
         int xt = v.lsb ? v.x - w - 5 : v.x + 5;
         xt = std::clamp(xt, 2, std::max(2, width() - w - 2));
         int row = -1;
@@ -320,13 +323,21 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
         if (row < 0) continue;
         rowEdge[row] = xt + w;
         const QRect box(xt - 3, topY + row * rowH, w + 6, rowH - 1);
-        // Fade with age toward the 20-minute expiry (unknown age = fresh).
+        // Fade with age toward expiry (unknown age = fresh).
         const qint64 age = v.s->atSecs > 0
             ? std::clamp<qint64>(now - v.s->atSecs, 0, 1200) : 0;
         const int alpha = 255 - static_cast<int>(age * 115 / 1200);
+        QColor c = v.s->kind == 'P' ? QColor(74, 222, 128)   // POTA green
+                 : v.s->kind == 'F' ? QColor(96, 200, 255)   // FT8 cyan
+                                    : QColor(255, 216, 50);  // DX yellow
+        c.setAlpha(alpha);
         p.fillRect(box, QColor(8, 10, 16, 185));         // dark box (.261 idea)
-        p.setPen(QColor(255, 216, 50, alpha));
+        p.setPen(c);
         p.drawText(xt, box.top() + fm.ascent(), v.s->call);
+        if (wTag) {                                      // park ref, muted gray
+            p.setPen(QColor(150, 162, 178, alpha));
+            p.drawText(xt + wCall + 4, box.top() + fm.ascent(), v.s->tag);
+        }
         spotHits_.push_back({box, v.s->hz, v.s->call});
     }
 }

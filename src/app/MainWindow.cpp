@@ -18,6 +18,8 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QInputDialog>
+#include <QSet>
 #include <QStandardPaths>
 #include "ui/DisplayPanel.h"
 #include "net/SpotClient.h"
@@ -35,6 +37,30 @@ static int bwMaxFor(Mode m);    // per-mode filter ceiling (AM runs to 8000)
 // Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
 // the dial so its zero-IF DC artifact can never sit on the tuned frequency.
 static constexpr int kLoOffsetHz = 60000;
+
+// Spotter-area presets: ctys = CC Cluster spotter-origin country prefixes
+// (SET/FILTER DOC/PASS list, coarse-but-practical major spotting countries
+// per region); parks = POTA park country codes for the same region. Empty
+// ctys = no filter. The Custom menu entry takes any DOC list verbatim.
+struct SpotArea { const char* name; const char* ctys; const char* parks; };
+static const SpotArea kSpotAreas[] = {
+    {"All spotters",  "", ""},
+    {"North America", "K,VE,XE,KL,KP4,KP2,CM,C6,ZF,6Y,HI,TI,V3,HP,YS,HR,TG,YN",
+                      "US,CA,MX"},
+    {"Europe",        "G,GM,GW,GI,GD,GU,GJ,EI,F,DL,PA,ON,LX,HB,OE,I,EA,CT,OK,OM,"
+                      "SP,HA,YO,LZ,SV,S5,9A,E7,YU,Z3,OH,SM,LA,OZ,ES,YL,LY,EW,UR,UA",
+                      "GB,IE,FR,DE,NL,BE,LU,CH,AT,IT,ES,PT,CZ,SK,PL,HU,RO,BG,GR,"
+                      "SI,HR,RS,FI,SE,NO,DK,EE,LV,LT,UA"},
+    {"Asia",          "JA,HL,BY,BV,VR,VU,4X,UA9,UA0,HS,9V,9M2,DU,YB,A4,A6,A7,A9,"
+                      "HZ,EP,TA",
+                      "JP,KR,CN,TW,IN,IL,TH,SG,MY,PH,ID"},
+    {"Oceania",       "VK,ZL,KH6,KH2,FK,3D2,P2",
+                      "AU,NZ,FJ,PG"},
+    {"South America", "PY,LU,CE,CX,HK,YV,OA,HC,ZP,P4,PJ2,PJ4,8R,9Y",
+                      "BR,AR,CL,UY,CO,VE,PE,EC,PY"},
+    {"Africa",        "ZS,5Z,SU,CN,EA8,V5,9J,7X,3B8,5R,TR,TU,6W,Z2,A2",
+                      "ZA,KE,EG,MA,NA,ZM,MU,MG,SN,ZW,BW"},
+};
 
 // Radio driver factory: TTC_RADIO env overrides the persisted picker choice.
 // "orion" = Ten-Tec Orion 565/566 (ASCII CAT); "omni8" = Omni VII 588
@@ -383,6 +409,36 @@ MainWindow::MainWindow(QWidget* parent)
     styleMenu(spotsMenu);
     auto* spotsOn   = spotsMenu->addAction("Show spots");
     spotsOn->setCheckable(true);
+    // Per-source toggles, so any mix works: just FT8 for a digital session,
+    // just POTA for park hunting, everything for a contest.
+    auto* dxOn = spotsMenu->addAction("DX spots");
+    dxOn->setCheckable(true);
+    dxOn->setToolTip("Classic human cluster spots (yellow labels)");
+    auto* potaOn = spotsMenu->addAction("POTA spots");
+    potaOn->setCheckable(true);
+    potaOn->setToolTip("Park activations from api.pota.app (green labels "
+                       "with the park reference)");
+    auto* ft8On = spotsMenu->addAction("FT8 spots");
+    ft8On->setCheckable(true);
+    ft8On->setToolTip("FT8 skimmer spots from the cluster node (cyan labels, "
+                      "placed at the station's actual offset in the watering hole)");
+    // Spotter area: only show what's being heard in a chosen part of the
+    // world (server-side CC Cluster spotter-origin filter); the same region
+    // choice narrows POTA to that region's parks. Custom takes any CC
+    // country-prefix list for slicing the world however the operator likes.
+    auto* areaMenu = spotsMenu->addMenu("Spotter area");
+    styleMenu(areaMenu);
+    auto* areaGrp = new QActionGroup(spotsMenu);
+    QVector<QAction*> areaActs;
+    for (const SpotArea& a : kSpotAreas) {
+        auto* act = areaMenu->addAction(a.name);
+        act->setCheckable(true);
+        act->setActionGroup(areaGrp);
+        areaActs.push_back(act);
+    }
+    auto* areaCustom = areaMenu->addAction("Custom…");
+    areaCustom->setCheckable(true);
+    areaCustom->setActionGroup(areaGrp);
     auto* spotsClear = spotsMenu->addAction("Clear spots");
     spotsMenu->addSeparator();
     {
@@ -395,6 +451,9 @@ MainWindow::MainWindow(QWidget* parent)
         info->setEnabled(false);
         spotClient_.configure(host, port, login);
         spotsOn->setChecked(s.value("spots/enabled", true).toBool());
+        dxOn->setChecked(s.value("spots/dx", true).toBool());
+        potaOn->setChecked(s.value("spots/pota", true).toBool());
+        ft8On->setChecked(s.value("spots/ft8", true).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
     topLay->addSpacing(8);
@@ -468,23 +527,116 @@ MainWindow::MainWindow(QWidget* parent)
     connect(radio_, &RadioController::audioRoutingReported, this,
             [this](char l, char r, char s) { audioPanel_->showRouting(l, r, s); });
 
-    auto pushSpots = [this, spotsOn] {
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On] {
         QVector<SpotLabel> labels;
-        if (spotsOn->isChecked())
-            for (const Spot& s : spotClient_.spots())
-                labels.push_back({s.call, s.hz, s.atSecs});
+        if (spotsOn->isChecked()) {
+            QSet<QString> seen;                    // POTA API entry wins (has
+            if (potaOn->isChecked())               // the park ref) over the
+                for (const Spot& s : potaClient_.spots()) {  // cluster's copy
+                    // The spotter-area choice narrows POTA to that region's
+                    // parks (ref prefix, "US-2654" -> "US").
+                    if (!parkFilter_.isEmpty()
+                        && !parkFilter_.contains(s.tag.section('-', 0, 0)))
+                        continue;
+                    labels.push_back({s.call, s.hz, s.atSecs, s.kind, s.tag});
+                    seen.insert(s.call);
+                }
+            for (const Spot& s : spotClient_.spots()) {
+                if (s.kind == 'D' && !dxOn->isChecked()) continue;
+                if (s.kind == 'F' && !ft8On->isChecked()) continue;
+                if (s.kind == 'P' && !potaOn->isChecked()) continue;
+                if (seen.contains(s.call)) continue;
+                labels.push_back({s.call, s.hz, s.atSecs, s.kind, s.tag});
+            }
+        }
         pan_->setSpots(labels);
     };
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });
-    connect(spotsOn, &QAction::toggled, this, [this, pushSpots](bool on) {
+    connect(&potaClient_, &PotaClient::spotsChanged, this, pushSpots);
+    connect(&potaClient_, &PotaClient::statusChanged, this,
+            [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    connect(spotsOn, &QAction::toggled, this, [this, pushSpots, potaOn](bool on) {
         QSettings().setValue("spots/enabled", on);
         spotClient_.setEnabled(on);
+        potaClient_.setEnabled(on && potaOn->isChecked());
         pushSpots();
     });
+    connect(potaOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
+        QSettings().setValue("spots/pota", on);
+        potaClient_.setEnabled(on && spotsOn->isChecked());
+        pushSpots();
+    });
+    connect(ft8On, &QAction::toggled, this, [this, pushSpots](bool on) {
+        QSettings().setValue("spots/ft8", on);
+        spotClient_.setFt8Wanted(on);              // reconfigures the node live
+        pushSpots();
+    });
+    connect(dxOn, &QAction::toggled, this, [pushSpots](bool on) {
+        QSettings().setValue("spots/dx", on);
+        pushSpots();
+    });
+    // Spotter area: push the country list to the node (live if connected),
+    // remember the park scope for POTA, and re-filter what's on screen.
+    const auto applyArea = [this, pushSpots](const QString& ctys,
+                                             const QString& parks,
+                                             const QString& label) {
+        spotClient_.setSpotterFilter(ctys);
+        parkFilter_ = parks.isEmpty() ? QStringList()
+                                      : parks.split(',', Qt::SkipEmptyParts);
+        pushSpots();
+        statusBar()->showMessage(ctys.isEmpty()
+            ? QStringLiteral("spots: all spotters worldwide")
+            : QString("spots: spotters filtered to %1").arg(label));
+    };
+    for (int i = 0; i < static_cast<int>(std::size(kSpotAreas)); ++i)
+        connect(areaActs[i], &QAction::triggered, this, [applyArea, i] {
+            QSettings().setValue("spots/area", kSpotAreas[i].name);
+            applyArea(kSpotAreas[i].ctys, kSpotAreas[i].parks, kSpotAreas[i].name);
+        });
+    connect(areaCustom, &QAction::triggered, this,
+            [this, applyArea, areaActs, areaCustom] {
+        QSettings s;
+        bool ok = false;
+        const QString list = QInputDialog::getText(this,
+            "Custom spotter filter",
+            "Spotter country prefixes (CC Cluster list, e.g. K,VE,XE):",
+            QLineEdit::Normal,
+            s.value("spots/areaCustomCty", "K,VE,XE").toString(), &ok)
+            .trimmed().toUpper();
+        if (!ok || list.isEmpty()) {               // canceled: restore the check
+            const QString cur = s.value("spots/area", "North America").toString();
+            for (int i = 0; i < static_cast<int>(std::size(kSpotAreas)); ++i)
+                if (cur == kSpotAreas[i].name) areaActs[i]->setChecked(true);
+            if (cur == "Custom") areaCustom->setChecked(true);
+            return;
+        }
+        s.setValue("spots/area", "Custom");
+        s.setValue("spots/areaCustomCty", list);
+        applyArea(list, QString(), "custom (" + list + ")");
+    });
     connect(spotsClear, &QAction::triggered, this, [this] { spotClient_.clear(); });
-    spotClient_.setEnabled(spotsOn->isChecked());
+    {   // Restore the persisted area choice (default: North America).
+        QSettings s;
+        const QString cur = s.value("spots/area", "North America").toString();
+        bool found = false;
+        for (int i = 0; i < static_cast<int>(std::size(kSpotAreas)); ++i)
+            if (cur == kSpotAreas[i].name) {
+                areaActs[i]->setChecked(true);
+                applyArea(kSpotAreas[i].ctys, kSpotAreas[i].parks,
+                          kSpotAreas[i].name);
+                found = true;
+            }
+        if (!found) {                              // stored custom list
+            areaCustom->setChecked(true);
+            applyArea(s.value("spots/areaCustomCty", "").toString(), QString(),
+                      "custom");
+        }
+    }
+    spotClient_.setFt8Wanted(ft8On->isChecked());  // before connect: config
+    spotClient_.setEnabled(spotsOn->isChecked());  // rides the login sequence
+    potaClient_.setEnabled(spotsOn->isChecked() && potaOn->isChecked());
 
 #ifdef HAVE_SDRPLAY
     // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).

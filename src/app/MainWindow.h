@@ -9,6 +9,7 @@ class QToolButton;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
+#include "net/PotaClient.h"
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -60,6 +61,8 @@ private:
     RadioController* radio_;                  // owned (QObject child); see makeRadio
     RigctldServer    rigctld_;
     SpotClient       spotClient_;                  // DX-cluster telnet feed
+    PotaClient       potaClient_;                  // POTA activator API feed
+    QStringList      parkFilter_;                  // POTA park countries in area
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;
     ControlPanel*     panel_  = nullptr;

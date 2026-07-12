@@ -30,11 +30,15 @@ struct DisplaySettings {
 };
 
 // A DX-cluster spot to mark on the display (absolute frequency). atSecs
-// (epoch) lets fresh spots draw brighter than ones about to expire.
+// (epoch) lets fresh spots draw brighter than ones about to expire. kind
+// picks the label color ('D' DX yellow, 'P' POTA green, 'F' FT8 cyan); tag
+// is extra text after the call (the POTA park reference).
 struct SpotLabel {
     QString call;
     qint64  hz = 0;
     qint64  atSecs = 0;
+    char    kind = 'D';
+    QString tag;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

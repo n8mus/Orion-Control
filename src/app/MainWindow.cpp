@@ -332,6 +332,8 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/peak",    d.peakHold);
         s.setValue("display/split",   d.split);
         s.setValue("display/background", d.background);
+        s.setValue("display/mapDay",     d.mapDay);
+        s.setValue("display/mapNight",   d.mapNight);
         s.setValue("display/grid",       d.showGrid);
         s.setValue("display/callsign",   d.showCall);
     };
@@ -373,6 +375,8 @@ MainWindow::MainWindow(QWidget* parent)
         d.peakHold  = s.value("display/peak",    d.peakHold).toBool();
         d.split     = s.value("display/split",   d.split).toFloat();
         d.background = s.value("display/background", d.background).toInt();
+        d.mapDay     = s.value("display/mapDay",     d.mapDay).toInt();
+        d.mapNight   = s.value("display/mapNight",   d.mapNight).toInt();
         d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
         d.showCall   = s.value("display/callsign",   d.showCall).toBool();
         dispPanel->setSettings(d);

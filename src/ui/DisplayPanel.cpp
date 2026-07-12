@@ -6,7 +6,10 @@
 #include <QLabel>
 #include <QComboBox>
 #include <QCheckBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QLineEdit>
+#include <QSettings>
 #include <QSignalBlocker>
 #include <algorithm>
 
@@ -90,23 +93,48 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     bg_->addItems(PanadapterWidget::backgroundNames());
     g->addWidget(bg_, 5, 1, 1, 2);
 
+    // Map brightness (only live for the map backdrops): separate day-side
+    // and night-side levels, so the map can pop without drowning the trace.
+    g->addWidget(makeCaption("MAP DAY", this), 6, 0);
+    mapDay_ = new QSlider(Qt::Horizontal, this);
+    mapDay_->setRange(30, 120);
+    mapDay_->setFixedWidth(225);
+    mapDayVal_ = new QLabel(this);
+    mapDayVal_->setFixedWidth(70);
+    g->addWidget(mapDay_, 6, 1);
+    g->addWidget(mapDayVal_, 6, 2);
+
+    g->addWidget(makeCaption("MAP NIGHT", this), 7, 0);
+    mapNight_ = new QSlider(Qt::Horizontal, this);
+    mapNight_->setRange(0, 60);
+    mapNight_->setFixedWidth(225);
+    mapNightVal_ = new QLabel(this);
+    mapNightVal_->setFixedWidth(70);
+    g->addWidget(mapNight_, 7, 1);
+    g->addWidget(mapNightVal_, 7, 2);
+
     fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
     grid_ = new QCheckBox("Grid lines", this);
     call_ = new QCheckBox("Callsign watermark", this);
-    g->addWidget(fill_, 6, 0, 1, 3);
-    g->addWidget(peak_, 7, 0, 1, 3);
-    g->addWidget(grid_, 8, 0, 1, 3);
-    g->addWidget(call_, 9, 0, 1, 3);
+    g->addWidget(fill_, 8, 0, 1, 3);
+    g->addWidget(peak_, 9, 0, 1, 3);
+    g->addWidget(grid_, 10, 0, 1, 3);
+    g->addWidget(call_, 11, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 10, 0);
+    g->addWidget(makeCaption("CALL", this), 12, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 10, 1, 1, 2);
+    g->addWidget(callEdit_, 12, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
         rangeVal_->setText(QString("%1 dB").arg(range_->value()));
+        mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
+        mapNightVal_->setText(QString("%1 %").arg(mapNight_->value()));
+        const bool isMap = bg_->currentIndex() >= 2;
+        mapDay_->setEnabled(isMap);
+        mapNight_->setEnabled(isMap);
     };
     connect(ref_,   &QSlider::valueChanged, this, [this, updateLabels] {
         updateLabels();
@@ -116,10 +144,40 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         updateLabels();
         emitChanged();
     });
+    connect(mapDay_, &QSlider::valueChanged, this, [this, updateLabels] {
+        updateLabels();
+        emitChanged();
+    });
+    connect(mapNight_, &QSlider::valueChanged, this, [this, updateLabels] {
+        updateLabels();
+        emitChanged();
+    });
     connect(avg_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(speed_, &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(pal_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
-    connect(bg_,    &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
+    connect(bg_, &QComboBox::currentIndexChanged, this, [this, updateLabels](int idx) {
+        // Last entry = "Map: Custom…" — ask for the image right here. Cancel
+        // with no previous custom pick bounces back to the prior backdrop.
+        if (idx == bg_->count() - 1) {
+            QSettings s;
+            const QString cur = s.value("display/mapCustomPath").toString();
+            const QString f = QFileDialog::getOpenFileName(
+                this, "Choose a world map / backdrop image",
+                cur.isEmpty() ? QDir::homePath() : cur,
+                "Images (*.jpg *.jpeg *.png *.bmp)");
+            if (!f.isEmpty()) {
+                s.setValue("display/mapCustomPath", f);
+            } else if (cur.isEmpty()) {
+                const QSignalBlocker b(bg_);
+                bg_->setCurrentIndex(prevBg_);
+                updateLabels();
+                return;
+            }
+        }
+        prevBg_ = idx;
+        updateLabels();
+        emitChanged();
+    });
     connect(fill_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(peak_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
@@ -141,6 +199,8 @@ DisplaySettings DisplayPanel::settings() const {
     s.fillTrace  = fill_->isChecked();
     s.peakHold   = peak_->isChecked();
     s.background = bg_->currentIndex();
+    s.mapDay     = mapDay_->value();
+    s.mapNight   = mapNight_->value();
     s.showGrid   = grid_->isChecked();
     s.showCall   = call_->isChecked();
     s.split      = split_;
@@ -150,7 +210,8 @@ DisplaySettings DisplayPanel::settings() const {
 void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
-        b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_);
+        b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
+        b11(mapDay_), b12(mapNight_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -159,12 +220,21 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     speed_->setCurrentIndex(si >= 0 ? si : 1);
     pal_->setCurrentIndex(std::clamp(s.palette, 0, pal_->count() - 1));
     bg_->setCurrentIndex(std::clamp(s.background, 0, bg_->count() - 1));
+    prevBg_ = bg_->currentIndex();
+    mapDay_->setValue(std::clamp(s.mapDay, mapDay_->minimum(), mapDay_->maximum()));
+    mapNight_->setValue(std::clamp(s.mapNight, mapNight_->minimum(),
+                                   mapNight_->maximum()));
     fill_->setChecked(s.fillTrace);
     peak_->setChecked(s.peakHold);
     grid_->setChecked(s.showGrid);
     call_->setChecked(s.showCall);
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
+    mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
+    mapNightVal_->setText(QString("%1 %").arg(mapNight_->value()));
+    const bool isMap = bg_->currentIndex() >= 2;
+    mapDay_->setEnabled(isMap);
+    mapNight_->setEnabled(isMap);
 }
 
 void DisplayPanel::setCallsign(const QString& call) {

@@ -1,3 +1,12 @@
-earth.jpg: NASA Blue Marble equirectangular world map (public domain),
-as shipped by xplanet (/usr/share/xplanet/images/earth.jpg).
-Used for the panadapter "World Map" background with live grayline shading.
+World map backdrops — all NASA imagery, public domain, fetched directly
+from NASA (no third-party application assets):
+
+earth.jpg        NASA Blue Marble classic equirectangular, as shipped by
+                 xplanet (/usr/share/xplanet/images/earth.jpg).
+earth_veg.jpg    NASA Blue Marble Next Generation, July, with topography
+                 and bathymetry (visibleearth.nasa.gov imagerecord 73751,
+                 world.topo.bathy.200407), downscaled to 2700x1350.
+earth_night.jpg  NASA Black Marble 2016 city lights (visibleearth
+                 imagerecord 144898, BlackMarble_2016_01deg), 2700x1350.
+
+Used for the panadapter map backgrounds with live grayline shading.

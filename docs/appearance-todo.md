@@ -6,34 +6,27 @@ meters are drawn as **vector QPainter faces** (no bitmap skins copied from
 anyone), map imagery is fetched from **NASA Visible Earth directly** (public
 domain), no third-party asset files enter the repo.
 
-## 1. S-meter suite (the "bland meter" fix) — biggest visual win
-- [ ] **Meter style picker** (DISPLAY menu or click the meter to cycle),
-      persisted: `Bar` (current), `Analog needle`, `Edge needle`, `Digital`.
-- [ ] **Analog needle face**: ivory/backlit cross-needle look drawn in
-      QPainter — arc scale S1–S9+60 dB, red zone above S9, needle with
-      ballistics (fast attack ~50 ms, slow decay ~500 ms), subtle glass
-      highlight. TX face swaps to PO (W) with SWR/ALC secondary arcs.
-- [ ] **Digital readout row** under/next to the meter, Thetis style:
-      `-74.4 dBm   S 9   42.6 µV` — all three derived from the same
-      calibrated dB-rel-S9 value we already compute.
-- [ ] **RX meter modes**: Signal / Signal Average / Signal Peak (KE9NS
-      MeterRXMode) — mode label shown on the face.
-- [ ] **TX meter modes**: Forward / SWR / Combo (needle = watts, inset
-      digits = SWR) — we already flip faces on T/R, extend to the new styles.
+## 1. S-meter suite (the "bland meter" fix) — DONE (on-air validated)
+- [x] **Meter style picker**: click the meter cycles Bar / Analog / Edge /
+      Digital, persisted.
+- [x] **Analog needle face**: vector ivory face, black S1–S9 arc, red over-S9
+      arc, 30 fps ballistics (fast attack / slow decay), peak ghost needle.
+      TX face: 0–120 W with red zone + SWR readout.
+- [x] **Digital readout**: dBm / S-units / µV from the calibrated value.
+- [x] **RX meter modes**: right-click cycles Signal / Average / Peak, chip on
+      the face.
+- [x] **TX faces** on every style (watts + SWR + reflected on digital).
 
-## 2. World map backgrounds (map pack + controls)
-- [ ] **Bundle 3–4 NASA equirectangular basemaps** (all public domain,
-      downloaded from NASA Visible Earth / Blue Marble):
-      - Blue Marble Next Generation (vegetation/topo — the "Thetis look")
-      - Black Marble / Earth at Night (city lights — great on a dark console)
-      - Topography/bathymetry relief
-      - current Blue Marble classic (keep)
-- [ ] **Map brightness slider** in DISPLAY (current fixed 78 %/19 % dimming is
-      too dark next to the Thetis shot) — separate day/night levels.
-- [ ] **Custom image loader** (Thetis-style): DISPLAY → "Load background…"
-      file picker, any user image, persisted path.
-- [ ] Keep the live grayline/terminator on every map variant; soften the
-      terminator band edge (gradient instead of the current hard ramp).
+## 2. World map backgrounds (map pack + controls) — DONE
+- [x] **Bundled NASA basemaps**: Map: Classic (Blue Marble), Map: Vegetation
+      (BMNG July topo/bathy — the "Thetis look"), Map: Night lights (Black
+      Marble 2016). All fetched from NASA Visible Earth, public domain.
+- [x] **MAP DAY / MAP NIGHT brightness sliders** in DISPLAY (30–120 % day,
+      0–60 % night), enabled only when a map backdrop is active.
+- [x] **Map: Custom…** entry opens a file picker (any image, persisted path;
+      cancel bounces back to the previous backdrop).
+- [x] Grayline on every variant; terminator smoothsteps widened for a soft
+      Thetis-style blend.
 
 ## 3. Solar / space-weather layer
 - [ ] **Sun marker on the map** at the subsolar point (we already compute it

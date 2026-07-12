@@ -25,6 +25,8 @@ struct DisplaySettings {
     bool  peakHold  = false;    // slow-decay peak trace
     float split     = 0.42f;    // spectrum/waterfall divider position (0..1)
     int   background = 0;       // index into backgroundNames()
+    int   mapDay     = 78;      // map day-side brightness, percent
+    int   mapNight   = 18;      // map night-side brightness, percent
     bool  showGrid   = true;    // freq/dB gridlines on or off
     bool  showCall   = true;    // subtle callsign watermark in the spectrum
 };
@@ -216,6 +218,9 @@ private:
     QImage bgCache_;
     int    bgMode_ = -1, bgW_ = 0, bgH_ = 0;
     qint64 bgMinute_ = -1;
+    int    bgDay_ = -1, bgNight_ = -1;             // brightness cache keys
+    QImage  mapSrc_;                               // decoded basemap
+    QString mapSrcKey_;                            // resource path / custom file
 
     enum class Drag {
         None,

@@ -1,6 +1,8 @@
 <RCC>
   <qresource prefix="/">
     <file>earth.jpg</file>
+    <file>earth_veg.jpg</file>
+    <file>earth_night.jpg</file>
     <file>icon.png</file>
   </qresource>
 </RCC>

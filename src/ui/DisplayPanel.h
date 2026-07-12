@@ -39,6 +39,11 @@ private:
     QComboBox* speed_  = nullptr;
     QComboBox* pal_    = nullptr;
     QComboBox* bg_     = nullptr;
+    QSlider*   mapDay_   = nullptr;   // map day-side brightness (maps only)
+    QLabel*    mapDayVal_ = nullptr;
+    QSlider*   mapNight_ = nullptr;   // map night-side brightness
+    QLabel*    mapNightVal_ = nullptr;
+    int        prevBg_ = 0;           // restore target if Custom… is canceled
     QCheckBox* fill_   = nullptr;
     QCheckBox* peak_   = nullptr;
     QCheckBox* grid_   = nullptr;

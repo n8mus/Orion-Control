@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QMouseEvent>
+#include <QSettings>
 #include <QUrl>
 #include <QWheelEvent>
 #include <algorithm>
@@ -72,7 +73,10 @@ QStringList PanadapterWidget::paletteNames() {
 }
 
 QStringList PanadapterWidget::backgroundNames() {
-    return {"Dark", "Blue Rays", "World Map"};
+    // Index >= 2 = a world-map backdrop (kFirstMapBg); "Custom…" (last entry)
+    // loads any user image, path in QSettings display/mapCustomPath.
+    return {"Dark", "Blue Rays", "Map: Classic", "Map: Vegetation",
+            "Map: Night lights", "Map: Custom…"};
 }
 
 namespace {
@@ -105,16 +109,14 @@ QImage renderBlueRays(int w, int h) {
     return img;
 }
 
-// World map with live grayline: the bundled equirectangular Blue Marble,
-// darkened for use as a backdrop, with the night side shaded from the
-// current UTC subsolar point (soft twilight band = the grayline). KE9NS
-// proportions: the map fills only the upper band of the spectrum area and
-// fades to dark where the trace floor lives.
-QImage renderWorldMap(int w, int h) {
-    static QImage earth;                            // decoded once
-    if (earth.isNull())
-        earth = QImage(":/earth.jpg").convertToFormat(QImage::Format_RGB32);
-    if (earth.isNull()) return renderBlueRays(w, h);  // resource missing
+// World map with live grayline: an equirectangular NASA basemap, shaded
+// for use as a backdrop, with the night side darkened from the current UTC
+// subsolar point (soft twilight band = the grayline). KE9NS proportions:
+// the map fills only the upper band of the spectrum area and fades to dark
+// where the trace floor lives. dayPct/nightPct = user brightness (percent).
+QImage renderWorldMap(int w, int h, const QImage& earth,
+                      int dayPct, int nightPct) {
+    if (earth.isNull()) return renderBlueRays(w, h);  // basemap missing
     const int mapH = std::max(1, static_cast<int>(h * 0.84));
     QImage img = earth.scaled(w, mapH, Qt::IgnoreAspectRatio,
                               Qt::SmoothTransformation);
@@ -138,9 +140,13 @@ QImage renderWorldMap(int w, int h) {
     }
     // KE9NS grayline zones (spot.cs SUNANGLE/Darken): flat brightness steps,
     // not a glow — day above the horizon, a wide dusk/dawn band while the sun
-    // sits 0..6 degrees below (SZA 90..96), dark night core beyond that. The
-    // narrow smoothstep on each boundary just kills aliasing on the edges.
+    // sits 0..6 degrees below (SZA 90..96), dark night core beyond that.
+    // Boundary smoothsteps widened (Thetis-style soft terminator) so the
+    // zones blend instead of showing hard edges. Levels are user-set: night
+    // floor at nightPct, full day at dayPct, dusk band 45 % of the way up.
     const double duskLo = std::sin(-6.0 * M_PI / 180.0);   // night below this
+    const double nLvl = std::clamp(nightPct, 0, 100) / 100.0;
+    const double dLvl = std::clamp(dayPct, 10, 120) / 100.0;
     auto smooth = [](double lo, double hi, double v) {
         const double t = std::clamp((v - lo) / (hi - lo), 0.0, 1.0);
         return t * t * (3.0 - 2.0 * t);
@@ -149,14 +155,14 @@ QImage renderWorldMap(int w, int h) {
         QRgb* line = reinterpret_cast<QRgb*>(img.scanLine(y));
         for (int x = 0; x < w; ++x) {
             const double sinElev = sinLatSinD[y] + cosLatCosD[y] * cosDLon[x];
-            const double tDusk = smooth(duskLo - 0.02, duskLo + 0.02, sinElev);
-            const double tDay  = smooth(-0.015, 0.015, sinElev);
-            const double bright = 0.18 + 0.25 * tDusk + 0.35 * tDay;
-            const int f = static_cast<int>(bright * 256.0); // 18%/43%/78%
+            const double tDusk = smooth(duskLo - 0.05, duskLo + 0.05, sinElev);
+            const double tDay  = smooth(-0.04, 0.04, sinElev);
+            const double bright = nLvl + (dLvl - nLvl) * (0.45 * tDusk + 0.55 * tDay);
+            const int f = static_cast<int>(bright * 256.0);
             const QRgb c = line[x];
-            line[x] = qRgb((qRed(c)   * f) >> 8,
-                           (qGreen(c) * f) >> 8,
-                           (qBlue(c)  * f) >> 8);
+            line[x] = qRgb(std::min(255, (qRed(c)   * f) >> 8),
+                           std::min(255, (qGreen(c) * f) >> 8),
+                           std::min(255, (qBlue(c)  * f) >> 8));
         }
     }
     // Composite: map up top, dark trace floor below, soft fade between.
@@ -174,16 +180,37 @@ QImage renderWorldMap(int w, int h) {
 } // namespace
 
 const QImage& PanadapterWidget::backgroundImage(int w, int h) {
-    const qint64 minute = ds_.background == 2
+    const bool isMap = ds_.background >= 2;        // any map variant
+    const qint64 minute = isMap
         ? QDateTime::currentSecsSinceEpoch() / 60 : 0;      // grayline advances
     if (bgMode_ != ds_.background || bgW_ != w || bgH_ != h
-        || bgMinute_ != minute) {
-        bgCache_ = ds_.background == 2 ? renderWorldMap(w, h)
-                                       : renderBlueRays(w, h);
+        || bgMinute_ != minute
+        || bgDay_ != ds_.mapDay || bgNight_ != ds_.mapNight) {
+        if (isMap) {
+            // Pick + decode the basemap only when the source changes; the
+            // custom entry re-reads its path so a new pick applies live.
+            QString key;
+            switch (ds_.background) {
+                case 2: key = ":/earth.jpg"; break;
+                case 3: key = ":/earth_veg.jpg"; break;
+                case 4: key = ":/earth_night.jpg"; break;
+                default:
+                    key = QSettings().value("display/mapCustomPath").toString();
+            }
+            if (key != mapSrcKey_) {
+                mapSrc_ = QImage(key).convertToFormat(QImage::Format_RGB32);
+                mapSrcKey_ = key;
+            }
+            bgCache_ = renderWorldMap(w, h, mapSrc_, ds_.mapDay, ds_.mapNight);
+        } else {
+            bgCache_ = renderBlueRays(w, h);
+        }
         bgMode_ = ds_.background;
         bgW_ = w;
         bgH_ = h;
         bgMinute_ = minute;
+        bgDay_ = ds_.mapDay;
+        bgNight_ = ds_.mapNight;
     }
     return bgCache_;
 }

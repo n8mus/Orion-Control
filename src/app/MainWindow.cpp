@@ -639,18 +639,25 @@ MainWindow::MainWindow(QWidget* parent)
     connect(pan_, &PanadapterWidget::viewSpanChanged,  this, [this](int spanHz) {
         statusBar()->showMessage(QString("zoom -> span %1 kHz").arg(spanHz / 1000.0, 0, 'f', 1));
     });
-    // Wheel tuning: 100 Hz per notch, 10 Hz with Shift (Ctrl+wheel zooms);
-    // in SAM the steps drop to 10/1 Hz for the carrier zero-beat. The wheel
-    // follows whichever VFO was tuned last (right-click/drag on B hands it
-    // to B; any A tune takes it back).
-    connect(pan_, &PanadapterWidget::tuneStepRequested, this, [this](int steps, bool fine) {
-        const int unit = samActive_ ? (fine ? 1 : 10) : (fine ? 10 : 100);
-        onTuneRequested(steps * unit);
+    // Wheel tuning, step auto-set by mode: SSB/AM/FM 100 Hz per notch (10 Hz
+    // with Shift), CW 10 Hz (1 Hz with Shift) — matching how tight each mode
+    // actually tunes. SAM uses the CW steps for the carrier zero-beat.
+    // Ctrl+wheel still zooms; the wheel follows whichever VFO was tuned last
+    // (right-click/drag on B hands it to B; any A tune takes it back).
+    const auto wheelUnit = [this](bool fine) {
+        const bool tight = samActive_
+                        || rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
+        return tight ? (fine ? 1 : 10) : (fine ? 10 : 100);
+    };
+    connect(pan_, &PanadapterWidget::tuneStepRequested, this,
+            [this, wheelUnit](int steps, bool fine) {
+        onTuneRequested(steps * wheelUnit(fine));
     });
-    connect(pan_, &PanadapterWidget::vfoBStepRequested, this, [this](int steps, bool fine) {
+    connect(pan_, &PanadapterWidget::vfoBStepRequested, this,
+            [this, wheelUnit](int steps, bool fine) {
         if (vfoLockB_) { statusBar()->showMessage("VFO B is LOCKED"); return; }
         vfoBHz_ = static_cast<uint64_t>(
-            static_cast<qint64>(vfoBHz_) + steps * (fine ? 10 : 100));
+            static_cast<qint64>(vfoBHz_) + steps * wheelUnit(fine));
         freqDispB_->setFrequency(vfoBHz_);
         sinceVfoBEdit_.restart();
         pushVfoB();

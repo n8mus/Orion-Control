@@ -18,29 +18,56 @@ namespace ttc {
 //              face: FWD and REF needles crossing, SWR readout
 //   Eye      — magic-eye tube (Thetis MAGIC_EYE): the green shadow wedge
 //              closes as the signal rises, EM80 style
-// Right-click cycles the RX READING: Signal / Average (EMA) / Peak (hold
-// then decay). Needle/eye styles run ~30 fps ballistics (fast attack, slow
-// decay) so the 2 Hz poll data moves like a real movement. TX flips every
-// style to a power face (watts + SWR). Fed raw Orion ?S readings; converts
-// to dB-relative-to-S9 via the hamlib TT565 V2 calibration table.
+//   Omni     — the Omni VII (588)'s on-screen meter: horizontal LCD
+//              bargraph on the black TFT — white rail with drop ticks,
+//              bar filling beneath, chunky readout, no printed numbers
+// Right-click opens a menu: RX READING (Signal / Average / Peak-hold), RX
+// SOURCE (Radio / SDR) and SDR calibration. The SDR source reads the
+// panadapter's own passband power — computed outside the radio's AGC and RF
+// gain chain entirely, so the S-meter stays honest with RF gain backed way
+// down (the Omni VII's hardware meter pins at the RF-gain floor and no
+// firmware fix exists; the Orion only reads right because its firmware was
+// fixed). Needle/eye styles run ~30 fps ballistics (fast attack, slow decay)
+// so the 2 Hz poll data moves like a real movement. TX flips every style to
+// a power face (watts + SWR), always fed by the radio regardless of source.
+// Radio readings are raw ?S units, converted to dB-relative-to-S9 via the
+// hamlib TT565 V2 calibration table.
 class SMeterWidget : public QWidget {
     Q_OBJECT
 public:
     explicit SMeterWidget(QWidget* parent = nullptr);
 
+    // Face lettering follows the connected radio ("ORION" / "OMNI-VII"):
+    // the gold face's wordmark and the TFT style's screen caption.
+    void setWordmark(const QString& mark);
+
+    // Raw ?S units -> dB rel S9 (public: MainWindow converts the radio's
+    // reading for SDR-source calibration).
+    static double rawToDbS9(int raw);
+
+signals:
+    void calibrateRequested();            // "Calibrate SDR to radio" menu item
+
 public slots:
     void setRawLevel(int raw);            // raw @SRM units from the radio (RX)
     void setTxLevel(double fwdWatts, double refWatts, double swr);  // @STF (TX)
+    void setSdrLevel(double dbS9);        // panadapter passband power, calibrated
+    void useSdrSource();                  // switch RX source to SDR (post-cal)
 
 protected:
     void paintEvent(QPaintEvent*) override;
     void mousePressEvent(class QMouseEvent* e) override;
 
 private:
-    enum Style { Analog = 0, Edge, Led, Cross, Eye, kStyleCount };
+    // Omni appended last so stored meterStyle indices never shift again.
+    enum Style { Analog = 0, Edge, Led, Cross, Eye, Omni, kStyleCount };
     enum RxMode { Sig = 0, Avg, Peak, kModeCount };
+    enum Source { SrcRadio = 0, SrcSdr };
 
-    static double rawToDbS9(int raw);     // piecewise-linear cal table
+    void feedRx(double db);               // common RX reading pipeline
+    void showMenu(const QPoint& globalPos);
+    void drawSdrTag(class QPainter& p, double x, double y,
+                    const QColor& c);     // "SDR" source tag on RX faces
     double displayDb() const;             // reading after the RX-mode filter
     double scaleFrac(double db) const;    // dB -> 0..1 along the meter scale
     void   applyStyle();                  // size + tooltip for current style
@@ -49,10 +76,15 @@ private:
     void   paintLed(class QPainter& p);     // segmented LED bargraph
     void   paintCross(class QPainter& p);   // TX cross-needle (RX = analog)
     void   paintEye(class QPainter& p);     // magic-eye tube
+    void   paintOmni(class QPainter& p);    // Omni VII TFT bargraph
     QString sUnitsText(double db) const;  // "S7" / "S9+23"
 
-    int  style_ = Analog;
-    int  mode_  = Sig;
+    int  style_  = Analog;
+    int  mode_   = Sig;
+    int  source_ = SrcRadio;
+    bool sdrSeen_ = false;                // an SDR reading has arrived (gates menu)
+    QElapsedTimer sinceFeed_;             // time-based EMA (feed rate varies 2-20 Hz)
+    QString wordmark_ = QStringLiteral("ORION");
     QTimer* anim_ = nullptr;              // needle ballistics tick
     double needleDb_ = -120.0;            // animated needle position (RX)
     double needleW_  = 0.0;               // animated needle position (TX)

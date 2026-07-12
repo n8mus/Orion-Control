@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui/SMeterWidget.h"
 
+#include <QActionGroup>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -40,6 +42,8 @@ SMeterWidget::SMeterWidget(QWidget* parent) : QWidget(parent) {
                         0, int(kStyleCount) - 1);
     mode_  = std::clamp(s.value("display/meterMode", int(Sig)).toInt(),
                         0, int(kModeCount) - 1);
+    source_ = std::clamp(s.value("display/meterSource", int(SrcRadio)).toInt(),
+                         int(SrcRadio), int(SrcSdr));
     applyStyle();
     // Needle ballistics: fast attack, slow decay, ~30 fps — poll data arrives
     // at only 2 Hz, this is what makes it move like a real movement.
@@ -54,10 +58,15 @@ SMeterWidget::SMeterWidget(QWidget* parent) : QWidget(parent) {
         step(needleW_, tx_ ? fwdW_ : 0.0, 0.08, 0.35);
         step(needleRef_, tx_ ? refW_ : 0.0, 0.08, 0.35);
         if (style_ == Analog || style_ == Edge || style_ == Cross
-            || style_ == Eye)
+            || style_ == Eye || style_ == Omni)
             update();
     });
     anim_->start();
+}
+
+void SMeterWidget::setWordmark(const QString& mark) {
+    wordmark_ = mark;
+    update();
 }
 
 // Hamlib TT565_STR_CAL_V2 (rigs/tentec/orion.h): raw ?S units -> dB rel S9,
@@ -83,10 +92,53 @@ double SMeterWidget::rawToDbS9(int raw) {
 
 void SMeterWidget::setRawLevel(int raw) {
     tx_ = false;                          // radio answered in receive
-    dbS9_ = rawToDbS9(raw);
+    if (source_ == SrcRadio) feedRx(rawToDbS9(raw));
+    else update();                        // face may need to flip off the TX view
+}
+
+// SDR-source readings arrive already in dB rel S9 (MainWindow integrates the
+// panadapter passband and applies gain compensation + the stored cal offset).
+// During TX the SDR hears our own signal — ignored; the radio owns TX.
+void SMeterWidget::setSdrLevel(double dbS9) {
+    sdrSeen_ = true;
+    if (source_ == SrcSdr && !tx_) feedRx(dbS9);
+}
+
+// Calibrating implies wanting the calibrated source — switching by hand was
+// an extra step everyone (Jon, day one) forgets, and then the radio's pinned
+// reading "takes over the meter" below RF gain ~25 exactly as before.
+void SMeterWidget::useSdrSource() {
+    source_ = SrcSdr;
+    QSettings().setValue("display/meterSource", source_);
+    applyStyle();
+    update();
+}
+
+// Small "SDR" tag on the RX faces when the panadapter is the source — the
+// two sources can legitimately read very differently (that's the point), so
+// the face must say which one is talking.
+void SMeterWidget::drawSdrTag(QPainter& p, double x, double y, const QColor& c) {
+    if (source_ != SrcSdr || tx_) return;
+    QFont f("DejaVu Sans");
+    f.setPixelSize(8);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(c);
+    p.drawText(QRectF(x, y, 30, 10), Qt::AlignLeft, "SDR");
+}
+
+// Common RX pipeline for both sources. The EMA is time-based because the
+// feed rate differs wildly: radio polls at 2 Hz, SDR frames land at ~20 Hz.
+void SMeterWidget::feedRx(double db) {
+    dbS9_ = db;
     haveReading_ = true;
+    double dt = 0.5;
+    if (sinceFeed_.isValid())
+        dt = std::min(2.0, sinceFeed_.elapsed() / 1000.0);
+    sinceFeed_.restart();
+    const double alpha = 1.0 - std::exp(-dt / 1.5);   // tau 1.5 s
     if (!emaInit_) { emaDb_ = dbS9_; emaInit_ = true; }
-    else emaDb_ += 0.3 * (dbS9_ - emaDb_);
+    else emaDb_ += alpha * (dbS9_ - emaDb_);
     if (dbS9_ >= peakDb_ || !sincePeak_.isValid()
         || sincePeak_.elapsed() > kPeakHoldMs) {
         peakDb_ = dbS9_;
@@ -134,29 +186,72 @@ void SMeterWidget::applyStyle() {
         case Led:     setFixedSize(280, 42); break;
         case Cross:   setFixedSize(230, 96); break;
         case Eye:     setFixedSize(170, 96); break;
+        case Omni:    setFixedSize(280, 60); break;
     }
     static const char* styleName[] = {"Orion", "Edge", "LED", "Cross-needle",
-                                      "Magic eye"};
+                                      "Magic eye", "Omni-VII"};
     static const char* modeName[]  = {"Signal", "Average", "Peak"};
-    setToolTip(QString("S-meter — style: %1, reading: %2\n"
+    setToolTip(QString("S-meter — style: %1, reading: %2, RX source: %3\n"
                        "click: next style (Orion / Edge / LED / Cross-needle"
-                       " / Magic eye)\n"
-                       "right-click: reading mode (Signal / Average / Peak)")
-                   .arg(styleName[style_]).arg(modeName[mode_]));
+                       " / Magic eye / Omni-VII)\n"
+                       "right-click: reading mode, RX source (Radio / SDR),"
+                       " SDR calibration\n"
+                       "SDR source reads the panadapter — immune to the"
+                       " radio's RF gain setting")
+                   .arg(styleName[style_]).arg(modeName[mode_])
+                   .arg(source_ == SrcSdr ? "SDR" : "Radio"));
 }
 
 void SMeterWidget::mousePressEvent(QMouseEvent* e) {
-    if (e->button() == Qt::LeftButton)
+    if (e->button() == Qt::LeftButton) {
         style_ = (style_ + 1) % kStyleCount;
-    else if (e->button() == Qt::RightButton)
-        mode_ = (mode_ + 1) % kModeCount;
-    else
-        return;
-    QSettings s;
-    s.setValue("display/meterStyle", style_);
-    s.setValue("display/meterMode", mode_);
-    applyStyle();
-    update();
+        QSettings().setValue("display/meterStyle", style_);
+        applyStyle();
+        update();
+    } else if (e->button() == Qt::RightButton) {
+        showMenu(e->globalPosition().toPoint());
+    }
+}
+
+void SMeterWidget::showMenu(const QPoint& globalPos) {
+    QMenu menu(this);
+    menu.addSection("Reading");
+    auto* modes = new QActionGroup(&menu);
+    static const char* modeName[] = {"Signal", "Average", "Peak hold"};
+    for (int i = 0; i < kModeCount; ++i) {
+        QAction* a = menu.addAction(modeName[i]);
+        a->setCheckable(true);
+        a->setChecked(mode_ == i);
+        modes->addAction(a);
+        connect(a, &QAction::triggered, this, [this, i] {
+            mode_ = i;
+            QSettings().setValue("display/meterMode", mode_);
+            applyStyle();
+            update();
+        });
+    }
+    menu.addSection("RX source");
+    auto* srcs = new QActionGroup(&menu);
+    struct { const char* name; int src; } srcDef[] = {
+        {"Radio", SrcRadio}, {"SDR (panadapter)", SrcSdr}};
+    for (const auto& d : srcDef) {
+        QAction* a = menu.addAction(d.name);
+        a->setCheckable(true);
+        a->setChecked(source_ == d.src);
+        a->setEnabled(d.src == SrcRadio || sdrSeen_);
+        srcs->addAction(a);
+        connect(a, &QAction::triggered, this, [this, s = d.src] {
+            source_ = s;
+            QSettings().setValue("display/meterSource", source_);
+            applyStyle();
+            update();
+        });
+    }
+    menu.addSeparator();
+    QAction* cal = menu.addAction("Calibrate SDR to radio (RF gain full up first)");
+    cal->setEnabled(sdrSeen_);
+    connect(cal, &QAction::triggered, this, &SMeterWidget::calibrateRequested);
+    menu.exec(globalPos);
 }
 
 void SMeterWidget::paintEvent(QPaintEvent*) {
@@ -168,6 +263,7 @@ void SMeterWidget::paintEvent(QPaintEvent*) {
         case Led:     paintLed(p); break;
         case Cross:   paintCross(p); break;
         case Eye:     paintEye(p); break;
+        case Omni:    paintOmni(p); break;
     }
 }
 
@@ -247,14 +343,15 @@ void SMeterWidget::paintAnalog(QPainter& p) {
         }
     }
 
-    // Wordmark between the scales and the pivot.
+    // Wordmark between the scales and the pivot — names the connected radio.
     QFont fo("DejaVu Sans");
     fo.setPixelSize(10);
     fo.setBold(true);
     fo.setLetterSpacing(QFont::AbsoluteSpacing, 2.0);
     p.setFont(fo);
     p.setPen(kInk);
-    p.drawText(QRectF(0, height() - 34, width(), 12), Qt::AlignHCenter, "ORION");
+    p.drawText(QRectF(0, height() - 34, width(), 12), Qt::AlignHCenter,
+               wordmark_);
 
     // --- needles: blue peak underneath, red instant on top -----------------
     // RX reads the S scale, TX reads the power scale — one movement, two
@@ -292,6 +389,7 @@ void SMeterWidget::paintAnalog(QPainter& p) {
         p.drawText(QRectF(face.right() - 40, face.bottom() - 16, 32, 12),
                    Qt::AlignRight, mode_ == Avg ? "AVG" : "PK");
     }
+    drawSdrTag(p, face.left() + 8, face.top() + 5, kInk);
 }
 
 // --------------------------------------------------------------- Edge style
@@ -382,6 +480,7 @@ void SMeterWidget::paintEdge(QPainter& p) {
                    Qt::AlignRight | Qt::AlignVCenter,
                    QString("SWR %1").arg(swr_, 0, 'f', 1));
     }
+    drawSdrTag(p, width() / 2.0 - 10, face.bottom() - 13, kInk);
 }
 
 // ---------------------------------------------------------------- LED style
@@ -436,6 +535,7 @@ void SMeterWidget::paintLed(QPainter& p) {
                rx ? sUnitsText(displayDb())
                   : QString("%1W\nSWR %2").arg(fwdW_, 0, 'f', 0)
                         .arg(swr_, 0, 'f', 1));
+    drawSdrTag(p, x1 + 6, 1, QColor(96, 214, 196));
 }
 
 // --------------------------------------------------------- Cross-needle TX
@@ -583,7 +683,93 @@ void SMeterWidget::paintEye(QPainter& p) {
         p.drawText(txt, Qt::AlignBottom | Qt::AlignLeft,
                    QString("SWR %1").arg(swr_, 0, 'f', 1));
     }
+    drawSdrTag(p, width() - 32.0, height() - 14.0, QColor(96, 214, 196));
 }
 
+// ------------------------------------------------------------ Omni VII style
+// The Omni VII (588) draws its meter on the front-panel TFT: a white rail
+// with drop ticks, a plain white bar filling beneath it, and a chunky
+// readout at the lower left ("S1", "95W") — no numbers printed on the scale
+// at all, the readout IS the number. Same screen palette as the radio:
+// white pixels on near-black glass, cyan and yellow accents. Receive reads
+// S-units; transmit reads forward power with the SWR figure in yellow (the
+// real TX METER menu picks power or SWR — we just show both). Peak hold is
+// a hollow LCD segment left standing on the bar.
+
+void SMeterWidget::paintOmni(QPainter& p) {
+    const bool rx = !tx_;
+    const QColor kGlass(7, 11, 17);          // TFT black, slight blue cast
+    const QColor kPix(226, 232, 238);        // lit "pixel" white
+    const QColor kBarPix(185, 196, 208);     // bar a step dimmer than the rail
+    const QColor kCyan(96, 214, 196);
+    const QColor kYellow(233, 198, 62);
+    const QRectF face(1.0, 1.0, width() - 2.0, height() - 2.0);
+    p.fillRect(face, kGlass);
+    p.setPen(QPen(QColor(50, 58, 68), 2));
+    p.drawRect(face);
+
+    const double x0 = 12, x1 = width() - 12;
+    const double yRail = 17;
+    const auto fx = [&](double frac) { return x0 + (x1 - x0) * frac; };
+    const double frac = rx ? scaleFrac(needleDb_)
+                           : std::clamp(needleW_ / kMaxW, 0.0, 1.0);
+    const double peakFrac = rx ? scaleFrac(peakDb_)
+                               : std::clamp(peakW_ / kMaxW, 0.0, 1.0);
+
+    // Bar first, rail and ticks over it — one plane of pixels, like the TFT.
+    if (haveReading_ || !rx) {
+        p.fillRect(QRectF(x0, yRail + 1.0, fx(frac) - x0, 9.0), kBarPix);
+        p.setPen(QPen(kPix, 1.2));
+        p.setBrush(Qt::NoBrush);
+        p.drawRect(QRectF(fx(peakFrac) - 2.0, yRail + 1.0, 3.0, 9.0));
+    }
+    p.setPen(QPen(kPix, 2));
+    p.drawLine(QPointF(x0, yRail), QPointF(x1, yRail));
+    const auto tick = [&](double fr, bool major) {
+        p.setPen(QPen(kPix, major ? 1.8 : 1.0));
+        p.drawLine(QPointF(fx(fr), yRail),
+                   QPointF(fx(fr), yRail + (major ? 12.0 : 6.0)));
+    };
+    if (rx) {
+        for (int s = 1; s <= 9; ++s) tick(scaleFrac((s - 9) * 6.0), s & 1);
+        for (int over = 20; over <= 60; over += 20) tick(scaleFrac(over), true);
+    } else {
+        for (int w = 0; w <= 120; w += 10) tick(w / kMaxW, w % 50 == 0);
+    }
+    tick(1.0, true);                          // end bracket, full drop
+
+    // Chunky readout, lower left — the 588's blocky screen font.
+    QFont f("DejaVu Sans Mono");
+    f.setPixelSize(15);
+    f.setBold(true);
+    p.setFont(f);
+    p.setPen(kPix);
+    const QRectF row(x0, height() - 22.0, x1 - x0, 18.0);
+    if (rx) {
+        p.drawText(row, Qt::AlignLeft | Qt::AlignVCenter, sUnitsText(displayDb()));
+        if (mode_ != Sig) {
+            f.setPixelSize(10); p.setFont(f);
+            p.setPen(kCyan);
+            p.drawText(row, Qt::AlignRight | Qt::AlignVCenter,
+                       mode_ == Avg ? "AVG" : "PK");
+        }
+    } else {
+        p.drawText(row, Qt::AlignLeft | Qt::AlignVCenter,
+                   QString("%1W").arg(fwdW_, 0, 'f', 0));
+        p.setPen(swr_ > 2.5 ? QColor(235, 70, 50) : kYellow);
+        p.drawText(row, Qt::AlignRight | Qt::AlignVCenter,
+                   QString("SWR %1").arg(swr_, 0, 'f', 1));
+    }
+    // Screen caption, cyan, top right — names the connected radio
+    // (nominative use, same footing as the gold face's wordmark).
+    QFont fc("DejaVu Sans");
+    fc.setPixelSize(8);
+    fc.setBold(true);
+    fc.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+    p.setFont(fc);
+    p.setPen(kCyan);
+    p.drawText(QRectF(0, 4, width() - 12, 10), Qt::AlignRight, wordmark_);
+    drawSdrTag(p, width() / 2.0 - 12, height() - 20.0, kCyan);
+}
 
 } // namespace ttc

@@ -33,6 +33,7 @@ namespace ttc {
 
 static int pbtRfSign(Mode m);   // defined below with the passband math
 static int bwMaxFor(Mode m);    // per-mode filter ceiling (AM runs to 8000)
+static void edgesFromRig(Mode m, int bw, int pbt, int& lo, int& hi);
 
 // Offset-LO tuning (PowerSDR if_freq): the SDR always captures this far above
 // the dial so its zero-IF DC artifact can never sit on the tuned frequency.
@@ -82,6 +83,10 @@ MainWindow::MainWindow(QWidget* parent)
     pan_->setPassband(-1200, 1200);
     pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
     smeter_ = new SMeterWidget(this);
+    // Meter-face lettering names the connected radio (same branch the
+    // window title uses).
+    smeter_->setWordmark(radio_->caps().dualReceiver ? QStringLiteral("ORION")
+                                                     : QStringLiteral("OMNI-VII"));
     panel_  = new ControlPanel(this);
     // Readout colors follow the TX role (matching the routing buttons and
     // panadapter flags): red = the transmitting VFO, green = the other one.
@@ -1047,7 +1052,28 @@ MainWindow::MainWindow(QWidget* parent)
             if (++n % 4 == 1) std::fprintf(stderr, "[radio] S-meter main raw %d\n", mainRaw);
         }
         smeter_->setRawLevel(mainRaw);
+        lastRadioDbS9_ = SMeterWidget::rawToDbS9(mainRaw);   // for SDR-meter cal
         rigctld_.cachePtt(false);                   // radio answered in receive
+    });
+    // SDR-source S-meter calibration: pin the SDR's passband-power reading to
+    // the radio's meter at a moment the radio is honest (RF gain full up).
+    // One offset, stored; the gRdB/LNA compensation keeps it valid across
+    // every gain-slider move afterward.
+    sdrCalDb_ = QSettings().value("sdr/smeterCalDb", 0.0).toDouble();
+    connect(smeter_, &SMeterWidget::calibrateRequested, this, [this] {
+        if (std::isnan(lastRadioDbS9_) || std::isnan(lastSdrMeasDb_)) {
+            statusBar()->showMessage(
+                "S-meter cal needs a radio reading and a running SDR — "
+                "connect both, then try again", 6000);
+            return;
+        }
+        sdrCalDb_ = lastRadioDbS9_ - lastSdrMeasDb_;
+        QSettings().setValue("sdr/smeterCalDb", sdrCalDb_);
+        smeter_->useSdrSource();          // calibrating implies wanting it
+        statusBar()->showMessage(
+            QString("S-meter calibrated and switched to SDR source "
+                    "(offset %1 dB) — RF gain can go back down")
+                .arg(sdrCalDb_, 0, 'f', 1), 8000);
     });
     connect(radio_, &RadioController::txMeterReported, this,
             [this](double fwd, double ref, double swr) {
@@ -1790,8 +1816,34 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             }
         }
-        QMetaObject::invokeMethod(pan_, [this, copy = db]() mutable {
+        QMetaObject::invokeMethod(pan_, [this, spanHz, copy = db]() mutable {
             pan_->setSpectrum(copy);
+            // SDR-source S-meter: integrate power across the RX passband.
+            // These bins never pass through the radio's AGC or RF gain, so
+            // the reading stays honest with RF gain backed down (the Omni
+            // VII's own meter pins at the RF-gain floor — unfixable there).
+            // gRdB is exact dB by API definition and the LNA states map to
+            // published RSP2 gain figures, so riding the SDR gain slider
+            // shifts nothing once the one-time cal offset is stored.
+            int lo = 0, hi = 0;
+            edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+            const int    n     = static_cast<int>(copy.size());
+            const double binHz = double(spanHz) / n;
+            int i0 = n / 2 + static_cast<int>(std::floor((lo - kLoOffsetHz) / binHz));
+            int i1 = n / 2 + static_cast<int>(std::ceil((hi - kLoOffsetHz) / binHz));
+            i0 = std::clamp(i0, 0, n - 1);
+            i1 = std::clamp(i1, i0, n - 1);
+            double acc = 0.0;
+            for (int i = i0; i <= i1; ++i)
+                acc += std::pow(10.0, copy[i] / 10.0);
+            if (acc <= 0.0) return;
+            // RSP2 LNA-state gain reduction, 0-420 MHz table (SDRplay API spec).
+            static const int kRsp2LnaDb[] = {0, 10, 15, 21, 24, 34, 39, 45, 64};
+            const double meas = 10.0 * std::log10(acc)
+                + sdr_.gainReduction()
+                + kRsp2LnaDb[std::clamp(sdr_.lnaState(), 0, 8)];
+            lastSdrMeasDb_ = meas;
+            smeter_->setSdrLevel(meas + sdrCalDb_);
         }, Qt::QueuedConnection);
     });
     sdr_.setIqCallback([this](const IqBlock& iq) { spectrum_.addSamples(iq); });

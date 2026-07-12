@@ -2,6 +2,7 @@
 #pragma once
 #include <QMainWindow>
 #include <QElapsedTimer>
+#include <cmath>
 class QTimer;
 class QSlider;
 class QLabel;
@@ -176,6 +177,13 @@ private:
     QTimer* notchTx_ = nullptr;                // same pattern for notch drags
     int  pendNotchHz_ = 0;
     bool notchDirty_ = false;
+    // SDR-source S-meter calibration: dbS9 = passband power + gain
+    // compensation + sdrCalDb_. The offset is set once by "Calibrate SDR to
+    // radio" (matching the radio's reading while its RF gain is full up) and
+    // survives every SDRplay gain change — the gRdB/LNA compensation is exact.
+    double sdrCalDb_      = 0.0;
+    double lastRadioDbS9_ = NAN;               // radio's latest RX reading
+    double lastSdrMeasDb_ = NAN;               // SDR measurement, pre-offset
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

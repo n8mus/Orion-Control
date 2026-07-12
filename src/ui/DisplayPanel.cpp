@@ -86,7 +86,13 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(makeCaption("PALETTE", this), 4, 0);
     pal_ = new QComboBox(this);
     pal_->addItems(PanadapterWidget::paletteNames());
-    g->addWidget(pal_, 4, 1, 1, 2);
+    g->addWidget(pal_, 4, 1, 1, 1);
+
+    // Spectrum trace color rides next to the palette (same visual family).
+    trace_ = new QComboBox(this);
+    trace_->addItems({"Soft", "White", "Green", "Yellow", "Cyan"});
+    trace_->setToolTip("Spectrum trace line color");
+    g->addWidget(trace_, 4, 2, 1, 1);
 
     g->addWidget(makeCaption("BACKGND", this), 5, 0);
     bg_ = new QComboBox(this);
@@ -125,26 +131,34 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
                       "Click a spot callsign to swing the pointer to that "
                       "station;\nclick inside the rose for a manual heading, "
                       "right-click clears.");
+    plan_ = new QCheckBox("Band-plan shading", this);
+    plan_->setToolTip("Tint the frequency scale: blue = CW/data segments, "
+                      "green = phone (US allocations)");
+    bigVfo_ = new QCheckBox("Large VFO digits", this);
+    clock_ = new QCheckBox("Clock (radio panel)", this);
     call_ = new QCheckBox("Callsign watermark", this);
     g->addWidget(fill_, 8, 0, 1, 3);
     g->addWidget(peak_, 9, 0, 1, 3);
     g->addWidget(grid_, 10, 0, 1, 3);
     g->addWidget(solar_, 11, 0, 1, 3);
     g->addWidget(rose_, 12, 0, 1, 3);
-    g->addWidget(call_, 13, 0, 1, 3);
+    g->addWidget(plan_, 13, 0, 1, 3);
+    g->addWidget(bigVfo_, 14, 0, 1, 3);
+    g->addWidget(clock_, 15, 0, 1, 3);
+    g->addWidget(call_, 16, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 14, 0);
+    g->addWidget(makeCaption("CALL", this), 17, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 14, 1, 1, 2);
+    g->addWidget(callEdit_, 17, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 15, 0);
+    g->addWidget(makeCaption("GRID", this), 18, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 15, 1, 1, 2);
+    g->addWidget(gridEdit_, 18, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -202,6 +216,11 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(grid_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(solar_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(rose_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(plan_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(bigVfo_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(clock_, &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
+    connect(trace_, &QComboBox::currentIndexChanged, this,
+            &DisplayPanel::emitChanged);
     connect(call_,  &QCheckBox::toggled, this, &DisplayPanel::emitChanged);
     connect(callEdit_, &QLineEdit::textEdited, this, [this](const QString& t) {
         emit callsignChanged(t.trimmed().toUpper());
@@ -229,6 +248,10 @@ DisplaySettings DisplayPanel::settings() const {
     s.showCall   = call_->isChecked();
     s.showSolar  = solar_->isChecked();
     s.showRose   = rose_->isChecked();
+    s.showBandPlan = plan_->isChecked();
+    s.traceColor = trace_->currentIndex();
+    s.bigVfo     = bigVfo_->isChecked();
+    s.showClock  = clock_->isChecked();
     s.split      = split_;
     return s;
 }
@@ -237,7 +260,8 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     split_ = s.split;
     const QSignalBlocker b1(ref_), b2(range_), b3(avg_), b4(speed_), b5(pal_),
         b6(fill_), b7(peak_), b8(bg_), b9(grid_), b10(call_),
-        b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_);
+        b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),
+        b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -256,6 +280,10 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     call_->setChecked(s.showCall);
     solar_->setChecked(s.showSolar);
     rose_->setChecked(s.showRose);
+    plan_->setChecked(s.showBandPlan);
+    bigVfo_->setChecked(s.bigVfo);
+    clock_->setChecked(s.showClock);
+    trace_->setCurrentIndex(std::clamp(s.traceColor, 0, trace_->count() - 1));
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
     mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));

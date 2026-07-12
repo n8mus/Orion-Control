@@ -495,12 +495,26 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
                  .arg(solA_ >= 0 ? QString::number(solA_) : QString("--"))
                  .arg(solK_ >= 0 ? QString::number(solK_, 'f', 1) : QString("--"));
     if (!solXray_.isEmpty()) lines << QString("X-RAY %1").arg(solXray_);
-    int wBox = 0;
+    // Rough HF-conditions verdict from the same numbers (flux feeds the
+    // ionosphere, K wrecks it): worth a glance before calling CQ.
+    QString cond;
+    QColor  condC;
+    if (solK_ >= 5.0 || (solSfi_ > 0 && solSfi_ < 75)) {
+        cond = "COND POOR";
+        condC = QColor(235, 80, 60);
+    } else if (solSfi_ >= 110 && solK_ >= 0.0 && solK_ <= 3.0) {
+        cond = "COND GOOD";
+        condC = QColor(80, 230, 120);
+    } else {
+        cond = "COND FAIR";
+        condC = QColor(240, 190, 60);
+    }
+    int wBox = fm.horizontalAdvance(cond);
     for (const QString& l : lines)
         wBox = std::max(wBox, fm.horizontalAdvance(l));
     wBox += 16;
     const int lineH = fm.height() + 1;
-    const int hBox = static_cast<int>(lines.size()) * lineH + 10;
+    const int hBox = (static_cast<int>(lines.size()) + 1) * lineH + 10;
     const QRect box(width() - wBox - 8, hSpec - hBox - 6, wBox, hBox);
     p.fillRect(box, QColor(4, 12, 6, 175));
     p.setPen(QColor(30, 90, 45));
@@ -511,6 +525,8 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
         p.drawText(box.left() + 8, y, l);
         y += lineH;
     }
+    p.setPen(condC);
+    p.drawText(box.left() + 8, y, cond);
 }
 
 void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
@@ -871,8 +887,42 @@ void PanadapterWidget::drawFreqGrid(QPainter& p, int hSpec) {
 // KE9NS/PowerSDR-style frequency scale: a dedicated strip between the spectrum
 // and the waterfall with ticks + MHz labels. The strip is also the split
 // handle — drag it up/down to resize spectrum vs waterfall.
+namespace {
+// US band-plan segments for the scale-strip tint: CW/data portions blue,
+// phone portions green (simplified, General/Extra not distinguished).
+struct PlanSeg { qint64 lo, hi; bool phone; };
+constexpr PlanSeg kUsPlan[] = {
+    {1800000, 1843000, false},  {1843000, 2000000, true},
+    {3500000, 3600000, false},  {3600000, 4000000, true},
+    {7000000, 7125000, false},  {7125000, 7300000, true},
+    {10100000, 10150000, false},
+    {14000000, 14150000, false}, {14150000, 14350000, true},
+    {18068000, 18110000, false}, {18110000, 18168000, true},
+    {21000000, 21200000, false}, {21200000, 21450000, true},
+    {24890000, 24930000, false}, {24930000, 24990000, true},
+    {28000000, 28300000, false}, {28300000, 29700000, true},
+    {50000000, 50100000, false}, {50100000, 54000000, true},
+};
+} // namespace
+
 void PanadapterWidget::drawScaleBand(QPainter& p, int hSpec) {
     p.fillRect(QRect(0, hSpec, width(), kScaleBandH), QColor(20, 27, 36));
+    // Band-plan tint under the ticks: blue = CW/data, green = phone.
+    if (ds_.showBandPlan && centerHz_ != 0) {
+        const qint64 half = viewSpanHz_ / 2;
+        for (const PlanSeg& s : kUsPlan) {
+            if (s.hi < qint64(centerHz_) - half || s.lo > qint64(centerHz_) + half)
+                continue;
+            const int x0 = std::max(0,
+                hzToX(int(std::max(s.lo - qint64(centerHz_), -half))));
+            const int x1 = std::min(width(),
+                hzToX(int(std::min(s.hi - qint64(centerHz_), half))));
+            if (x1 <= x0) continue;
+            p.fillRect(QRect(x0, hSpec + 1, x1 - x0, kScaleBandH - 2),
+                       s.phone ? QColor(62, 207, 122, 38)
+                               : QColor(96, 160, 255, 44));
+        }
+    }
     p.setPen(QColor(255, 255, 255, 50));
     p.drawLine(0, hSpec, width(), hSpec);
     p.drawLine(0, hSpec + kScaleBandH - 1, width(), hSpec + kScaleBandH - 1);
@@ -1148,7 +1198,14 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                 prev = pt;
             }
         }
-        p.setPen(QColor(210, 245, 215));
+        static const QColor kTraceColors[] = {
+            QColor(210, 245, 215),                 // soft (the original)
+            QColor(242, 244, 248),                 // white
+            QColor(80, 230, 120),                  // green
+            QColor(255, 216, 50),                  // yellow
+            QColor(96, 200, 255),                  // cyan
+        };
+        p.setPen(kTraceColors[std::clamp(ds_.traceColor, 0, 4)]);
         p.drawPath(tracePath);
         drawSpots(p, hSpec);                       // cluster spots, on top
         drawSolarPanel(p, hSpec);                  // space-weather corner box

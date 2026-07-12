@@ -70,6 +70,8 @@ public slots:
     // manual notch/SAF don't exist on the Omni, programmable AGC and the
     // preamp aren't reachable over CAT in its RADIO mode.
     void setReducedCatSet(bool reduced);
+    void showClock(const QString& utc, const QString& local);  // bottom clock
+    void setClockVisible(bool on);        // DISPLAY "Clock" checkbox
 
 private:
     QWidget* makeDspRow(const QString& name, QSlider*& slider, QLabel*& value);
@@ -103,6 +105,7 @@ private:
     QTimer* agcThrTx_ = nullptr;   QTimer* agcHangTx_ = nullptr;
     QTimer* agcDecayTx_ = nullptr;
     int pendAgcThr_ = -1, pendAgcHang_ = -1, pendAgcDecay_ = -1;
+    QLabel* clockUtc_ = nullptr;   QLabel* clockLoc_ = nullptr;
 };
 
 } // namespace ttc

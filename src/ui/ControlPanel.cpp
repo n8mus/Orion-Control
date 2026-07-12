@@ -330,6 +330,28 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     });
 
     lay->addStretch(1);
+
+    // Clock parked at the panel's very bottom (moved out of the top strip —
+    // it was costing horizontal width the meter/VFO row needs). MainWindow's
+    // ticker feeds it; the DISPLAY "Clock" checkbox shows/hides it.
+    clockUtc_ = new QLabel(this);
+    clockLoc_ = new QLabel(this);
+    clockUtc_->setStyleSheet("color: #ffd23c; font-size: 13px; font-weight: bold;");
+    clockLoc_->setStyleSheet("color: #8fa3b8; font-size: 12px; font-weight: bold;");
+    clockUtc_->setAlignment(Qt::AlignHCenter);
+    clockLoc_->setAlignment(Qt::AlignHCenter);
+    lay->addWidget(clockUtc_);
+    lay->addWidget(clockLoc_);
+}
+
+void ControlPanel::showClock(const QString& utc, const QString& local) {
+    clockUtc_->setText(utc);
+    clockLoc_->setText(local);
+}
+
+void ControlPanel::setClockVisible(bool on) {
+    clockUtc_->setVisible(on);
+    clockLoc_->setVisible(on);
 }
 
 QWidget* ControlPanel::makeDspRow(const QString& name, QSlider*& slider, QLabel*& value) {

@@ -7,14 +7,19 @@ class QTimer;
 
 namespace ttc {
 
-// Multi-style S-meter / TX meter (KE9NS meter-suite idea, faces drawn
-// entirely in QPainter — no bitmap skins). Click cycles the STYLE:
-//   Bar     — the original compact SmartSDR-style bar
-//   Analog  — ivory needle meter, S1..S9 black arc, over-S9 red arc
-//   Edge    — edgewise meter: linear ivory window, vertical needle
-//   Digital — Thetis-style triple readout: dBm / S-units / microvolts
+// Multi-style S-meter / TX meter — the meter-suite ideas from the KE9NS
+// PowerSDR and Thetis lineages (GPL), all faces drawn in QPainter.
+// Click cycles the STYLE:
+//   Analog   — the Orion 565's own meter: amber face, black lettering,
+//              dual S/watts scales, red instant + blue peak needles
+//   Edge     — edgewise meter: linear ivory window, vertical needle
+//   LED      — segmented LED bargraph, green/amber/red (Thetis LED item)
+//   X-needle — Orion RX face; TX becomes a Daiwa-style cross-needle
+//              face: FWD and REF needles crossing, SWR readout
+//   Eye      — magic-eye tube (Thetis MAGIC_EYE): the green shadow wedge
+//              closes as the signal rises, EM80 style
 // Right-click cycles the RX READING: Signal / Average (EMA) / Peak (hold
-// then decay). Needle styles run ~30 fps ballistics (fast attack, slow
+// then decay). Needle/eye styles run ~30 fps ballistics (fast attack, slow
 // decay) so the 2 Hz poll data moves like a real movement. TX flips every
 // style to a power face (watts + SWR). Fed raw Orion ?S readings; converts
 // to dB-relative-to-S9 via the hamlib TT565 V2 calibration table.
@@ -32,18 +37,18 @@ protected:
     void mousePressEvent(class QMouseEvent* e) override;
 
 private:
-    enum Style { Bar = 0, Analog, Edge, Digital, kStyleCount };
+    enum Style { Analog = 0, Edge, Led, Cross, Eye, kStyleCount };
     enum RxMode { Sig = 0, Avg, Peak, kModeCount };
 
     static double rawToDbS9(int raw);     // piecewise-linear cal table
     double displayDb() const;             // reading after the RX-mode filter
     double scaleFrac(double db) const;    // dB -> 0..1 along the meter scale
     void   applyStyle();                  // size + tooltip for current style
-    void   paintBarRx(class QPainter& p);
-    void   paintBarTx(class QPainter& p);
-    void   paintAnalog(class QPainter& p);  // RX + TX faces (needle arc)
+    void   paintAnalog(class QPainter& p);  // RX + TX faces (Orion amber)
     void   paintEdge(class QPainter& p);    // RX + TX faces (edgewise)
-    void   paintDigital(class QPainter& p);
+    void   paintLed(class QPainter& p);     // segmented LED bargraph
+    void   paintCross(class QPainter& p);   // TX cross-needle (RX = analog)
+    void   paintEye(class QPainter& p);     // magic-eye tube
     QString sUnitsText(double db) const;  // "S7" / "S9+23"
 
     int  style_ = Analog;
@@ -62,6 +67,7 @@ private:
     double fwdW_ = 0.0, refW_ = 0.0, swr_ = 1.0;
     double peakW_ = 0.0;                  // TX peak hold (watts)
     QElapsedTimer sinceTxPeak_;
+    double needleRef_ = 0.0;              // animated REF needle (cross style)
 };
 
 } // namespace ttc

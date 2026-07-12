@@ -13,36 +13,68 @@ namespace ttc {
 namespace {
 constexpr uint64_t kMinHz = 100000;      // Orion RX range sanity
 constexpr uint64_t kMaxHz = 60000000;
-constexpr int kCellW  = 19;              // per-glyph cell; dots use a half cell
-constexpr int kDotW   = 9;
 constexpr int kMarginX = 6;
 // Cell layout: [10M][1M] . [100k][10k][1k] . [100][10][1]
 constexpr uint64_t kPlace[8] = {10000000, 1000000, 100000, 10000, 1000, 100, 10, 1};
+} // namespace
+
+int FrequencyDisplay::cellW() const {
+    return static_cast<int>(19 * scale_ + 0.5);
+}
+
+int FrequencyDisplay::dotW() const {
+    return static_cast<int>(9 * scale_ + 0.5);
+}
 
 // x offset of digit cell i (0..7), accounting for the two dot separators.
-int cellX(int i) {
-    int x = kMarginX + i * kCellW;
-    if (i >= 2) x += kDotW;              // dot after MHz
-    if (i >= 5) x += kDotW;              // dot after kHz
+int FrequencyDisplay::cellX(int i) const {
+    int x = kMarginX + i * cellW();
+    if (i >= 2) x += dotW();             // dot after MHz
+    if (i >= 5) x += dotW();             // dot after kHz
     return x;
 }
-} // namespace
+
+void FrequencyDisplay::applyGeometry() {
+    setFixedSize(cellX(7) + cellW() + kMarginX,
+                 digitTop_ + static_cast<int>(34 * scale_));
+    edit_->setGeometry(QRect(2, digitTop_ + 2, width() - 4,
+                             static_cast<int>(28 * scale_)));
+}
 
 FrequencyDisplay::FrequencyDisplay(const QString& caption, const QColor& accent,
                                    QWidget* parent)
     : QWidget(parent), caption_(caption), accent_(accent) {
     digitTop_ = caption_.isEmpty() ? 0 : 14;
-    setFixedSize(cellX(7) + kCellW + kMarginX, digitTop_ + 34);
     setCursor(Qt::PointingHandCursor);
 
     edit_ = new QLineEdit(this);
-    edit_->setGeometry(QRect(2, digitTop_ + 2, width() - 4, 28));
     edit_->setAlignment(Qt::AlignCenter);
     edit_->setStyleSheet("QLineEdit { background: #1c2430; color: #e8f0f8;"
                          " border: 1px solid #3f7cb4; font-size: 16px; }");
     edit_->hide();
     connect(edit_, &QLineEdit::returnPressed, this, &FrequencyDisplay::finishEdit);
     connect(edit_, &QLineEdit::editingFinished, this, [this] { edit_->hide(); });
+    applyGeometry();
+}
+
+void FrequencyDisplay::setBandText(const QString& t) {
+    if (t == bandText_) return;
+    bandText_ = t;
+    update();
+}
+
+void FrequencyDisplay::setBadge(const QString& t) {
+    if (t == badge_) return;
+    badge_ = t;
+    update();
+}
+
+void FrequencyDisplay::setLargeDigits(bool on) {
+    const double s = on ? 1.25 : 1.0;
+    if (s == scale_) return;
+    scale_ = s;
+    applyGeometry();
+    update();
 }
 
 void FrequencyDisplay::setAccent(const QColor& c) {
@@ -70,16 +102,33 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
         p.setPen(QColor(143, 163, 184));
         p.drawText(QRect(kMarginX, 0, width() - kMarginX, digitTop_),
                    Qt::AlignLeft | Qt::AlignVCenter, caption_);
+        int rightEdge = width() - kMarginX;
+        if (!bandText_.isEmpty()) {                // band label, right-aligned
+            p.setPen(QColor(255, 210, 60, 200));
+            const int bw = p.fontMetrics().horizontalAdvance(bandText_);
+            p.drawText(QRect(rightEdge - bw, 0, bw, digitTop_),
+                       Qt::AlignRight | Qt::AlignVCenter, bandText_);
+            rightEdge -= bw + 8;
+        }
+        if (!badge_.isEmpty()) {                   // red chip ("SPLIT")
+            const int bw = p.fontMetrics().horizontalAdvance(badge_) + 8;
+            const QRect chip(rightEdge - bw, 1, bw, digitTop_ - 3);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(138, 39, 39));
+            p.drawRoundedRect(chip, 3, 3);
+            p.setPen(QColor(255, 214, 214));
+            p.drawText(chip, Qt::AlignCenter, badge_);
+        }
     }
 
     // KE9NS look: MHz + kHz digits big in the VFO's accent color, the Hz
     // group smaller and near-white, leading zeros not drawn at all (their
     // cells stay live as click/wheel targets).
     QFont big("DejaVu Sans");
-    big.setPixelSize(27);
+    big.setPixelSize(static_cast<int>(27 * scale_));
     big.setBold(true);
     QFont small = big;
-    small.setPixelSize(19);
+    small.setPixelSize(static_cast<int>(19 * scale_));
 
     const QRect row(0, digitTop_, width(), height() - digitTop_);
     bool leading = true;
@@ -89,20 +138,20 @@ void FrequencyDisplay::paintEvent(QPaintEvent*) {
         if (leading) continue;
         p.setFont(i < 5 ? big : small);
         p.setPen(i < 5 ? accent_ : QColor(222, 230, 238));
-        p.drawText(QRect(cellX(i), row.y(), kCellW, row.height()), Qt::AlignCenter,
+        p.drawText(QRect(cellX(i), row.y(), cellW(), row.height()), Qt::AlignCenter,
                    QString::number(d));
     }
     p.setFont(big);
     p.setPen(QColor(accent_.red(), accent_.green(), accent_.blue(), 150));
-    p.drawText(QRect(cellX(1) + kCellW, row.y(), kDotW, row.height()),
+    p.drawText(QRect(cellX(1) + cellW(), row.y(), dotW(), row.height()),
                Qt::AlignCenter, ".");
-    p.drawText(QRect(cellX(4) + kCellW, row.y(), kDotW, row.height()),
+    p.drawText(QRect(cellX(4) + cellW(), row.y(), dotW(), row.height()),
                Qt::AlignCenter, ".");
 }
 
 int FrequencyDisplay::digitAt(int x) const {
     for (int i = 0; i < 8; ++i)
-        if (x >= cellX(i) && x < cellX(i) + kCellW) return i;
+        if (x >= cellX(i) && x < cellX(i) + cellW()) return i;
     return -1;
 }
 

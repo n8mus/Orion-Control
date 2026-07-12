@@ -51,6 +51,10 @@ private:
     QCheckBox* grid_   = nullptr;
     QCheckBox* solar_  = nullptr;
     QCheckBox* rose_   = nullptr;
+    QCheckBox* plan_   = nullptr;
+    QCheckBox* bigVfo_ = nullptr;
+    QCheckBox* clock_  = nullptr;
+    QComboBox* trace_  = nullptr;
     QCheckBox* call_   = nullptr;
     QLineEdit* callEdit_ = nullptr;
     QLineEdit* gridEdit_ = nullptr;

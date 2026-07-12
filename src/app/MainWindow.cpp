@@ -85,7 +85,9 @@ MainWindow::MainWindow(QWidget* parent)
     panel_  = new ControlPanel(this);
     // Readout colors follow the TX role (matching the routing buttons and
     // panadapter flags): red = the transmitting VFO, green = the other one.
-    const QColor vfoTxRed(230, 95, 95), vfoRxGreen(70, 214, 125);
+    // Green dimmed to match the red's visual weight — at equal brightness
+    // the saturated green reads "bigger" than red at identical pixel size.
+    const QColor vfoTxRed(230, 95, 95), vfoRxGreen(62, 190, 112);
     freqDisp_ = new FrequencyDisplay("VFO A", vfoTxRed, this);
     freqDisp_->setFrequency(centerHz_);            // TX starts on A
     freqDispB_ = new FrequencyDisplay("VFO B", vfoRxGreen, this);
@@ -93,6 +95,8 @@ MainWindow::MainWindow(QWidget* parent)
     auto applyVfoColors = [this, vfoTxRed, vfoRxGreen] {
         freqDisp_->setAccent(txVfo_ == 'B' ? vfoRxGreen : vfoTxRed);
         freqDispB_->setAccent(txVfo_ == 'B' ? vfoTxRed : vfoRxGreen);
+        // Split reads faster as a word than as a color swap mid-pileup.
+        freqDispB_->setBadge(txVfo_ == 'B' ? QStringLiteral("SPLIT") : QString());
     };
     curBand_ = bandIndexOf(centerHz_);
     if (curBand_ >= 0) {
@@ -130,14 +134,49 @@ MainWindow::MainWindow(QWidget* parent)
     topGrid->setContentsMargins(10, 4, 10, 4);
     topGrid->setHorizontalSpacing(0);
     topGrid->setVerticalSpacing(3);
+    // Symmetry plan: the routing matrices (col 3, with the A/B transfer
+    // buttons at their middle) sit DEAD CENTER over the panadapter. That
+    // needs both flanks equal: same minimum width for the VFO columns (1/5),
+    // same gaps (2/4), same minimum for the outer columns (0/7), and the
+    // leftover space split evenly by the two stretch columns (0/6). The VFO
+    // boxes anchor inward (A hugs the matrices from the left, B from the
+    // right); clock/meter and the menus fall away to the far edges.
     topGrid->setColumnStretch(0, 1);
     topGrid->setColumnStretch(6, 1);
-    topGrid->setColumnMinimumWidth(2, 28);
-    topGrid->setColumnMinimumWidth(4, 28);
+    topGrid->setColumnMinimumWidth(0, 280);
+    topGrid->setColumnMinimumWidth(7, 280);
+    topGrid->setColumnMinimumWidth(2, 24);
+    topGrid->setColumnMinimumWidth(4, 24);
+    // Columns 1/5 get equal minimums computed AFTER the VFO columns are
+    // built (B is naturally wider — VIEW button), see below.
     auto* topLay = new QHBoxLayout;
     topLay->setContentsMargins(0, 0, 0, 0);
-    // Spans both decks: the needle meter styles are taller than one row.
-    topGrid->addWidget(smeter_, 0, 0, 2, 1, Qt::AlignLeft | Qt::AlignVCenter);
+    // Column 0, spanning both decks: just the meter, pushed right so it sits
+    // beside VFO A. (The clock moved to the bottom of the radio panel — its
+    // fixed width was pushing the window past narrow screens.)
+    {
+        auto* col0 = new QHBoxLayout;
+        col0->setContentsMargins(0, 0, 0, 0);
+        col0->addStretch(1);
+        col0->addWidget(smeter_, 0, Qt::AlignVCenter);
+        col0->addSpacing(14);
+        topGrid->addLayout(col0, 0, 0, 2, 1);
+    }
+    // One ticker updates the clock and keeps the VFO band labels honest
+    // (external clients can move the dials any time).
+    auto* uiTick = new QTimer(this);
+    connect(uiTick, &QTimer::timeout, this, [this] {
+        const QDateTime now = QDateTime::currentDateTime();
+        panel_->showClock(now.toUTC().toString("HH:mm:ss' UTC'"),
+                          now.toString("HH:mm:ss' local'"));
+        const int ba = bandIndexOf(centerHz_);
+        freqDisp_->setBandText(ba >= 0 ? QString("%1m").arg(kBands[ba].label)
+                                       : QString());
+        const int bb = bandIndexOf(vfoBHz_);
+        freqDispB_->setBandText(bb >= 0 ? QString("%1m").arg(kBands[bb].label)
+                                        : QString());
+    });
+    uiTick->start(1000);
     topGrid->addLayout(topLay, 0, 7, Qt::AlignRight | Qt::AlignVCenter);
     // Zoom (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel on
     // the panadapter still works and keeps the slider in sync. Level with
@@ -225,7 +264,7 @@ MainWindow::MainWindow(QWidget* parent)
     colA->setSpacing(3);
     colA->addWidget(freqDisp_);
     colA->addLayout(makeVolRow(0));
-    topGrid->addLayout(colA, 1, 1);
+    topGrid->addLayout(colA, 1, 1, Qt::AlignRight);   // hug the center block
     routing_ = new RoutingPanel(topStrip);
     topGrid->addWidget(routing_, 1, 3);
     auto* colB = new QVBoxLayout;
@@ -259,7 +298,14 @@ MainWindow::MainWindow(QWidget* parent)
     });
     rowB->addWidget(bViewBtn_);
     colB->addLayout(rowB);
-    topGrid->addLayout(colB, 1, 5);
+    topGrid->addLayout(colB, 1, 5, Qt::AlignLeft);    // hug the center block
+    {   // Equalize the VFO columns so the transfer buttons (center of the
+        // routing block) sit exactly over the panadapter's center line.
+        const int sym = std::max(colA->sizeHint().width(),
+                                 colB->sizeHint().width());
+        topGrid->setColumnMinimumWidth(1, sym);
+        topGrid->setColumnMinimumWidth(5, sym);
+    }
 
     auto spanFromSlider = [this](int v) {
         const double ratio = double(pan_->minViewSpanHz()) / pan_->maxViewSpanHz();
@@ -338,6 +384,10 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/callsign",   d.showCall);
         s.setValue("display/solar",      d.showSolar);
         s.setValue("display/rose",       d.showRose);
+        s.setValue("display/bandplan",   d.showBandPlan);
+        s.setValue("display/trace",      d.traceColor);
+        s.setValue("display/bigVfo",     d.bigVfo);
+        s.setValue("display/clock",      d.showClock);
     };
     // Station callsign: drives the watermark and defaults the cluster login.
     // Editable in the DISPLAY panel (CALL field), persisted immediately.
@@ -402,8 +452,15 @@ MainWindow::MainWindow(QWidget* parent)
         d.showCall   = s.value("display/callsign",   d.showCall).toBool();
         d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
         d.showRose   = s.value("display/rose",       d.showRose).toBool();
+        d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
+        d.traceColor = s.value("display/trace",      d.traceColor).toInt();
+        d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
+        d.showClock  = s.value("display/clock",      d.showClock).toBool();
         dispPanel->setSettings(d);
         pan_->setDisplaySettings(d);
+        freqDisp_->setLargeDigits(d.bigVfo);
+        freqDispB_->setLargeDigits(d.bigVfo);
+        panel_->setClockVisible(d.showClock);
         // The "Solar data panel" toggle governs everything solar (corner
         // panel AND the map sun marker), so it alone gates the NOAA poller.
         solarClient_.setEnabled(d.showSolar);
@@ -415,6 +472,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(dispPanel, &DisplayPanel::settingsChanged, this,
             [this, saveDisplay](const DisplaySettings& d) {
                 pan_->setDisplaySettings(d);
+                freqDisp_->setLargeDigits(d.bigVfo);
+                freqDispB_->setLargeDigits(d.bigVfo);
+                panel_->setClockVisible(d.showClock);
                 solarClient_.setEnabled(d.showSolar);
                 saveDisplay(d);
             });

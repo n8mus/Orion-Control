@@ -1,21 +1,30 @@
-# Appearance upgrade TODO
+# Appearance upgrade TODO — ALL ITEMS COMPLETE (2026-07-12)
 
 Review vs KE9NS PowerSDR (meter options) and Thetis (world map, solar data,
-compass rose) — Jon's screenshot reference, 2026-07-12. Rules of the road:
-meters are drawn as **vector QPainter faces** (no bitmap skins copied from
-anyone), map imagery is fetched from **NASA Visible Earth directly** (public
-domain), no third-party asset files enter the repo.
+compass rose) — Jon's screenshot reference, 2026-07-12. Meters are vector
+QPainter faces, map imagery fetched from NASA Visible Earth (public domain),
+cty.dat is AD1C's freely-distributable country file. With the donation-style
+GPL release decided, GPL sources (Thetis, KE9NS) are studied and credited
+directly.
 
-## 1. S-meter suite (the "bland meter" fix) — DONE (on-air validated)
-- [x] **Meter style picker**: click the meter cycles Bar / Analog / Edge /
-      Digital, persisted.
-- [x] **Analog needle face**: vector ivory face, black S1–S9 arc, red over-S9
-      arc, 30 fps ballistics (fast attack / slow decay), peak ghost needle.
-      TX face: 0–120 W with red zone + SWR readout.
-- [x] **Digital readout**: dBm / S-units / µV from the calibrated value.
-- [x] **RX meter modes**: right-click cycles Signal / Average / Peak, chip on
-      the face.
-- [x] **TX faces** on every style (watts + SWR + reflected on digital).
+## 1. S-meter suite — DONE, final lineup: 5 styles
+- [x] **Style picker**: click cycles Orion / Edge / LED / Cross-needle /
+      Magic eye, persisted. (Bar, Digital-dBm and History styles were
+      built, tried on the air and dropped per Jon.)
+- [x] **Orion face** (default): the 565's own meter — amber backlit
+      background, black lettering, dual printed scales (S-units on the top
+      arc, watts smaller on the inner arc, TX reads the lower scale), red
+      instant needle + blue peak needle, ORION wordmark (no TT emblem —
+      nominative-use call).
+- [x] **Edge** edgewise ivory meter.
+- [x] **LED bargraph** (Thetis LED item): 28 segments green/amber/red,
+      unlit ghosts, peak segment held.
+- [x] **Cross-needle TX face** (Daiwa style): FWD + REF needles crossing,
+      SWR center; RX face = the Orion amber face.
+- [x] **Magic eye** (Thetis MAGIC_EYE): glowing tube, shadow wedge closes
+      with signal, crossbar slit.
+- [x] **RX meter modes**: right-click cycles Signal / Average / Peak.
+- [x] **TX faces** on every style (watts + SWR).
 
 ## 2. World map backgrounds (map pack + controls) — DONE
 - [x] **Bundled NASA basemaps**: Map: Classic (Blue Marble), Map: Vegetation
@@ -35,7 +44,8 @@ domain), no third-party asset files enter the repo.
       (green-on-black, DISPLAY "Solar data panel" toggle): SFI, SSN, A, K,
       X-ray class. NOAA SWPC (wwv.txt + daily indices + GOES X-ray JSON),
       polled every 15 min, last good values kept, fully async.
-- [ ] Optional: band-condition hint line derived from the same data.
+- [x] Band-condition verdict line in the panel (COND GOOD / FAIR / POOR
+      from SFI + K).
 
 ## 4. Azimuth compass rose — DONE
 - [x] Azimuthal-equidistant world disc bottom-left of the spectrum, centered
@@ -47,18 +57,18 @@ domain), no third-party asset files enter the repo.
       right-click clears. DISPLAY "Compass rose" toggle, persisted.
       pointRoseAt() is public for future rotor integration.
 
-## 5. VFO / top-strip cosmetics
-- [ ] Band label under each VFO readout ("40m band"), auto from kBands.
-- [ ] Larger amber digit option for the VFO readouts (Thetis-scale digits),
-      sized via a DISPLAY setting.
-- [ ] Split badge: when B carries TX, show a "SPLIT" tag by the readouts
-      (we color-code today, but the word reads faster mid-pileup).
+## 5. VFO / top-strip cosmetics — DONE
+- [x] Band label in each VFO caption row ("40m", amber, right-aligned),
+      refreshed every second so external clients can't desync it.
+- [x] "Large VFO digits" DISPLAY checkbox: digits + hit cells scale ~25 %.
+- [x] SPLIT badge: red chip on VFO B's caption whenever B carries TX.
+- [x] Top strip: UTC + local clock far left, meter right-aligned beside
+      VFO A (was stranded at the window edge).
 
-## 6. Smaller polish items spotted in the comparison
-- [ ] Meter smoothing option (Sig Avg) applied to the bar style too.
-- [ ] Local time + UTC clock line in the top strip (Thetis shows both).
-- [ ] Frequency-scale band-plan shading (CW/data/phone segments tinted under
-      the scale strip, like the 60 m channel boxes we already draw).
-- [ ] Spectrum trace color / line-width options in DISPLAY.
-
-Suggested order: 1 → 2 → 3 (map + solar feel like one feature), then 5, 4, 6.
+## 6. Smaller polish items — DONE
+- [x] Meter reading modes (Sig/Avg/Peak) apply to every style incl. Bar.
+- [x] UTC + local clock in the top strip.
+- [x] Frequency-scale band-plan shading (US allocations: blue = CW/data,
+      green = phone), DISPLAY "Band-plan shading" toggle.
+- [x] Spectrum trace color combo in DISPLAY (Soft / White / Green / Yellow
+      / Cyan).

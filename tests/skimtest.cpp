@@ -84,6 +84,12 @@ int main(int argc, char** argv) {
         {"VE3KI", 14055700, 25, 0.10f},
         // Not a callsign — must never be spotted.
         {"TEST",  14070300, 20, 0.15f},
+        // Second shift, exercising the wider bank (and 45 WPM post-v2).
+        {"K1TTT", 14003200, 45, 0.15f},
+        {"VE7CC", 14018700, 30, 0.08f},
+        {"DL8AAM",14033300, 24, 0.10f},
+        {"JA7QQQ",14047900, 20, 0.07f},
+        {"W9RE",  14061100, 35, 0.12f},
     };
     for (auto& s : st) {
         s.key = keying(QString("CQ CQ DE %1 %1 K  ").arg(s.call),
@@ -123,10 +129,10 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    SkimmerEngine eng(kRate);
+    SkimmerEngine eng(kRate, 24);
     // Prefix validator standing in for cty.dat: accept the known-real ones.
     eng.setCallValidator([](const QString& c) {
-        for (const char* p : {"W1", "DL", "JA", "VE", "K1", "N8"})
+        for (const char* p : {"W1", "W9", "DL", "JA", "VE", "K1", "N8"})
             if (c.startsWith(p)) return true;
         return false;
     });
@@ -210,6 +216,6 @@ int main(int argc, char** argv) {
     }
     printf(fails ? "SKIMTEST: %d FAILURE(S)\n" : "SKIMTEST: PASS (all %d "
                                                  "stations, no phantoms)\n",
-           fails ? fails : 4);
+           fails ? fails : int(st.size()) - 1);
     return fails ? 1 : 0;
 }

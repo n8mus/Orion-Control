@@ -33,9 +33,10 @@ const QRegularExpression& callRe() {
 }
 } // namespace
 
-SkimmerEngine::SkimmerEngine(double inputRate, QObject* parent)
+SkimmerEngine::SkimmerEngine(double inputRate, int channels, QObject* parent)
     : QObject(parent), inputRate_(inputRate) {
-    for (int i = 0; i < kChannels; ++i) {
+    ch_.resize(std::clamp(channels, 1, 64));
+    for (int i = 0; i < int(ch_.size()); ++i) {
         ch_[i].dec = new CwDecoder(inputRate, 0.0, this);
         connect(ch_[i].dec, &CwDecoder::textDecoded, this,
                 [this, i](const QString& t) { onText(i, t); },
@@ -208,6 +209,11 @@ void SkimmerEngine::extractCall(Chan& c) {
                     s.atSecs = QDateTime::currentSecsSinceEpoch();
                     s.wpm = c.wpm;
                 }
+            // Re-announce so downstream consumers (telnet clients, the
+            // band map's age column) see the station is still active;
+            // they throttle their own output.
+            emit spotFound(tok, c.hz, c.wpm);
+            emit spotsChanged();
             return;
         }
         c.call = tok;
@@ -239,7 +245,7 @@ const QVector<SkimmerEngine::SkimSpot>& SkimmerEngine::spots() {
 
 QVector<SkimmerEngine::ChanInfo> SkimmerEngine::channelInfo() const {
     QVector<ChanInfo> out;
-    out.reserve(kChannels);
+    out.reserve(int(ch_.size()));
     for (const auto& c : ch_)
         out.push_back({c.active, c.hz, c.wpm, c.call,
                        c.text.right(28)});

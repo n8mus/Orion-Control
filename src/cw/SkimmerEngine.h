@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace ttc {
 
@@ -27,9 +28,13 @@ class CwDecoder;
 class SkimmerEngine : public QObject {
     Q_OBJECT
 public:
-    static constexpr int kChannels = 8;
+    // channels: size of the decoder bank. Each channel costs one complex
+    // multiply per input sample (the recurrence-phasor mixer), so even a
+    // few dozen are cheap at 500 ksps.
+    explicit SkimmerEngine(double inputRate, int channels = 8,
+                           QObject* parent = nullptr);
 
-    explicit SkimmerEngine(double inputRate, QObject* parent = nullptr);
+    int channelCount() const { return int(ch_.size()); }
 
     void setEnabled(bool on);              // gates the whole bank
     bool enabled() const { return enabled_.load(std::memory_order_relaxed); }
@@ -91,7 +96,7 @@ private:
 
     std::atomic<bool> enabled_{false};
     double inputRate_;
-    Chan ch_[kChannels];
+    std::vector<Chan> ch_;                 // fixed size after construction
     QVector<SkimSpot> spots_;
     std::function<bool(const QString&)> validate_;
     qint64 lastDial_ = 0;

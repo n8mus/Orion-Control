@@ -38,6 +38,8 @@ add_executable(tentec-console
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/cw/SkimmerEngine.cpp      src/cw/SkimmerEngine.h
+  src/cw/SkimServer.cpp         src/cw/SkimServer.h
+  src/ui/SkimmerWindow.cpp      src/ui/SkimmerWindow.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
@@ -74,6 +76,12 @@ add_executable(rotortest EXCLUDE_FROM_ALL
   src/net/RotorClient.cpp)
 target_include_directories(rotortest PRIVATE src)
 target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
+
+add_executable(skimsrvtest EXCLUDE_FROM_ALL
+  tests/skimsrvtest.cpp
+  src/cw/SkimServer.cpp)
+target_include_directories(skimsrvtest PRIVATE src)
+target_link_libraries(skimsrvtest PRIVATE Qt6::Core Qt6::Network)
 
 add_executable(cwtest EXCLUDE_FROM_ALL
   tests/cwtest.cpp

@@ -31,9 +31,11 @@
 #include "ui/DisplayPanel.h"
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
+#include "cw/SkimServer.h"
 #include "net/FldigiClient.h"
 #include "net/SpotClient.h"
 #include "ui/DigiWindow.h"
+#include "ui/SkimmerWindow.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -760,7 +762,10 @@ MainWindow::MainWindow(QWidget* parent)
     // text for callsigns. Found calls land on the panadapter as violet
     // spots, worked-before colored like everything else. The engine exists
     // even without an SDR build; it just never gets IQ.
-    skim_ = new SkimmerEngine(500000.0, this);     // must match the SDR span
+    skim_ = new SkimmerEngine(                     // rate must match the SDR
+        500000.0,
+        std::clamp(QSettings().value("skim/channels", 24).toInt(), 4, 64),
+        this);
     skim_->setCallValidator([this](const QString& call) {
         double la = 0.0, lo = 0.0;                 // decode artifacts have
         return cty_.lookup(call, la, lo);          // no country prefix
@@ -781,8 +786,48 @@ MainWindow::MainWindow(QWidget* parent)
         QString("Run %1 decoder channels over the CW segment of the current "
                 "band.\nCalls are validated against the country file and "
                 "must repeat (or follow DE)\nbefore they're spotted.")
-            .arg(SkimmerEngine::kChannels));
+            .arg(skim_->channelCount()));
     skim_->setEnabled(skimEnable_->isChecked());
+    // Band map: the skimmer's finds as a frequency-sorted click-to-tune
+    // list (separate window, so it can live on all session).
+    auto* skimMap = skimMenu->addAction("Band map…");
+    connect(skimMap, &QAction::triggered, this, [this] {
+        if (!skimWin_) {
+            skimWin_ = new SkimmerWindow(
+                skim_,
+                [this](const QString& call, qint64 hz) {
+                    if (!logbook_.ready()) return QChar('?');
+                    return logbook_.status(call, LogbookIndex::bandForHz(hz));
+                },
+                this);
+            connect(skimWin_, &SkimmerWindow::tuneTo, this,
+                    [this](qint64 hz, const QString& call) {
+                        tuneAbsolute(uint64_t(hz));
+                        if (!call.isEmpty() && logCall_) {
+                            logCall_->setText(call);
+                            qsoStartUtc_ = QDateTime::currentDateTimeUtc();
+                            if (cwWin_) cwWin_->setHisCall(call);
+                        }
+                    });
+        }
+        skimWin_->show();
+        skimWin_->raise();
+        skimWin_->activateWindow();
+    });
+    // Local RBN: serve the finds over cluster telnet while the skimmer
+    // runs — point cqrlog's DX-cluster window at localhost:7300 and this
+    // station spots for itself.
+    skimSrv_ = new SkimServer(this);
+    skimSrv_->setSpotterCall(stationCall);
+    connect(skim_, &SkimmerEngine::spotFound, skimSrv_, &SkimServer::announce);
+    auto* skimTelnet = skimMenu->addAction(
+        QString("Telnet feed on localhost:%1 (for cqrlog)")
+            .arg(QSettings().value("skim/telnetPort", 7300).toInt()));
+    skimTelnet->setEnabled(false);
+    skimTelnet->setToolTip(
+        "While the skimmer runs, its finds are served in DX-cluster telnet\n"
+        "format. In cqrlog: DX cluster -> connect to localhost port 7300 —\n"
+        "your own receiver becomes a spotting node.");
     skimStatus_ = new QLabel(skimMenu);
     skimStatus_->setTextFormat(Qt::RichText);
     skimStatus_->setStyleSheet("QLabel { background: #141b24; color: #c8d4e0;"
@@ -1192,10 +1237,17 @@ MainWindow::MainWindow(QWidget* parent)
     connect(skimEnable_, &QAction::toggled, this, [this, pushSpots](bool on) {
         QSettings().setValue("skim/enabled", on);
         skim_->setEnabled(on);
+        const quint16 sp =
+            quint16(QSettings().value("skim/telnetPort", 7300).toUInt());
+        if (on) skimSrv_->start(sp);
+        else skimSrv_->stop();
         statusBar()->showMessage(on ? "CW skimmer ON (violet spots)"
                                     : "CW skimmer off", 5000);
         pushSpots();
     });
+    if (skimEnable_->isChecked())
+        skimSrv_->start(
+            quint16(QSettings().value("skim/telnetPort", 7300).toUInt()));
     // Recolor live when the logbook loads or a bridged QSO lands in it.
     connect(&logbook_, &LogbookIndex::updated, this, pushSpots);
     logbook_.start();

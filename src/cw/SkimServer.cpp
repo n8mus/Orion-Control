@@ -1,0 +1,86 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "cw/SkimServer.h"
+
+#include <QDateTime>
+#include <QHostAddress>
+#include <QTcpSocket>
+
+namespace ttc {
+
+SkimServer::SkimServer(QObject* parent) : QObject(parent) {
+    connect(&srv_, &QTcpServer::newConnection, this,
+            &SkimServer::onNewConnection);
+}
+
+bool SkimServer::start(quint16 port) {
+    if (srv_.isListening()) return true;
+    return srv_.listen(QHostAddress::LocalHost, port);
+}
+
+SkimServer::~SkimServer() {
+    // Member destruction order bites here: the QTcpServer (and its child
+    // sockets) outlive clients_, so a socket's disconnected handler would
+    // touch the already-destroyed vector. Detach everything first.
+    stop();
+}
+
+void SkimServer::stop() {
+    srv_.close();
+    for (QTcpSocket* c : clients_) {
+        c->disconnect(this);
+        c->deleteLater();
+    }
+    clients_.clear();
+    lastSent_.clear();
+}
+
+void SkimServer::onNewConnection() {
+    while (QTcpSocket* c = srv_.nextPendingConnection()) {
+        clients_.push_back(c);
+        connect(c, &QTcpSocket::disconnected, this, [this, c] {
+            clients_.removeAll(c);
+            c->deleteLater();
+        });
+        // Cluster-style login chatter; the reply is accepted verbatim and
+        // otherwise ignored — this node has exactly one feed to offer.
+        sendLine(c, QStringLiteral(
+            "Welcome to the %1 console CW skimmer (local RBN)").arg(spotter_));
+        c->write("Please enter your call: ");
+        connect(c, &QTcpSocket::readyRead, this, [this, c] {
+            const QByteArray in = c->readAll();   // consume login/commands
+            if (!c->property("greeted").toBool()) {
+                c->setProperty("greeted", true);
+                const QString who =
+                    QString::fromLatin1(in).trimmed().section(' ', 0, 0);
+                sendLine(c, QStringLiteral(
+                    "%1 de %2-# >  spots follow as the skimmer hears them")
+                        .arg(who.isEmpty() ? QStringLiteral("OM") : who,
+                             spotter_));
+            }
+        });
+    }
+}
+
+void SkimServer::sendLine(QTcpSocket* c, const QString& line) {
+    c->write((line + QStringLiteral("\r\n")).toLatin1());
+}
+
+void SkimServer::announce(const QString& call, qint64 hz, int wpm) {
+    if (clients_.isEmpty()) return;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    if (now - lastSent_.value(call, 0) < 120) return;
+    lastSent_[call] = now;
+    // Classic layout, column-compatible with what cluster parsers expect:
+    // "DX de SPOTTER-#:  FREQ_KHZ  CALL  comment  HHMMZ"
+    const QString line =
+        QStringLiteral("DX de %1-#:  %2  %3 CW %4  %5Z")
+            .arg(spotter_)
+            .arg(hz / 1000.0, 8, 'f', 1)
+            .arg(call, -12)
+            .arg(wpm > 0 ? QString("%1 WPM").arg(wpm, 2)
+                         : QStringLiteral("      "))
+            .arg(QDateTime::currentDateTimeUtc().toString("hhmm"));
+    for (QTcpSocket* c : clients_) sendLine(c, line);
+}
+
+} // namespace ttc

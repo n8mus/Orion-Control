@@ -10,7 +10,7 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort)
 
 # SDRplay RSP source is optional so the core app always builds. Turn on with
 # -DBUILD_SDRPLAY=ON once the SDRplay API service is running (Phase 0).
@@ -30,6 +30,8 @@ add_executable(tentec-console
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
+  src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
+  src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
@@ -45,7 +47,7 @@ add_executable(tentec-console
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
-target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network)
+target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort)
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

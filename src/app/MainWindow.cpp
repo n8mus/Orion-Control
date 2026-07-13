@@ -415,7 +415,7 @@ MainWindow::MainWindow(QWidget* parent)
     cty_.load();
     {
         QSettings s;
-        const QString grid = s.value("station/grid", "EN82").toString();
+        const QString grid = s.value("station/grid", "EN83al").toString();
         dispPanel->setGrid(grid);
         double la, lo;
         if (CtyLookup::gridToLatLon(grid, la, lo)) pan_->setQth(la, lo);
@@ -654,6 +654,7 @@ MainWindow::MainWindow(QWidget* parent)
         if (!t.trimmed().isEmpty() && !qsoStartUtc_.isValid())
             qsoStartUtc_ = QDateTime::currentDateTimeUtc();
         if (t.trimmed().isEmpty()) qsoStartUtc_ = QDateTime();
+        if (cwWin_) cwWin_->setHisCall(t.trimmed().toUpper());  // %c macro
     });
     const auto doLog = [this, logMenu] {
         const QString call = logCall_->text().trimmed().toUpper();
@@ -710,7 +711,29 @@ MainWindow::MainWindow(QWidget* parent)
                 logCall_->setText(call);
                 logPark_->setText(kind == QChar('P') ? tg : QString());
                 qsoStartUtc_ = QDateTime::currentDateTimeUtc();
+                if (cwWin_) cwWin_->setHisCall(call);
             });
+
+    // "CW" button: the WinKeyer sending window (type-ahead + memories).
+    // The keyer hardware keeps the paddle in charge; this is the keyboard.
+    auto* cwBtn = new QToolButton(topStrip);
+    cwBtn->setText("CW");
+    cwBtn->setFocusPolicy(Qt::NoFocus);
+    cwBtn->setStyleSheet(spotsBtn->styleSheet());
+    cwBtn->setToolTip("CW keyboard/memories via the WinKeyer\n(paddle always "
+                      "wins — touching it dumps the buffer)");
+    topLay->addWidget(cwBtn);
+    connect(cwBtn, &QToolButton::clicked, this, [this] {
+        if (!cwWin_) {
+            cwWin_ = new CwWindow(this);
+            cwWin_->setMyCall(QSettings()
+                .value("station/callsign", "N8EM").toString());
+            cwWin_->setHisCall(logCall_ ? logCall_->text() : QString());
+        }
+        cwWin_->show();
+        cwWin_->raise();
+        cwWin_->activateWindow();
+    });
 
     // "AUDIO" dropdown: per-receiver volume + mute and the Orion's output
     // routing (*UC) — including one-VFO-per-ear for split pileups.

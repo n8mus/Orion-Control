@@ -17,6 +17,7 @@ class QUdpSocket;
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
 #include "util/CtyLookup.h"
+#include "util/LogbookIndex.h"
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -76,6 +77,7 @@ private:
     SolarClient      solarClient_;                 // NOAA space-weather poller
     QStringList      parkFilter_;                  // POTA park countries in area
     CtyLookup        cty_;                         // callsign -> country coords
+    LogbookIndex     logbook_;                     // cqrlog worked-before data
     QHash<QString, QPair<double, double>> ctyMemo_; // per-call resolution cache
     PanadapterWidget* pan_ = nullptr;
     SMeterWidget*     smeter_ = nullptr;

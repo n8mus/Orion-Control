@@ -50,6 +50,10 @@ struct SpotLabel {
     QString tag;
     double  lat = 999.0;        // station location (999 = unknown) — clicking
     double  lon = 999.0;        // the label swings the compass rose to it
+    // Logbook status (set by the owner from cqrlog data): 'N' never worked,
+    // 'B' worked but not this band, 'W' worked this band, 'C' confirmed,
+    // '?' unknown — '?' keeps the plain kind color.
+    char    status = '?';
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

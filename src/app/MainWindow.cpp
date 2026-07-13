@@ -552,6 +552,20 @@ MainWindow::MainWindow(QWidget* parent)
     areaCustom->setActionGroup(areaGrp);
     auto* spotsClear = spotsMenu->addAction("Clear spots");
     spotsMenu->addSeparator();
+    {   // Worked-before legend (colors fed from the cqrlog logbook).
+        auto* legend = spotsMenu->addAction(
+            "Call colors: red new · amber new band · green worked · gray cfmd");
+        legend->setEnabled(false);
+        legend->setToolTip(
+            "Spot callsigns are colored from your cqrlog logbook:\n"
+            "red = never worked, amber = worked but not on this band,\n"
+            "green = worked this band, gray = confirmed (card/LoTW/eQSL).\n"
+            "POTA spots color by the PARK (red = never hunted).\n"
+            "A small edge bar keeps the source color (yellow DX / green "
+            "POTA / cyan FT8).\nPlain colors mean no logbook data yet — "
+            "start cqrlog once to load it.");
+    }
+    spotsMenu->addSeparator();
     {
         QSettings s;
         const QString host  = s.value("spots/host", "dxc.ve7cc.net").toString();
@@ -685,6 +699,7 @@ MainWindow::MainWindow(QWidget* parent)
         logPark_->clear();
         qsoStartUtc_ = QDateTime();
         logMenu->hide();
+        logbook_.refreshSoon(3000);       // recolor spots with the new QSO
     };
     connect(logGo, &QPushButton::clicked, this, doLog);
     for (QLineEdit* e : {logCall_, logRstS_, logRstR_, logPark_})
@@ -778,7 +793,17 @@ MainWindow::MainWindow(QWidget* parent)
         l.lat = it->first;
         l.lon = it->second;
     };
-    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace] {
+    // Worked-before status from the cqrlog logbook: POTA spots color by the
+    // park (hunted or not — that's the POTA question), everything else by
+    // call + band. No log data yet = '?' = plain kind colors.
+    const auto logStatus = [this](const SpotLabel& l) -> char {
+        if (!logbook_.ready()) return '?';
+        if (l.kind == 'P')
+            return logbook_.parkHunted(l.tag) ? 'W' : 'N';
+        return logbook_.status(l.call, LogbookIndex::bandForHz(l.hz))
+            .toLatin1();
+    };
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace, logStatus] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
             QSet<QString> seen;                    // POTA API entry wins (has
@@ -789,8 +814,10 @@ MainWindow::MainWindow(QWidget* parent)
                     if (!parkFilter_.isEmpty()
                         && !parkFilter_.contains(s.tag.section('-', 0, 0)))
                         continue;
-                    labels.push_back({s.call, s.hz, s.atSecs, s.kind, s.tag,
-                                      s.lat, s.lon});
+                    SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag,
+                                s.lat, s.lon};
+                    l.status = logStatus(l);
+                    labels.push_back(l);
                     seen.insert(s.call);
                 }
             for (const Spot& s : spotClient_.spots()) {
@@ -800,11 +827,15 @@ MainWindow::MainWindow(QWidget* parent)
                 if (seen.contains(s.call)) continue;
                 SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
                 if (l.lat > 500.0) ctyPlace(l);
+                l.status = logStatus(l);
                 labels.push_back(l);
             }
         }
         pan_->setSpots(labels);
     };
+    // Recolor live when the logbook loads or a bridged QSO lands in it.
+    connect(&logbook_, &LogbookIndex::updated, this, pushSpots);
+    logbook_.start();
     connect(&spotClient_, &SpotClient::spotsChanged, this, pushSpots);
     connect(&spotClient_, &SpotClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });

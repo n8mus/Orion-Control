@@ -633,11 +633,24 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
         const qint64 age = v.s->atSecs > 0
             ? std::clamp<qint64>(now - v.s->atSecs, 0, 1200) : 0;
         const int alpha = 255 - static_cast<int>(age * 115 / 1200);
-        QColor c = v.s->kind == 'P' ? QColor(74, 222, 128)   // POTA green
-                 : v.s->kind == 'F' ? QColor(96, 200, 255)   // FT8 cyan
-                                    : QColor(255, 216, 50);  // DX yellow
+        const QColor kindC = v.s->kind == 'P' ? QColor(74, 222, 128)  // POTA
+                           : v.s->kind == 'F' ? QColor(96, 200, 255) // FT8
+                                              : QColor(255, 216, 50);// DX
+        // Worked-before coloring (cqrlog DX-cluster convention): the CALL
+        // text carries the logbook status; the source kind stays readable
+        // as a small left edge bar in the kind color.
+        QColor c = v.s->status == 'N' ? QColor(255, 92, 70)   // new one!
+                 : v.s->status == 'B' ? QColor(255, 190, 60)  // new band
+                 : v.s->status == 'W' ? QColor(130, 222, 140) // worked
+                 : v.s->status == 'C' ? QColor(150, 162, 178) // confirmed
+                                      : kindC;                // no log data
         c.setAlpha(alpha);
         p.fillRect(box, QColor(8, 10, 16, 185));         // dark box (.261 idea)
+        if (v.s->status != '?') {                        // kind edge bar
+            QColor kc = kindC;
+            kc.setAlpha(alpha);
+            p.fillRect(QRect(box.left(), box.top(), 2, box.height()), kc);
+        }
         p.setPen(c);
         p.drawText(xt, box.top() + fm.ascent(), v.s->call);
         if (wTag) {                                      // park ref, muted gray

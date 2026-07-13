@@ -20,7 +20,8 @@ class QAction;
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "cw/CwWindow.h"
-namespace ttc { class CwDecoder; class SkimmerEngine; }
+namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
+                class DigiWindow; }
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -218,6 +219,8 @@ private:
     SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank
     QAction* skimEnable_ = nullptr;            // SKIM menu on/off toggle
     QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
+    FldigiClient* fldigi_ = nullptr;           // XML-RPC link (lazy)
+    DigiWindow*   digiWin_ = nullptr;          // fldigi companion (lazy)
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

@@ -28,6 +28,8 @@ add_executable(tentec-console
   src/net/SpotClient.cpp        src/net/SpotClient.h
   src/net/PotaClient.cpp        src/net/PotaClient.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
+  src/net/FldigiClient.cpp      src/net/FldigiClient.h
+  src/ui/DigiWindow.cpp         src/ui/DigiWindow.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
@@ -51,12 +53,19 @@ add_executable(tentec-console
 target_include_directories(tentec-console PRIVATE src)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort)
 
-# Offline harnesses (not built by default): synthetic-IQ skimmer test.
+# Offline harnesses (not built by default): synthetic-IQ skimmer test and
+# the fldigi XML-RPC client test (pair with tests/fake_fldigi.py).
 add_executable(skimtest EXCLUDE_FROM_ALL
   tests/skimtest.cpp
   src/cw/CwDecoder.cpp src/cw/SkimmerEngine.cpp)
 target_include_directories(skimtest PRIVATE src)
 target_link_libraries(skimtest PRIVATE Qt6::Core)
+
+add_executable(fldigitest EXCLUDE_FROM_ALL
+  tests/fldigitest.cpp
+  src/net/FldigiClient.cpp)
+target_include_directories(fldigitest PRIVATE src)
+target_link_libraries(fldigitest PRIVATE Qt6::Core Qt6::Network)
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

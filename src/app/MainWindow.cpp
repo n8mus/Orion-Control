@@ -30,7 +30,9 @@
 #include "ui/DisplayPanel.h"
 #include "cw/CwDecoder.h"
 #include "cw/SkimmerEngine.h"
+#include "net/FldigiClient.h"
 #include "net/SpotClient.h"
+#include "ui/DigiWindow.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -820,6 +822,31 @@ MainWindow::MainWindow(QWidget* parent)
                                      : QString()),
                     8000);
             });
+
+    // "DIGI" button: the fldigi companion window (modem/carrier readout,
+    // decoded text, click-to-carrier). fldigi already follows the dial
+    // through rigctld; this is the audio-domain half of the link.
+    auto* digiBtn = new QToolButton(topStrip);
+    digiBtn->setText("DIGI");
+    digiBtn->setFocusPolicy(Qt::NoFocus);
+    digiBtn->setStyleSheet(spotsBtn->styleSheet());
+    digiBtn->setToolTip("fldigi link: decoded text + click a passband trace "
+                        "to set fldigi's carrier\n(fldigi must have XML-RPC "
+                        "on, its default)");
+    topLay2->addSpacing(8);
+    topLay2->addWidget(digiBtn);
+    connect(digiBtn, &QToolButton::clicked, this, [this] {
+        if (!digiWin_) {
+            fldigi_ = new FldigiClient(this);
+            fldigi_->setEndpoint(
+                QSettings().value("digi/host", "127.0.0.1").toString(),
+                quint16(QSettings().value("digi/port", 7362).toUInt()));
+            digiWin_ = new DigiWindow(fldigi_, this);
+        }
+        digiWin_->show();
+        digiWin_->raise();
+        digiWin_->activateWindow();
+    });
 
     connect(cwBtn, &QToolButton::clicked, this, [this] {
         if (!cwWin_) {
@@ -2341,6 +2368,25 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::onTuneRequested(int offsetHz, bool exact) {
+    // fldigi click-to-carrier: radio in DIG with the DIGI window tracking,
+    // and the click lands INSIDE the passband -> move fldigi's audio
+    // cursor there and leave the radio alone (the panadapter acts as
+    // fldigi's waterfall). Clicks outside the passband tune as usual;
+    // Shift (exact) always tunes.
+    if (!exact && digital_ && digiWin_ && digiWin_->isVisible()
+        && digiWin_->trackClicks() && fldigi_ && fldigi_->connected()) {
+        int lo = 0, hi = 0;
+        edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+        if (offsetHz >= lo && offsetHz <= hi) {
+            const int audio = rigMode_ == Mode::LSB ? -offsetHz : offsetHz;
+            if (audio > 0) {
+                fldigi_->setCarrier(audio);
+                statusBar()->showMessage(
+                    QString("fldigi carrier -> %1 Hz").arg(audio), 4000);
+                return;
+            }
+        }
+    }
     // CW zap: a click is ~a pixel wide but the ear wants single-digit Hz.
     // Snap to the true carrier near the click; Shift (exact) bypasses.
     if (!exact && cwZap_

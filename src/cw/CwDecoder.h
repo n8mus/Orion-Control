@@ -58,8 +58,12 @@ private:
     int renorm_ = 0;
     std::complex<double> acc_{0.0, 0.0};
     int accN_ = 0, decim_ = 250;
-    std::complex<float> ma_[8] = {};       // post-decimation moving average
+    // Post-decimation moving average: 8 taps (~±110 Hz) normally, dropped
+    // to 4 (~±220 Hz) at high speed — 27 ms elements at 45 WPM disappear
+    // into an 8 ms filter+envelope smear otherwise.
+    std::complex<float> ma_[8] = {};
     int maIdx_ = 0;
+    int maLen_ = 8;
 
     // envelope + slicer
     float env_ = 0.0f;                     // smoothed magnitude
@@ -68,8 +72,14 @@ private:
     double runMs_ = 0.0;                   // current mark/space duration
     double tickMs_ = 0.5;                  // 2 kHz envelope rate
 
-    // Morse timing
+    // Morse timing. ditMs_ is the adaptive dit clock; gapMin_ is a
+    // decaying minimum of observed space lengths — the element gap IS one
+    // dit of the sender's clock, and short gaps keep leaking through even
+    // when high-speed marks smear together, so it's the bootstrap that
+    // breaks the 45+ WPM acquisition deadlock (slow filters -> merged
+    // marks -> clock stuck high -> filters stay slow).
     double ditMs_ = 60.0;                  // adaptive (starts ~20 WPM)
+    double gapMin_ = 60.0;                 // decaying min of space lengths
     double lastSpaceMs_ = 0.0;             // for bridging over noise blips
     QString sym_;                          // dits/dahs of the current char
     bool wordGapSent_ = true;

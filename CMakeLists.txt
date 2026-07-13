@@ -75,6 +75,12 @@ add_executable(rotortest EXCLUDE_FROM_ALL
 target_include_directories(rotortest PRIVATE src)
 target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
 
+add_executable(cwtest EXCLUDE_FROM_ALL
+  tests/cwtest.cpp
+  src/cw/CwDecoder.cpp)
+target_include_directories(cwtest PRIVATE src)
+target_link_libraries(cwtest PRIVATE Qt6::Core)
+
 add_executable(watchtest EXCLUDE_FROM_ALL
   tests/watchtest.cpp
   src/util/WatchList.cpp)

@@ -2,6 +2,7 @@
 #include "cw/CwDecoder.h"
 
 #include <QHash>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -59,12 +60,14 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         acc_ = {0.0, 0.0};
         accN_ = 0;
         for (auto& v : ma_) v = {};
+        maLen_ = 8;
         env_ = 0.0f;
         peak_ = 0.0f;
         floor_ = 1e-3f;
         key_ = false;
         runMs_ = 0.0;
         ditMs_ = 60.0;
+        gapMin_ = 60.0;
         lastSpaceMs_ = 0.0;
         sym_.clear();
         wordGapSent_ = true;
@@ -85,15 +88,22 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
         accN_ = 0;
         ma_[maIdx_] = z;
         maIdx_ = (maIdx_ + 1) & 7;
+        maLen_ = gapMin_ < 35.0 ? 4 : 8;   // wide open for 40+ WPM
         std::complex<float> s{0.0f, 0.0f};
-        for (const auto& v : ma_) s += v;
-        tick(std::abs(s) / 8.0f);
+        for (int k = 0; k < maLen_; ++k)
+            s += ma_[(maIdx_ - 1 - k) & 7];
+        tick(std::abs(s) / float(maLen_));
     }
 }
 
 void CwDecoder::tick(float mag) {
-    // Envelope smoothing ~4 ms.
-    env_ += 0.12f * (mag - env_);
+    // Envelope smoothing: ~4 ms at 20 WPM, proportionally faster at high
+    // speed so 27 ms elements keep crisp edges. Driven by the gap
+    // bootstrap, not the dit clock — the clock is exactly what's stuck
+    // when a fast station starts up.
+    const float envA =
+        std::clamp(0.12f * float(60.0 / gapMin_), 0.12f, 0.45f);
+    env_ += envA * (mag - env_);
     if (std::getenv("TTC_CWENV")) {        // debug: envelope/slicer state dump
         static int k = 0;
         if (++k % 100 == 0)
@@ -118,7 +128,7 @@ void CwDecoder::tick(float mag) {
         if (env_ > peak_ && env_ > 3.0f * floor_)
             peak_ += 0.20f * (env_ - peak_);
         else
-            peak_ += 0.0003f * (env_ - peak_);
+            peak_ += 0.001f * (env_ - peak_);  // QSB: stale peaks let go
     }
     if (floor_ < 1e-6f) floor_ = 1e-6f;
 
@@ -132,6 +142,10 @@ void CwDecoder::tick(float mag) {
     } else {
         key = false;
     }
+    // QSB return: a signal well clear of the noise floor keys on even if
+    // the peak tracker is still holding the pre-fade level (the relative
+    // threshold would wait out the whole recovery otherwise).
+    if (!key_ && env_ > 8.0f * floor_) key = true;
 
     if (key == key_) {
         runMs_ += tickMs_;
@@ -155,6 +169,14 @@ void CwDecoder::tick(float mag) {
         // pull it right back down).
         if (ms > 0.4 * ditMs_ && ms < 2.0 * ditMs_)
             ditMs_ += 0.35 * (ms - ditMs_);
+        // Gap bootstrap: snap down to any credible shorter gap, relax
+        // slowly upward so a speed drop is followed too.
+        if (ms > 8.0)
+            gapMin_ = std::min(ms, gapMin_ + 0.03 * (120.0 - gapMin_));
+        // Merged-mark pollution escape: if the dit clock sits way above
+        // the observed element gap, the marks it learned from were
+        // smeared pairs — resync to the sender's real clock.
+        if (ditMs_ > 2.2 * gapMin_) ditMs_ = gapMin_;
         lastSpaceMs_ = ms;
         return;
     }

@@ -11,6 +11,7 @@ class QLabel;
 class QToolButton;
 class QLineEdit;
 class QUdpSocket;
+class QAction;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
@@ -19,7 +20,7 @@ class QUdpSocket;
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "cw/CwWindow.h"
-namespace ttc { class CwDecoder; }
+namespace ttc { class CwDecoder; class SkimmerEngine; }
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -214,6 +215,9 @@ private:
     QDateTime qsoStartUtc_;                    // when the call landed in the field
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
+    SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank
+    QAction* skimEnable_ = nullptr;            // SKIM menu on/off toggle
+    QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

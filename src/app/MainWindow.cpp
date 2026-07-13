@@ -29,6 +29,7 @@
 #include <QUdpSocket>
 #include "ui/DisplayPanel.h"
 #include "cw/CwDecoder.h"
+#include "cw/SkimmerEngine.h"
 #include "net/SpotClient.h"
 #include <algorithm>
 #include <cmath>
@@ -570,8 +571,8 @@ MainWindow::MainWindow(QWidget* parent)
             "green = worked this band, gray = confirmed (card/LoTW/eQSL).\n"
             "POTA spots color by the PARK (red = never hunted).\n"
             "A small edge bar keeps the source color (yellow DX / green "
-            "POTA / cyan FT8).\nPlain colors mean no logbook data yet — "
-            "start cqrlog once to load it.");
+            "POTA / cyan FT8 /\nviolet SKIM).\nPlain colors mean no logbook "
+            "data yet — start cqrlog once to load it.");
     }
     spotsMenu->addSeparator();
     {
@@ -732,6 +733,94 @@ MainWindow::MainWindow(QWidget* parent)
                       "wins — touching it dumps the buffer)");
     topLay2->addSpacing(8);
     topLay2->addWidget(cwBtn);
+    // "SKIM" dropdown: the CW skimmer — a bank of decoder channels parked on
+    // the strongest signals in the band's CW segment, mining the decoded
+    // text for callsigns. Found calls land on the panadapter as violet
+    // spots, worked-before colored like everything else. The engine exists
+    // even without an SDR build; it just never gets IQ.
+    skim_ = new SkimmerEngine(500000.0, this);     // must match the SDR span
+    skim_->setCallValidator([this](const QString& call) {
+        double la = 0.0, lo = 0.0;                 // decode artifacts have
+        return cty_.lookup(call, la, lo);          // no country prefix
+    });
+    auto* skimBtn = new QToolButton(topStrip);
+    skimBtn->setText("SKIM ▾");
+    skimBtn->setPopupMode(QToolButton::InstantPopup);
+    skimBtn->setFocusPolicy(Qt::NoFocus);
+    skimBtn->setStyleSheet(spotsBtn->styleSheet());
+    skimBtn->setToolTip("CW skimmer: decode the whole CW segment at once;\n"
+                        "found callsigns appear as violet spots");
+    auto* skimMenu = new QMenu(skimBtn);
+    styleMenu(skimMenu);
+    skimEnable_ = skimMenu->addAction("Skim the CW segment");
+    skimEnable_->setCheckable(true);
+    skimEnable_->setChecked(QSettings().value("skim/enabled", false).toBool());
+    skimEnable_->setToolTip(
+        QString("Run %1 decoder channels over the CW segment of the current "
+                "band.\nCalls are validated against the country file and "
+                "must repeat (or follow DE)\nbefore they're spotted.")
+            .arg(SkimmerEngine::kChannels));
+    skim_->setEnabled(skimEnable_->isChecked());
+    skimStatus_ = new QLabel(skimMenu);
+    skimStatus_->setTextFormat(Qt::RichText);
+    skimStatus_->setStyleSheet("QLabel { background: #141b24; color: #c8d4e0;"
+                               " padding: 8px 12px; }");
+    auto* skimStatAct = new QWidgetAction(skimMenu);
+    skimStatAct->setDefaultWidget(skimStatus_);
+    skimMenu->addSeparator();
+    skimMenu->addAction(skimStatAct);
+    skimBtn->setMenu(skimMenu);
+    topLay2->addSpacing(8);
+    topLay2->addWidget(skimBtn);
+    const auto refreshSkim = [this, skimMenu] {
+        if (!skimMenu->isVisible()) return;
+        QString h = "<pre style='margin:0; font-size:12px;'>"
+                    "<span style='color:#8fa3b8;'>  kHz      WPM CALL     "
+                    "DECODE</span>\n";
+        for (const auto& c : skim_->channelInfo()) {
+            if (!c.active) { h += "<span style='color:#4a5a6e;'>  —</span>\n"; continue; }
+            h += QString("  %1 %2 %3 %4\n")
+                     .arg(c.hz / 1000.0, -8, 'f', 1)
+                     .arg(c.wpm > 0 ? QString::number(c.wpm) : QString("--"), 3)
+                     .arg(c.call.isEmpty()
+                              ? QString("<span style='color:#4a5a6e;'>?"
+                                        "       </span>")
+                              : QString("<span style='color:#cd8cff;'>%1</span>")
+                                    .arg(c.call.leftJustified(8)),
+                          -8)
+                     .arg(c.text.toHtmlEscaped());
+        }
+        h += "</pre>";
+        skimStatus_->setText(h);
+    };
+    connect(skimMenu, &QMenu::aboutToShow, this, [this, refreshSkim] {
+        skimStatus_->setText(" ");                 // sized before first tick
+        refreshSkim();
+    });
+    // One clock drives channel (re)assignment from the latest averaged
+    // spectrum and the menu readout.
+    auto* skimTick = new QTimer(this);
+    skimTick->setInterval(2500);
+    connect(skimTick, &QTimer::timeout, this, [this, refreshSkim] {
+#ifdef HAVE_SDRPLAY
+        if (skim_->enabled() && !lastSpectrum_.empty())
+            skim_->updateFromSpectrum(lastSpectrum_, sdrSpanHz_,
+                                      qint64(centerHz_), kLoOffsetHz);
+#endif
+        refreshSkim();
+    });
+    skimTick->start();
+    connect(skim_, &SkimmerEngine::spotFound, this,
+            [this](const QString& call, qint64 hz, int wpm) {
+                statusBar()->showMessage(
+                    QString("SKIM: %1 on %2 kHz%3")
+                        .arg(call)
+                        .arg(hz / 1000.0, 0, 'f', 1)
+                        .arg(wpm > 0 ? QString("  %1 WPM").arg(wpm)
+                                     : QString()),
+                    8000);
+            });
+
     connect(cwBtn, &QToolButton::clicked, this, [this] {
         if (!cwWin_) {
             cwWin_ = new CwWindow(this);
@@ -871,8 +960,26 @@ MainWindow::MainWindow(QWidget* parent)
                 labels.push_back(l);
             }
         }
+        // Skimmer finds ride along whenever the skimmer runs — they're this
+        // station's own decodes, independent of the cluster feeds.
+        if (skim_->enabled())
+            for (const auto& s : skim_->spots()) {
+                SpotLabel l{s.call, s.hz, s.atSecs, 'S',
+                            s.wpm > 0 ? QString("%1w").arg(s.wpm) : QString()};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                labels.push_back(l);
+            }
         pan_->setSpots(labels);
     };
+    connect(skim_, &SkimmerEngine::spotsChanged, this, pushSpots);
+    connect(skimEnable_, &QAction::toggled, this, [this, pushSpots](bool on) {
+        QSettings().setValue("skim/enabled", on);
+        skim_->setEnabled(on);
+        statusBar()->showMessage(on ? "CW skimmer ON (violet spots)"
+                                    : "CW skimmer off", 5000);
+        pushSpots();
+    });
     // Recolor live when the logbook loads or a bridged QSO lands in it.
     connect(&logbook_, &LogbookIndex::updated, this, pushSpots);
     logbook_.start();
@@ -2075,9 +2182,11 @@ MainWindow::MainWindow(QWidget* parent)
     // window turns it on). The tuned carrier is always -kLoOffsetHz from
     // the SDR LO, so the decoder's mixer never moves.
     cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
+    Q_ASSERT(spanHz == 500000);            // skim_ was built for this rate
     sdr_.setIqCallback([this](const IqBlock& iq) {
         spectrum_.addSamples(iq);
         cwDec_->processIq(iq.data(), iq.size());
+        skim_->processIq(iq.data(), iq.size());
     });
     sdr_.setDecimation(kDecim);
     if (sdr_.apiOk()

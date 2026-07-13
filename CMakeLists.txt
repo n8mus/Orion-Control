@@ -33,6 +33,7 @@ add_executable(tentec-console
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
+  src/cw/SkimmerEngine.cpp      src/cw/SkimmerEngine.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
@@ -49,6 +50,13 @@ add_executable(tentec-console
 )
 target_include_directories(tentec-console PRIVATE src)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort)
+
+# Offline harnesses (not built by default): synthetic-IQ skimmer test.
+add_executable(skimtest EXCLUDE_FROM_ALL
+  tests/skimtest.cpp
+  src/cw/CwDecoder.cpp src/cw/SkimmerEngine.cpp)
+target_include_directories(skimtest PRIVATE src)
+target_link_libraries(skimtest PRIVATE Qt6::Core)
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

@@ -3,6 +3,8 @@
 
 #include <QHash>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace ttc {
 
@@ -29,25 +31,52 @@ const QHash<QString, QChar>& morseTable() {
 } // namespace
 
 CwDecoder::CwDecoder(double inputRate, double offsetHz, QObject* parent)
-    : QObject(parent) {
-    // Mix the carrier at offsetHz (negative = below the LO) up to DC.
-    phaseInc_ = -2.0 * M_PI * offsetHz / inputRate;
+    : QObject(parent), inputRate_(inputRate) {
     decim_ = static_cast<int>(inputRate / 2000.0);   // -> 2 ksps envelope
     tickMs_ = 1000.0 * decim_ / inputRate;
+    retune(offsetHz);
 }
 
 void CwDecoder::setEnabled(bool on) {
     enabled_.store(on, std::memory_order_relaxed);
 }
 
+void CwDecoder::retune(double offsetHz) {
+    pendingOffset_.store(offsetHz, std::memory_order_relaxed);
+    retunePending_.store(true, std::memory_order_release);
+}
+
 void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
     if (!enabled_.load(std::memory_order_relaxed)) return;
+    if (retunePending_.exchange(false, std::memory_order_acquire)) {
+        // Mix the carrier at offsetHz (negative = below the LO) up to DC,
+        // and forget everything learned about the previous station.
+        const double inc =
+            -2.0 * M_PI * pendingOffset_.load(std::memory_order_relaxed)
+            / inputRate_;
+        loStep_ = {std::cos(inc), std::sin(inc)};
+        lo_ = {1.0, 0.0};
+        acc_ = {0.0, 0.0};
+        accN_ = 0;
+        for (auto& v : ma_) v = {};
+        env_ = 0.0f;
+        peak_ = 0.0f;
+        floor_ = 1e-3f;
+        key_ = false;
+        runMs_ = 0.0;
+        ditMs_ = 60.0;
+        lastSpaceMs_ = 0.0;
+        sym_.clear();
+        wordGapSent_ = true;
+        lastWpm_ = 0;
+    }
     for (size_t i = 0; i < n; ++i) {
-        const std::complex<double> lo(std::cos(phase_), std::sin(phase_));
-        phase_ += phaseInc_;
-        if (phase_ > M_PI)  phase_ -= 2.0 * M_PI;
-        if (phase_ < -M_PI) phase_ += 2.0 * M_PI;
-        acc_ += std::complex<double>(d[i]) * lo;
+        acc_ += std::complex<double>(d[i]) * lo_;
+        lo_ *= loStep_;
+        if (++renorm_ >= 4096) {           // keep the phasor on the unit circle
+            renorm_ = 0;
+            lo_ /= std::abs(lo_);
+        }
         if (++accN_ < decim_) continue;
         // one decimated complex sample
         std::complex<float> z(float(acc_.real() / decim_),
@@ -65,6 +94,12 @@ void CwDecoder::processIq(const std::complex<float>* d, size_t n) {
 void CwDecoder::tick(float mag) {
     // Envelope smoothing ~4 ms.
     env_ += 0.12f * (mag - env_);
+    if (std::getenv("TTC_CWENV")) {        // debug: envelope/slicer state dump
+        static int k = 0;
+        if (++k % 100 == 0)
+            std::fprintf(stderr, "[env] mag %.5f env %.5f peak %.5f floor %.5f key %d\n",
+                         mag, env_, peak_, floor_, int(key_));
+    }
     // Track key-down level and noise floor — each learns ONLY during its
     // own state. Letting the floor rise during a long dah collapses the
     // SNR gate mid-element and chops it (found via envelope dump: the

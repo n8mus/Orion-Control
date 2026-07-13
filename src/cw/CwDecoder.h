@@ -29,6 +29,11 @@ public:
     void setEnabled(bool on);              // atomic; safe from any thread
     bool enabled() const { return enabled_.load(std::memory_order_relaxed); }
 
+    // Move the listening window to a new offset from the SDR LO (skimmer
+    // channels hop between stations). Safe from any thread; the SDR thread
+    // applies it at the next block and resets all demod state.
+    void retune(double offsetHz);
+
     // SDR streaming thread.
     void processIq(const std::complex<float>* d, size_t n);
 
@@ -42,9 +47,15 @@ private:
     void emitSymbol();
 
     std::atomic<bool> enabled_{false};
+    std::atomic<double> pendingOffset_{0.0};
+    std::atomic<bool> retunePending_{false};
+    double inputRate_ = 500000.0;
 
-    // mixer + decimator (SDR thread only)
-    double phase_ = 0.0, phaseInc_ = 0.0;
+    // mixer + decimator (SDR thread only). The LO is a recurrence phasor
+    // (one complex multiply per sample, renormalized periodically) — a
+    // skimmer bank of these runs where per-sample sin/cos would not.
+    std::complex<double> lo_{1.0, 0.0}, loStep_{1.0, 0.0};
+    int renorm_ = 0;
     std::complex<double> acc_{0.0, 0.0};
     int accN_ = 0, decim_ = 250;
     std::complex<float> ma_[8] = {};       // post-decimation moving average

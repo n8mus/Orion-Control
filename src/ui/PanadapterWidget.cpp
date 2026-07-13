@@ -635,6 +635,7 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
         const int alpha = 255 - static_cast<int>(age * 115 / 1200);
         const QColor kindC = v.s->kind == 'P' ? QColor(74, 222, 128)  // POTA
                            : v.s->kind == 'F' ? QColor(96, 200, 255) // FT8
+                           : v.s->kind == 'S' ? QColor(205, 140, 255)// skimmer
                                               : QColor(255, 216, 50);// DX
         // Worked-before coloring (cqrlog DX-cluster convention): the CALL
         // text carries the logbook status; the source kind stays readable

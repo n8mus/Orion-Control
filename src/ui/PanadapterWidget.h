@@ -40,8 +40,9 @@ struct DisplaySettings {
 
 // A DX-cluster spot to mark on the display (absolute frequency). atSecs
 // (epoch) lets fresh spots draw brighter than ones about to expire. kind
-// picks the label color ('D' DX yellow, 'P' POTA green, 'F' FT8 cyan); tag
-// is extra text after the call (the POTA park reference).
+// picks the label color ('D' DX yellow, 'P' POTA green, 'F' FT8 cyan,
+// 'S' own CW skimmer violet); tag is extra text after the call (the POTA
+// park reference, or the skimmer's WPM estimate).
 struct SpotLabel {
     QString call;
     qint64  hz = 0;

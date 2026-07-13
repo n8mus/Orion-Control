@@ -106,6 +106,9 @@ public:
     // Swing the rose to a target (spot clicks use this internally; public
     // for future rotor/logging integration).
     void pointRoseAt(double lat, double lon, const QString& label);
+    // Rotor integration: the antenna's actual heading, drawn as a second
+    // (cyan) needle on the rose. -1 = no rotor / unknown, needle hidden.
+    void setRotorAz(double azDeg);
     // VFO B: drawn like the main VFO (passband tint + center line + flag)
     // when its dial falls inside the view. role = 'T' (B transmits — red),
     // 'R' (B is the main RX — green) or 'N' (parked sub dial — blue); A's
@@ -137,6 +140,9 @@ signals:
     // A spot label was clicked: call + source kind ('D'/'P'/'F') + tag (park
     // ref for POTA). Prefills the LOG panel.
     void spotClicked(const QString& call, QChar kind, const QString& tag);
+    // The rose pointer moved (spot click or manual heading; -1 = cleared).
+    // The ROT panel uses this as its turn target.
+    void roseBearingChanged(double bearingDeg, const QString& label);
     void tuneStepRequested(int steps, bool fine);  // wheel tune A; fine = Shift held
     void vfoBStepRequested(int steps, bool fine);  // wheel tune B (B touched last)
     void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state
@@ -266,6 +272,7 @@ private:
     double  qthLat_ = 42.5, qthLon_ = -83.0;       // EN82 until the grid is set
     double  roseBearing_ = -1.0;                   // pointer heading (-1 = none)
     double  roseDistKm_  = -1.0;
+    double  rotorAz_     = -1.0;                   // antenna heading (-1 = off)
     QString roseLabel_;
     QImage  roseCache_;                            // projected disc, cached
     qint64  roseMinute_ = -1;                      // grayline advances

@@ -25,6 +25,7 @@
 #include <QLineEdit>
 #include <QSet>
 #include <QShortcut>
+#include <QSpinBox>
 #include <QStandardPaths>
 #include <QUdpSocket>
 #include "ui/DisplayPanel.h"
@@ -847,6 +848,136 @@ MainWindow::MainWindow(QWidget* parent)
         digiWin_->raise();
         digiWin_->activateWindow();
     });
+
+    // "ROT" dropdown: antenna rotator through rotctld (:4533) — the rose is
+    // the pointing device. Clicking a spot (or the rose) sets the target;
+    // TURN sends it, or auto-follow turns on every point. The cyan needle
+    // on the rose is the antenna's actual heading.
+    auto* rotBtn = new QToolButton(topStrip);
+    rotBtn->setText("ROT ▾");
+    rotBtn->setPopupMode(QToolButton::InstantPopup);
+    rotBtn->setFocusPolicy(Qt::NoFocus);
+    rotBtn->setStyleSheet(spotsBtn->styleSheet());
+    rotBtn->setToolTip("Antenna rotator via rotctld :4533\n(run rotctld -m "
+                       "<model> -r <device>; the compass rose shows the "
+                       "antenna as a cyan needle)");
+    auto* rotMenu = new QMenu(rotBtn);
+    styleMenu(rotMenu);
+    auto* rotOn = rotMenu->addAction("Connect to rotctld");
+    rotOn->setCheckable(true);
+    auto* rotFollow = rotMenu->addAction("Antenna follows the rose");
+    rotFollow->setCheckable(true);
+    rotFollow->setToolTip("Every rose point (spot click / manual heading) "
+                          "turns the rotator immediately.\nOff = point "
+                          "first, then press TURN.");
+    rotMenu->addSeparator();
+    auto* rotW = new QWidget;
+    rotW->setStyleSheet(
+        "QWidget { background: #141b24; color: #c8d4e0; font-size: 13px; }"
+        "QLabel { color: #8fa3b8; font-weight: bold; font-size: 12px; }"
+        "QSpinBox { background: #1c2430; color: #c8d4e0; border: 1px solid"
+        " #2a3644; border-radius: 3px; padding: 2px 6px; }"
+        "QPushButton { background: #2f6d9e; border: 1px solid #5db2f0;"
+        " border-radius: 3px; padding: 5px 14px; font-weight: bold; }"
+        "QPushButton:hover { background: #3a7fb5; }"
+        "QPushButton#stop { background: #8a2727; border-color: #e05d5d; }");
+    auto* rg = new QGridLayout(rotW);
+    rg->setContentsMargins(14, 12, 14, 12);
+    rg->setHorizontalSpacing(10);
+    rg->setVerticalSpacing(9);
+    auto* rotState = new QLabel("rotor: not connected", rotW);
+    rg->addWidget(rotState, 0, 0, 1, 3);
+    auto* rotTurn = new QPushButton("TURN to rose", rotW);
+    rotTurn->setToolTip("Send the rotator to the rose's red pointer");
+    rg->addWidget(rotTurn, 1, 0, 1, 2);
+    auto* rotStop = new QPushButton("STOP", rotW);
+    rotStop->setObjectName("stop");
+    rg->addWidget(rotStop, 1, 2);
+    rg->addWidget(new QLabel("MANUAL", rotW), 2, 0);
+    auto* rotAz = new QSpinBox(rotW);
+    rotAz->setRange(0, 359);
+    rotAz->setSuffix("°");
+    rotAz->setWrapping(true);
+    rg->addWidget(rotAz, 2, 1);
+    auto* rotGo = new QPushButton("GO", rotW);
+    rg->addWidget(rotGo, 2, 2);
+    auto* rotAct = new QWidgetAction(rotMenu);
+    rotAct->setDefaultWidget(rotW);
+    rotMenu->addAction(rotAct);
+    rotBtn->setMenu(rotMenu);
+    topLay2->addSpacing(8);
+    topLay2->addWidget(rotBtn);
+    const auto rotRefresh = [this, rotState] {
+        QString s = rotor_.connected()
+            ? (rotor_.azimuth() >= 0.0
+                   ? QString("rotor: %1°").arg(qRound(rotor_.azimuth()))
+                   : QString("rotor: connected"))
+            : QString("rotor: not connected");
+        if (lastRoseBearing_ >= 0.0)
+            s += QString("   target: %1 %2°")
+                     .arg(lastRoseLabel_)
+                     .arg(qRound(lastRoseBearing_));
+        rotState->setText(s);
+    };
+    rotor_.setEndpoint(
+        QSettings().value("rotor/host", "127.0.0.1").toString(),
+        quint16(QSettings().value("rotor/port", 4533).toUInt()));
+    rotOn->setChecked(QSettings().value("rotor/enabled", false).toBool());
+    rotFollow->setChecked(QSettings().value("rotor/track", false).toBool());
+    rotor_.setActive(rotOn->isChecked());
+    connect(rotOn, &QAction::toggled, this, [this, rotRefresh](bool on) {
+        QSettings().setValue("rotor/enabled", on);
+        rotor_.setActive(on);
+        rotRefresh();
+    });
+    connect(rotFollow, &QAction::toggled, this, [](bool on) {
+        QSettings().setValue("rotor/track", on);
+    });
+    connect(&rotor_, &RotorClient::azimuthChanged, this,
+            [this, rotRefresh](double az) {
+                pan_->setRotorAz(az);
+                rotRefresh();
+            });
+    connect(&rotor_, &RotorClient::connectedChanged, this,
+            [this, rotRefresh](bool on) {
+                statusBar()->showMessage(
+                    on ? "rotor: rotctld connected" : "rotor: link lost",
+                    4000);
+                rotRefresh();
+            });
+    connect(pan_, &PanadapterWidget::roseBearingChanged, this,
+            [this, rotFollow, rotRefresh](double b, const QString& label) {
+                lastRoseBearing_ = b;
+                lastRoseLabel_ = label;
+                if (b >= 0.0 && rotFollow->isChecked() && rotor_.connected()) {
+                    rotor_.turnTo(b);
+                    statusBar()->showMessage(
+                        QString("rotor -> %1° (%2)").arg(qRound(b))
+                            .arg(label), 4000);
+                }
+                rotRefresh();
+            });
+    connect(rotTurn, &QPushButton::clicked, this, [this, rotRefresh] {
+        if (lastRoseBearing_ < 0.0) {
+            statusBar()->showMessage(
+                "rotor: point the rose first (click a spot or the rose)",
+                4000);
+            return;
+        }
+        rotor_.turnTo(lastRoseBearing_);
+        statusBar()->showMessage(QString("rotor -> %1° (%2)")
+                                     .arg(qRound(lastRoseBearing_))
+                                     .arg(lastRoseLabel_), 4000);
+        rotRefresh();
+    });
+    connect(rotStop, &QPushButton::clicked, this,
+            [this] { rotor_.stop(); statusBar()->showMessage("rotor: STOP", 3000); });
+    connect(rotGo, &QPushButton::clicked, this, [this, rotAz] {
+        rotor_.turnTo(rotAz->value());
+        statusBar()->showMessage(
+            QString("rotor -> %1°").arg(rotAz->value()), 4000);
+    });
+    connect(rotMenu, &QMenu::aboutToShow, this, rotRefresh);
 
     connect(cwBtn, &QToolButton::clicked, this, [this] {
         if (!cwWin_) {

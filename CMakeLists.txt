@@ -29,6 +29,7 @@ add_executable(tentec-console
   src/net/PotaClient.cpp        src/net/PotaClient.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
+  src/net/RotorClient.cpp       src/net/RotorClient.h
   src/ui/DigiWindow.cpp         src/ui/DigiWindow.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
@@ -66,6 +67,12 @@ add_executable(fldigitest EXCLUDE_FROM_ALL
   src/net/FldigiClient.cpp)
 target_include_directories(fldigitest PRIVATE src)
 target_link_libraries(fldigitest PRIVATE Qt6::Core Qt6::Network)
+
+add_executable(rotortest EXCLUDE_FROM_ALL
+  tests/rotortest.cpp
+  src/net/RotorClient.cpp)
+target_include_directories(rotortest PRIVATE src)
+target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

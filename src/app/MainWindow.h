@@ -17,6 +17,7 @@ class QAction;
 #include "net/SpotClient.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
+#include "net/RotorClient.h"
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "cw/CwWindow.h"
@@ -221,6 +222,9 @@ private:
     QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
     FldigiClient* fldigi_ = nullptr;           // XML-RPC link (lazy)
     DigiWindow*   digiWin_ = nullptr;          // fldigi companion (lazy)
+    RotorClient rotor_;                        // rotctld link (:4533)
+    double  lastRoseBearing_ = -1.0;           // rose target for TURN
+    QString lastRoseLabel_;
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

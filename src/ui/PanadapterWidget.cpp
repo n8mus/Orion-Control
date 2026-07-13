@@ -368,6 +368,13 @@ void PanadapterWidget::setQth(double latDeg, double lonDeg) {
 void PanadapterWidget::pointRoseAt(double lat, double lon, const QString& label) {
     greatCircle(qthLat_, qthLon_, lat, lon, roseBearing_, roseDistKm_);
     roseLabel_ = label;
+    emit roseBearingChanged(roseBearing_, roseLabel_);
+    update();
+}
+
+void PanadapterWidget::setRotorAz(double azDeg) {
+    if (azDeg == rotorAz_) return;
+    rotorAz_ = azDeg;
     update();
 }
 
@@ -434,6 +441,15 @@ void PanadapterWidget::drawCompassRose(QPainter& p, int hSpec) {
         p.setPen(QPen(QColor(120, 70, 0), 1));
         p.drawEllipse(QPointF(cx + std::sin(rad) * (R - 4),
                               cy - std::cos(rad) * (R - 4)), 3, 3);
+    }
+    // Rotor needle (actual antenna heading): cyan, under the red target
+    // pointer so a converged rotor reads as one needle with a cyan halo.
+    if (rotorAz_ >= 0.0) {
+        const double rad = rotorAz_ * M_PI / 180.0;
+        const QPointF tip(cx + std::sin(rad) * (R - 6),
+                          cy - std::cos(rad) * (R - 6));
+        p.setPen(QPen(QColor(80, 200, 235), 3.2, Qt::SolidLine, Qt::RoundCap));
+        p.drawLine(QPointF(cx, cy), tip);
     }
     // Bearing pointer + readout.
     if (roseBearing_ >= 0.0) {
@@ -1287,6 +1303,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         if (overRose(x, y)) {                      // right-click rose = clear
             roseBearing_ = -1.0;
             roseLabel_.clear();
+            emit roseBearingChanged(-1.0, QString());
             update();
             return;
         }
@@ -1317,6 +1334,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
         if (roseBearing_ < 0.0) roseBearing_ += 360.0;
         roseDistKm_ = -1.0;
         roseLabel_ = "MAN";
+        emit roseBearingChanged(roseBearing_, roseLabel_);
         update();
         return;
     }

@@ -144,8 +144,14 @@ void CwDecoder::tick(float mag) {
     }
     // QSB return: a signal well clear of the noise floor keys on even if
     // the peak tracker is still holding the pre-fade level (the relative
-    // threshold would wait out the whole recovery otherwise).
-    if (!key_ && env_ > 8.0f * floor_) key = true;
+    // threshold would wait out the whole recovery otherwise). Only when
+    // the envelope stays BELOW that stale peak though — an excursion past
+    // it is a static crash, not a returning station, and keying on QRN
+    // impulses is exactly the babble v1 was cured of (live-found: every
+    // hunting skimmer channel "decoding" 30-55 WPM noise).
+    if (!key_ && env_ > 8.0f * floor_ && env_ < 1.1f * peak_
+        && peak_ > 8.0f * floor_)
+        key = true;
 
     if (key == key_) {
         runMs_ += tickMs_;
@@ -170,8 +176,11 @@ void CwDecoder::tick(float mag) {
         if (ms > 0.4 * ditMs_ && ms < 2.0 * ditMs_)
             ditMs_ += 0.35 * (ms - ditMs_);
         // Gap bootstrap: snap down to any credible shorter gap, relax
-        // slowly upward so a speed drop is followed too.
-        if (ms > 8.0)
+        // slowly upward so a speed drop is followed too. Learns ONLY in
+        // the presence of a real signal — noise chatter making the gaps
+        // look short would switch in the wide fast filters and admit
+        // even more noise (live-found feedback loop on empty channels).
+        if (ms > 8.0 && peak_ > 6.0f * floor_)
             gapMin_ = std::min(ms, gapMin_ + 0.03 * (120.0 - gapMin_));
         // Merged-mark pollution escape: if the dit clock sits way above
         // the observed element gap, the marks it learned from were

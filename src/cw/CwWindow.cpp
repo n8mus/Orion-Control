@@ -221,6 +221,14 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
             }
         });
     }
+
+    // QDialog makes push buttons auto-default, so Enter in the type-ahead
+    // line ALSO "clicked" the dialog's default button — the typed text
+    // went out with a macro right behind it (live-found on the air).
+    for (QPushButton* b : findChildren<QPushButton*>()) {
+        b->setAutoDefault(false);
+        b->setDefault(false);
+    }
 }
 
 void CwWindow::openKeyer() {

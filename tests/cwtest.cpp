@@ -35,9 +35,10 @@ struct Case {
     const char* name;
     int    wpm;
     double jitter;      // sigma of lognormal element-length scatter
-    double snrAmp;      // signal amplitude over noise sigma 0.004
+    double snrAmp;      // signal amplitude over noise sigma 0.004 (0 = off)
     double qsbHz;       // 0 = no fade
     double qsbDepth;    // 0..1
+    double qrnPerSec;   // static-crash rate (impulses, 1-15 ms, strong)
 };
 
 // Element-timed keying with optional per-element jitter.
@@ -84,6 +85,11 @@ int main(int argc, char** argv) {
         {"20 wpm qsb 90%", 20, 0.00, 0.20, 0.15, 0.90},
         {"20 wpm qsb 97%", 20, 0.00, 0.20, 0.15, 0.97},
         {"25 wpm qsb 90% weak", 25, 0.05, 0.06, 0.25, 0.90},
+        // Real-band cases (live-found on 40 m): static crashes over a
+        // medium signal, and a channel with NO signal at all — where the
+        // decoder must stay quiet instead of babbling noise copy.
+        {"20 wpm + qrn",   20, 0.05, 0.10, 0.0, 0.0, 2.0},
+        {"dead channel (quiet?)", 0, 0.0, 0.0, 0.0, 0.0, 1.0},
     };
 
     int overallScore = 0, overallMax = 0;
@@ -96,18 +102,20 @@ int main(int argc, char** argv) {
         QObject::connect(&dec, &ttc::CwDecoder::textDecoded, &dec,
                          [&](const QString& t) { got += t; },
                          Qt::DirectConnection);
-        const std::vector<bool> key = keying(story, c.wpm, c.jitter, rng,
-                                             kRate);
+        const std::vector<bool> key =
+            keying(story, c.wpm > 0 ? c.wpm : 20, c.jitter, rng, kRate);
         // ~14 repetitions or 60 s, whichever is less.
         const size_t total =
             std::min(key.size() * 14, size_t(60.0 * kRate));
-        const int expected = int(total / key.size()) * 2;  // 2 calls/cycle
+        const int expected =
+            c.wpm > 0 ? int(total / key.size()) * 2 : 0;  // 2 calls/cycle
         std::complex<double> lo(1.0, 0.0);
         const double inc = 2.0 * M_PI * kOffset / kRate;
         const std::complex<double> step(std::cos(inc), std::sin(inc));
         std::vector<std::complex<float>> iq(16384);
-        size_t pos = 0;
-        double t = 0.0;
+        std::uniform_real_distribution<double> uni(0.0, 1.0);
+        size_t pos = 0, qrnLeft = 0;
+        double t = 0.0, qrnAmp = 0.0;
         for (size_t done = 0; done < total; done += iq.size()) {
             for (size_t i = 0; i < iq.size(); ++i) {
                 double amp = c.snrAmp;
@@ -117,7 +125,19 @@ int main(int argc, char** argv) {
                     amp *= 1.0 - c.qsbDepth * f;
                 }
                 std::complex<double> s(noise(rng), noise(rng));
-                if (key[pos]) s += amp * lo;
+                if (c.qrnPerSec > 0.0) {   // static crash: strong wideband
+                    if (qrnLeft == 0 && uni(rng) < c.qrnPerSec / kRate) {
+                        qrnLeft = size_t((0.001 + 0.014 * uni(rng)) * kRate);
+                        qrnAmp = 0.3 + 1.2 * uni(rng);
+                    }
+                    if (qrnLeft > 0) {
+                        --qrnLeft;
+                        s += std::complex<double>(qrnAmp * noise(rng) / 0.004,
+                                                  qrnAmp * noise(rng) / 0.004)
+                             * 0.2;      // crashes rival or exceed signals
+                    }
+                }
+                if (c.snrAmp > 0.0 && key[pos]) s += amp * lo;
                 lo *= step;
                 if (++pos >= key.size()) pos = 0;
                 t += 1.0 / kRate;
@@ -126,6 +146,17 @@ int main(int argc, char** argv) {
             }
             lo /= std::abs(lo);
             dec.processIq(iq.data(), iq.size());
+        }
+        if (expected == 0) {
+            // Dead channel: PASS is silence. Score 1 point for staying
+            // under a whisper of garbage over the whole minute.
+            const int chars = int(got.remove(' ').size());
+            const bool quiet = chars <= 10;
+            overallScore += quiet ? 1 : 0;
+            overallMax += 1;
+            printf("%-22s  %s  (%d garbage chars)\n", c.name,
+                   quiet ? "PASS" : "FAIL", chars);
+            continue;
         }
         const int hits = got.count("W1AW");
         const int pct = expected ? 100 * hits / expected : 0;

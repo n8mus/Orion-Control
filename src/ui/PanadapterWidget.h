@@ -129,6 +129,9 @@ signals:
     // Click-to-tune (offset from center). exact = Shift held: tune the raw
     // clicked frequency, bypassing owner-side snapping (CW zap).
     void tuneRequested(int offsetHz, bool exact = false);
+    // A spot label was clicked: call + source kind ('D'/'P'/'F') + tag (park
+    // ref for POTA). Prefills the LOG panel.
+    void spotClicked(const QString& call, QChar kind, const QString& tag);
     void tuneStepRequested(int steps, bool fine);  // wheel tune A; fine = Shift held
     void vfoBStepRequested(int steps, bool fine);  // wheel tune B (B touched last)
     void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state
@@ -215,7 +218,8 @@ private:
     QImage fillImg_;                               // level-colored fill (reused buffer)
 
     // DX-cluster spots: markers + callsigns in the spectrum area; hit rects
-    struct SpotHit { QRect rect; qint64 hz; QString call; double lat, lon; };
+    struct SpotHit { QRect rect; qint64 hz; QString call; double lat, lon;
+                     QChar kind; QString tag; };
     // (rebuilt each paint) make the labels click-to-tune targets.
     QVector<SpotLabel> spots_;
     QVector<SpotHit>   spotHits_;                  // label rect -> freq + call

@@ -2,12 +2,15 @@
 #pragma once
 #include <QMainWindow>
 #include <QElapsedTimer>
+#include <QDateTime>
 #include <cmath>
 #include <vector>
 class QTimer;
 class QSlider;
 class QLabel;
 class QToolButton;
+class QLineEdit;
+class QUdpSocket;
 #include "radio/TenTecOrion.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
@@ -197,6 +200,14 @@ private:
     bool cwZap_     = true;                    // DISPLAY "CW zap" checkbox
     int      zbPassesLeft_ = 0;                // 0-beat refinement passes pending
     uint64_t zbExpectHz_   = 0;                // abort if anything else retunes
+    // LOG panel: one-click QSO -> cqrlog via the fork's always-on UDP ADIF
+    // bridge (127.0.0.1:2334). Call/park prefill from the last clicked spot.
+    QLineEdit* logCall_ = nullptr;
+    QLineEdit* logRstS_ = nullptr;
+    QLineEdit* logRstR_ = nullptr;
+    QLineEdit* logPark_ = nullptr;
+    QUdpSocket* logUdp_ = nullptr;
+    QDateTime qsoStartUtc_;                    // when the call landed in the field
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

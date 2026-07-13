@@ -644,7 +644,8 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
             p.setPen(QColor(150, 162, 178, alpha));
             p.drawText(xt + wCall + 4, box.top() + fm.ascent(), v.s->tag);
         }
-        spotHits_.push_back({box, v.s->hz, v.s->call, v.s->lat, v.s->lon});
+        spotHits_.push_back({box, v.s->hz, v.s->call, v.s->lat, v.s->lon,
+                             v.s->kind, v.s->tag});
     }
 }
 
@@ -1313,6 +1314,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             drag_ = Drag::None;
             wheelVfo_ = 'A';
             if (h.lat < 500.0) pointRoseAt(h.lat, h.lon, h.call);
+            emit spotClicked(h.call, h.kind, h.tag);
             emit tuneRequested(static_cast<int>(h.hz - static_cast<qint64>(centerHz_)));
             return;
         }

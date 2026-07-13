@@ -55,6 +55,8 @@ struct SpotLabel {
     // 'B' worked but not this band, 'W' worked this band, 'C' confirmed,
     // '?' unknown — '?' keeps the plain kind color.
     char    status = '?';
+    // DX-watch hit: the label draws with an orange alert ring.
+    bool    alert = false;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

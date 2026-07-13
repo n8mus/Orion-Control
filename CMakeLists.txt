@@ -33,6 +33,7 @@ add_executable(tentec-console
   src/ui/DigiWindow.cpp         src/ui/DigiWindow.h
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
+  src/util/WatchList.cpp        src/util/WatchList.h
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
   src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
@@ -73,6 +74,12 @@ add_executable(rotortest EXCLUDE_FROM_ALL
   src/net/RotorClient.cpp)
 target_include_directories(rotortest PRIVATE src)
 target_link_libraries(rotortest PRIVATE Qt6::Core Qt6::Network)
+
+add_executable(watchtest EXCLUDE_FROM_ALL
+  tests/watchtest.cpp
+  src/util/WatchList.cpp)
+target_include_directories(watchtest PRIVATE src)
+target_link_libraries(watchtest PRIVATE Qt6::Core)
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

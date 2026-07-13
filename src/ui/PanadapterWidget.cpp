@@ -663,6 +663,10 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
                                       : kindC;                // no log data
         c.setAlpha(alpha);
         p.fillRect(box, QColor(8, 10, 16, 185));         // dark box (.261 idea)
+        if (v.s->alert) {                                // DX-watch hit
+            p.setPen(QPen(QColor(255, 150, 40, alpha), 1));
+            p.drawRect(box.adjusted(0, 0, -1, -1));
+        }
         if (v.s->status != '?') {                        // kind edge bar
             QColor kc = kindC;
             kc.setAlpha(alpha);

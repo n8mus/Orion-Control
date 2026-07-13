@@ -20,6 +20,8 @@ class QAction;
 #include "net/RotorClient.h"
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
+#include "util/WatchList.h"
+#include <QHash>
 #include "cw/CwWindow.h"
 namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
                 class DigiWindow; }
@@ -225,6 +227,8 @@ private:
     RotorClient rotor_;                        // rotctld link (:4533)
     double  lastRoseBearing_ = -1.0;           // rose target for TURN
     QString lastRoseLabel_;
+    WatchList watch_;                          // DX-watch alert patterns
+    QHash<QString, qint64> watchNotified_;     // call -> epoch (renotify gap)
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

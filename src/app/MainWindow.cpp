@@ -564,6 +564,25 @@ MainWindow::MainWindow(QWidget* parent)
     areaCustom->setActionGroup(areaGrp);
     auto* spotsClear = spotsMenu->addAction("Clear spots");
     spotsMenu->addSeparator();
+    // DX watch: patterns matched against every spot; hits get an orange
+    // alert ring, a status-bar callout and (optionally) a beep.
+    watch_.setPatterns(QSettings().value("spots/watch").toString());
+    auto* watchEdit = spotsMenu->addAction(
+        QString("Watch list… (%1)").arg(watch_.count()));
+    watchEdit->setToolTip(
+        "Alert patterns, one per line or space-separated:\n"
+        "  W1AW      exact call\n"
+        "  JA*       prefix\n"
+        "  US-1234   POTA park\n"
+        "  NEW       anything you never worked (red spots)\n"
+        "Hits ring orange on the panadapter and call out in the status bar.");
+    auto* watchBeep = spotsMenu->addAction("Watch alert beep");
+    watchBeep->setCheckable(true);
+    watchBeep->setChecked(QSettings().value("spots/watchBeep", true).toBool());
+    connect(watchBeep, &QAction::toggled, this, [](bool on) {
+        QSettings().setValue("spots/watchBeep", on);
+    });
+    spotsMenu->addSeparator();
     {   // Worked-before legend (colors fed from the cqrlog logbook).
         auto* legend = spotsMenu->addAction(
             "Call colors: red new · amber new band · green worked · gray cfmd");
@@ -1090,7 +1109,8 @@ MainWindow::MainWindow(QWidget* parent)
         return logbook_.status(l.call, LogbookIndex::bandForHz(l.hz))
             .toLatin1();
     };
-    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace, logStatus] {
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace, logStatus,
+                      watchBeep] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
             QSet<QString> seen;                    // POTA API entry wins (has
@@ -1128,9 +1148,47 @@ MainWindow::MainWindow(QWidget* parent)
                 l.status = logStatus(l);
                 labels.push_back(l);
             }
+        // DX watch: flag hits, call out fresh ones (once per call per
+        // half hour so a busy feed doesn't nag).
+        if (!watch_.empty()) {
+            const qint64 now = QDateTime::currentSecsSinceEpoch();
+            for (SpotLabel& l : labels) {
+                l.alert = watch_.matches(
+                    l.call, l.kind == 'P' ? l.tag : QString(),
+                    QChar::fromLatin1(l.status));
+                if (!l.alert) continue;
+                const qint64 last = watchNotified_.value(l.call, 0);
+                if (now - last < 1800) continue;
+                watchNotified_[l.call] = now;
+                statusBar()->showMessage(
+                    QString("WATCH: %1 on %2 kHz")
+                        .arg(l.call).arg(l.hz / 1000.0, 0, 'f', 1),
+                    10000);
+                if (std::getenv("TTC_SELFTEST"))
+                    std::fprintf(stderr, "[watch] %s %.1f kHz\n",
+                                 qPrintable(l.call), l.hz / 1000.0);
+                if (watchBeep->isChecked()) QApplication::beep();
+            }
+        }
         pan_->setSpots(labels);
     };
     connect(skim_, &SkimmerEngine::spotsChanged, this, pushSpots);
+    connect(watchEdit, &QAction::triggered, this,
+            [this, watchEdit, pushSpots] {
+                bool ok = false;
+                const QString t = QInputDialog::getMultiLineText(
+                    this, "DX watch list",
+                    "Alert patterns — calls, prefixes (JA*), parks "
+                    "(US-1234), NEW for\nnever-worked; one per line:",
+                    watch_.patterns(), &ok);
+                if (!ok) return;
+                watch_.setPatterns(t);
+                QSettings().setValue("spots/watch", t);
+                watchEdit->setText(
+                    QString("Watch list… (%1)").arg(watch_.count()));
+                watchNotified_.clear();
+                pushSpots();
+            });
     connect(skimEnable_, &QAction::toggled, this, [this, pushSpots](bool on) {
         QSettings().setValue("skim/enabled", on);
         skim_->setEnabled(on);

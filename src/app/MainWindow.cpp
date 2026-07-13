@@ -28,6 +28,7 @@
 #include <QStandardPaths>
 #include <QUdpSocket>
 #include "ui/DisplayPanel.h"
+#include "cw/CwDecoder.h"
 #include "net/SpotClient.h"
 #include <algorithm>
 #include <cmath>
@@ -729,6 +730,14 @@ MainWindow::MainWindow(QWidget* parent)
             cwWin_->setMyCall(QSettings()
                 .value("station/callsign", "N8EM").toString());
             cwWin_->setHisCall(logCall_ ? logCall_->text() : QString());
+            if (cwDec_) {                  // SDR-fed CW reader plumbing
+                connect(cwDec_, &CwDecoder::textDecoded,
+                        cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
+                connect(cwDec_, &CwDecoder::wpmEstimated,
+                        cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+                connect(cwWin_, &CwWindow::rxDecodeWanted, this,
+                        [this](bool on) { cwDec_->setEnabled(on); });
+            }
         }
         cwWin_->show();
         cwWin_->raise();
@@ -2054,7 +2063,14 @@ MainWindow::MainWindow(QWidget* parent)
             lastSpectrum_ = std::move(copy);          // CW zap reads this
         }, Qt::QueuedConnection);
     });
-    sdr_.setIqCallback([this](const IqBlock& iq) { spectrum_.addSamples(iq); });
+    // CW reader taps the same IQ stream (SDR thread; a no-op until the CW
+    // window turns it on). The tuned carrier is always -kLoOffsetHz from
+    // the SDR LO, so the decoder's mixer never moves.
+    cwDec_ = new CwDecoder(double(spanHz), -double(kLoOffsetHz), this);
+    sdr_.setIqCallback([this](const IqBlock& iq) {
+        spectrum_.addSamples(iq);
+        cwDec_->processIq(iq.data(), iq.size());
+    });
     sdr_.setDecimation(kDecim);
     if (sdr_.apiOk()
         && sdr_.start(static_cast<double>(centerHz_ + kLoOffsetHz), kSampleRate)) {

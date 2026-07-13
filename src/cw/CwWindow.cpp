@@ -9,6 +9,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -104,9 +105,36 @@ CwWindow::CwWindow(QWidget* parent) : QDialog(parent) {
                 [this, i] { editMemory(i); });
     }
 
-    // Row 4: status
+    // Rows 4-5: CW reader — decoded text from the SDR passband (no audio
+    // cable; the decoder listens exactly where CW zap parks the carrier).
+    rxOn_ = new QCheckBox("RX decode", this);
+    rxOn_->setChecked(QSettings().value("cw/rxDecode", true).toBool());
+    rxOn_->setToolTip("Decode the tuned CW signal from the panadapter's SDR "
+                      "stream.\nBest results: click the signal (CW zap puts "
+                      "the carrier dead-on);\nhandles roughly 10-40 WPM, "
+                      "adapts to the sender automatically.");
+    g->addWidget(rxOn_, 4, 0);
+    rxWpm_ = new QLabel(this);
+    rxWpm_->setStyleSheet("color: #6aa5d8;");
+    g->addWidget(rxWpm_, 4, 1);
+    auto* rxClear = new QPushButton("Clear", this);
+    g->addWidget(rxClear, 4, 3);
+    rx_ = new QPlainTextEdit(this);
+    rx_->setReadOnly(true);
+    rx_->setFixedHeight(74);
+    rx_->setStyleSheet("QPlainTextEdit { background: #0d1218; color: "
+                       "#8fd48f; border: 1px solid #2a3644; border-radius: "
+                       "3px; font-family: monospace; font-size: 14px; }");
+    g->addWidget(rx_, 5, 0, 1, 4);
+    connect(rxClear, &QPushButton::clicked, rx_, &QPlainTextEdit::clear);
+    connect(rxOn_, &QCheckBox::toggled, this, [this](bool on) {
+        QSettings().setValue("cw/rxDecode", on);
+        emit rxDecodeWanted(isVisible() && on);
+    });
+
+    // Row 6: status
     status_ = new QLabel(this);
-    g->addWidget(status_, 4, 0, 1, 4);
+    g->addWidget(status_, 6, 0, 1, 4);
 
     connect(wpm_, &QSpinBox::valueChanged, this, [this](int v) {
         wk_->setSpeed(v);
@@ -214,6 +242,30 @@ void CwWindow::showEvent(QShowEvent* e) {
     openKeyer();
     line_->setFocus();
     updateStatus();
+    emit rxDecodeWanted(rxOn_->isChecked());
+}
+
+void CwWindow::hideEvent(QHideEvent* e) {
+    QDialog::hideEvent(e);
+    emit rxDecodeWanted(false);
+}
+
+void CwWindow::appendRx(const QString& text) {
+    rx_->moveCursor(QTextCursor::End);
+    rx_->insertPlainText(text);
+    rx_->moveCursor(QTextCursor::End);
+    // keep it bounded on long monitoring sessions
+    if (rx_->document()->characterCount() > 4000) {
+        QTextCursor c(rx_->document());
+        c.setPosition(0);
+        c.setPosition(1000, QTextCursor::KeepAnchor);
+        c.removeSelectedText();
+        rx_->moveCursor(QTextCursor::End);
+    }
+}
+
+void CwWindow::setRxWpm(int wpm) {
+    rxWpm_->setText(QString("%1 WPM heard").arg(wpm));
 }
 
 void CwWindow::keyPressEvent(QKeyEvent* e) {

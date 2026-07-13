@@ -9,6 +9,7 @@ class QSpinBox;
 class QPushButton;
 class QCheckBox;
 class QUdpSocket;
+class QPlainTextEdit;
 
 namespace ttc {
 
@@ -37,8 +38,18 @@ public:
     void setHisCall(const QString& call) { hisCall_ = call; }
     void openKeyer();                    // connect + handshake (idempotent)
 
+public slots:
+    void appendRx(const QString& text);  // decoded CW from the SDR reader
+    void setRxWpm(int wpm);
+
+signals:
+    // True while the window is visible with RX decode checked — gates the
+    // IQ-side decoder so it costs nothing when the window is closed.
+    void rxDecodeWanted(bool on);
+
 protected:
     void showEvent(QShowEvent* e) override;
+    void hideEvent(QHideEvent* e) override;
     void keyPressEvent(QKeyEvent* e) override;
 
 private:
@@ -56,6 +67,9 @@ private:
     QPushButton* mem_[4] = {};
     QPushButton* tuneBtn_ = nullptr;
     QCheckBox* live_ = nullptr;          // stream keystrokes as typed
+    QPlainTextEdit* rx_ = nullptr;       // decoded-CW readout
+    QCheckBox* rxOn_ = nullptr;
+    QLabel* rxWpm_ = nullptr;
     QString myCall_, hisCall_;
     int prevLen_ = 0;                    // live-mode: chars already streamed
 };

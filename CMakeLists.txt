@@ -32,6 +32,7 @@ add_executable(tentec-console
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
   src/cw/CwWindow.cpp           src/cw/CwWindow.h
+  src/cw/CwDecoder.cpp          src/cw/CwDecoder.h
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h

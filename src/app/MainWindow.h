@@ -19,6 +19,7 @@ class QUdpSocket;
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "cw/CwWindow.h"
+namespace ttc { class CwDecoder; }
 #include "ui/PanadapterWidget.h"
 #include "ui/SMeterWidget.h"
 #include "ui/ControlPanel.h"
@@ -212,6 +213,7 @@ private:
     QUdpSocket* logUdp_ = nullptr;
     QDateTime qsoStartUtc_;                    // when the call landed in the field
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
+    CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{8192};   // 61 Hz/bin at 500 kHz capture — survives deep zoom

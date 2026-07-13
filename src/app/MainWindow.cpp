@@ -190,6 +190,13 @@ MainWindow::MainWindow(QWidget* parent)
     });
     uiTick->start(1000);
     topGrid->addLayout(topLay, 0, 7, Qt::AlignRight | Qt::AlignVCenter);
+    // Second menu deck, in the empty row under the first: LOG/CW landed in
+    // row 0 originally and pushed the window minimum past the screen (the
+    // maximize button vanished — same width creep as the old clock). New
+    // buttons go here, not in topLay.
+    auto* topLay2 = new QHBoxLayout;
+    topLay2->setContentsMargins(0, 0, 0, 0);
+    topGrid->addLayout(topLay2, 1, 7, Qt::AlignRight | Qt::AlignVCenter);
     // Zoom (log scale, 0 = full span .. 100 = deepest zoom); Ctrl+wheel on
     // the panadapter still works and keeps the slider in sync. Level with
     // the S-meter, spanning VFO B's column: label at B's left edge, slider
@@ -637,7 +644,7 @@ MainWindow::MainWindow(QWidget* parent)
     logAct->setDefaultWidget(logW);
     logMenu->addAction(logAct);
     logBtn->setMenu(logMenu);
-    topLay->addWidget(logBtn);
+    topLay2->addWidget(logBtn);
     logUdp_ = new QUdpSocket(this);
     // RST defaults follow the mode each time the panel opens (only when the
     // field still holds a default — a typed report is never overwritten).
@@ -723,7 +730,8 @@ MainWindow::MainWindow(QWidget* parent)
     cwBtn->setStyleSheet(spotsBtn->styleSheet());
     cwBtn->setToolTip("CW keyboard/memories via the WinKeyer\n(paddle always "
                       "wins — touching it dumps the buffer)");
-    topLay->addWidget(cwBtn);
+    topLay2->addSpacing(8);
+    topLay2->addWidget(cwBtn);
     connect(cwBtn, &QToolButton::clicked, this, [this] {
         if (!cwWin_) {
             cwWin_ = new CwWindow(this);

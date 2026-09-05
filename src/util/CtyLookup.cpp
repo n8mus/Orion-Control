@@ -27,6 +27,7 @@ bool CtyLookup::load(const QString& path) {
                 c.name = fields[0].trimmed();
                 c.cq   = fields[1].trimmed().toInt();
                 c.itu  = fields[2].trimmed().toInt();
+                c.cont = fields[3].trimmed();
                 c.lat  = fields[4].trimmed().toFloat();
                 c.lon  = -fields[5].trimmed().toFloat();     // west-positive -> east
                 countries_.push_back(c);
@@ -79,6 +80,7 @@ bool CtyLookup::info(const QString& call, CtyInfo& out) const {
     if (ci < 0) return false;
     const Country& c = countries_[size_t(ci)];
     out.country = c.name;
+    out.cont = c.cont;
     out.cq  = c.cq;
     out.itu = c.itu;
     out.lat = c.lat;

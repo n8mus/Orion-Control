@@ -57,6 +57,8 @@ class QThread;
 
 namespace ttc {
 
+class ContestDb;
+class ContestWindow;
 class LogDb;
 class LogWindow;
 class LogbookWindow;
@@ -87,6 +89,10 @@ private:
     void openLogWindow(const QString& call = {}, const QString& park = {},
                        const QString& grid = {});
     void openLogbookWindow();
+    void openContestWindow();          // stand-alone contest logger (lazy)
+    void ensureCwWindow();             // build (not show) the CW window —
+                                       // contest keying needs the keyer
+                                       // path with the window closed
     void openSpotTable();
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
@@ -404,6 +410,8 @@ private:
     void enrichQso(qint64 id, const QString& call);
     LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
     LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
+    ContestDb* contestDb_ = nullptr;           // contest.db (lazy, own file)
+    ContestWindow* contestWin_ = nullptr;      // contest logger (lazy)
     SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
     CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)

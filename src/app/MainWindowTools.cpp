@@ -19,6 +19,8 @@
 #include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
+#include "contest/ContestDb.h"
+#include "contest/ContestWindow.h"
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
 #include "ui/SpotTableWindow.h"
@@ -123,9 +125,20 @@ void MainWindow::setupLogUi() {
         // station just worked (operator had to clear it by hand).
         if (cwWin_) cwWin_->setHisCall(QString());
     });
+    // Right-click fans out to the logbook browser and the contest logger
+    // — a menu, not new buttons, because the top strip has ~2 px of slack
+    // against the width budget (same reason the WinKeyer panel hangs off
+    // the CW button).
     logBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(logBtn, &QToolButton::customContextMenuRequested, this,
-            [this](const QPoint&) { openLogbookWindow(); });
+            [this, logBtn](const QPoint& p) {
+                QMenu m(logBtn);
+                m.addAction("Logbook", this,
+                            [this] { openLogbookWindow(); });
+                m.addAction("Contest logger…", this,
+                            [this] { openContestWindow(); });
+                m.exec(logBtn->mapToGlobal(p));
+            });
     // Spot click -> send the call (and POTA park/grid) to cqrlog's New QSO,
     // and pre-fill the console's own entry window when it's open.
     connect(pan_, &PanadapterWidget::spotClicked, this,
@@ -262,6 +275,39 @@ void MainWindow::openLogbookWindow() {
     logbookWin_->activateWindow();
 }
 
+void MainWindow::openContestWindow() {
+    if (!contestWin_) {
+        contestDb_ = new ContestDb(this);
+        if (!contestDb_->open()) {
+            statusBar()->showMessage(
+                "contest.db failed to open — contest logger unavailable",
+                8000);
+            delete contestDb_;
+            contestDb_ = nullptr;
+            return;
+        }
+        // The full CW plumbing, window closed: contest F-keys must key
+        // whether or not the operator ever opens the CW window.
+        ensureCwWindow();
+        contestWin_ = new ContestWindow(contestDb_, &cty_, cwWin_,
+                                        toolWinParent(this));
+        adoptToolWindow(contestWin_);
+        // Dial and mode ride in once a second, same as the LOG window.
+        auto* feed = new QTimer(contestWin_);
+        feed->setInterval(1000);
+        connect(feed, &QTimer::timeout, contestWin_, [this] {
+            if (contestWin_->isVisible())
+                contestWin_->setRig(qint64(centerHz_),
+                                    adifModeText(rigMode_));
+        });
+        feed->start();
+    }
+    contestWin_->setRig(qint64(centerHz_), adifModeText(rigMode_));
+    contestWin_->show();
+    contestWin_->raise();
+    contestWin_->activateWindow();
+}
+
 void MainWindow::enrichQso(qint64 id, const QString& call) {
     if (!qrz_ || id < 0) return;
     if (QSettings().value("up/qrzweb/user").toString().trimmed().isEmpty())
@@ -313,6 +359,131 @@ void MainWindow::sendCqrLookup(const QString& call, const QString& park,
         quint16(QSettings().value("log/port", 2334).toInt()));
 }
 
+// Build — but do not show — the CW window with its full plumbing:
+// keyer backend, decode feeds, cqrlog rails. Split out of the CW
+// button so the contest window can key through the console while the
+// CW window stays closed. The external-logger era silently no-op'd
+// every F-key whenever this window wasn't up; that trap ends here.
+void MainWindow::ensureCwWindow() {
+    if (cwWin_) return;
+    cwWin_ = new CwWindow(radio_, toolWinParent(this));
+    adoptToolWindow(cwWin_);
+    cwWin_->setMyCall(QSettings()
+        .value("station/callsign", "N8EM").toString());
+    cwWin_->setHisCall(QString());
+    // Double-clicked call in the decode pane rides the same rails
+    // as a spot click: send it to cqrlog's New QSO, arm the %c macro.
+    connect(cwWin_, &CwWindow::callDoubleClicked, this,
+            [this](const QString& call) {
+                cwWin_->setHisCall(call);
+                sendCqrLookup(call);
+                statusBar()->showMessage(
+                    QString("cqrlog ← %1 (from CW copy)")
+                        .arg(call), 5000);
+            });
+    // Same rails for a call typed by hand in the DX box: the
+    // console is the master of the callsign, cqrlog follows.
+    // (There is no path the other way — cqrlog's bridge is
+    // receive-only, so typing it THERE reaches nothing here.)
+    connect(cwWin_, &CwWindow::hisCallEntered, this,
+            [this](const QString& call) {
+                sendCqrLookup(call);
+                statusBar()->showMessage(
+                    QString("cqrlog ← %1 (typed)").arg(call), 5000);
+            });
+    if (cwDec_) {                  // SDR-fed CW reader plumbing
+        connect(cwDec_, &CwDecoder::textDecoded,
+                cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
+        connect(cwDec_, &CwDecoder::wpmEstimated,
+                cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+        // Two selectable ears for the same reader: the SDR at
+        // the dial (default; AF can be zero) or the RADIO's audio
+        // via the SignaLink — the input real fldigi gets, and the
+        // weak-signal winner while the SDR rides the passive tap.
+        // One decoder instance per source; exactly one enabled.
+        const int pitch =
+            QSettings().value("cw/pitchHz", 550).toInt();
+        audioDec_ = new CwDecoder(48000.0, double(pitch), this);
+        audioSrc_ = new AudioCwSource(audioDec_, this);
+        audioSrc_->setTargetPitch(pitch);   // never notch the target
+        connect(audioDec_, &CwDecoder::textDecoded,
+                cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
+        connect(audioDec_, &CwDecoder::wpmEstimated,
+                cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+        connect(audioSrc_, &AudioCwSource::pitchMeasured,
+                cwWin_, &CwWindow::setRxPitch);
+        connect(audioSrc_, &AudioCwSource::pitchMeasured, this,
+                [this](double hz) {
+                    lastPitchHz_ = hz;
+                    lastPitchMs_ =
+                        QDateTime::currentMSecsSinceEpoch();
+                    pitchTrimFeed(hz);
+                });
+        connect(audioSrc_, &AudioCwSource::statusChanged, this,
+                [this](const QString& t) {
+                    statusBar()->showMessage(t, 6000);
+                });
+        rxRadio_ = QSettings().value("cw/rxRadio", false).toBool();
+        const auto applyRouting = [this] {
+            cwDec_->setEnabled(rxWanted_ && !rxRadio_);
+            audioDec_->setEnabled(rxWanted_ && rxRadio_);
+            // Capture runs whenever decode is on, regardless of
+            // source: the pitch readout measures the radio's audio
+            // even while the SDR does the decoding.
+            if (rxWanted_) audioSrc_->start();
+            else audioSrc_->stop();
+        };
+        connect(cwWin_, &CwWindow::rxDecodeWanted, this,
+                [this, applyRouting](bool on) {
+                    rxWanted_ = on;
+                    applyRouting();
+                });
+        audioSrc_->setNr(QSettings().value("cw/nr", false).toBool());
+        connect(cwWin_, &CwWindow::rxNrChanged, this,
+                [this](bool on) { audioSrc_->setNr(on); });
+        connect(cwWin_, &CwWindow::zeroBeatRequested, this,
+                [this] { zeroBeat(); });
+        connect(cwWin_, &CwWindow::txImminent, this, [this] {
+            txPredictMs_ = QDateTime::currentMSecsSinceEpoch();
+        });
+        connect(cwWin_, &CwWindow::rxSourceChanged, this,
+                [this, applyRouting](bool radio) {
+                    rxRadio_ = radio;
+                    applyRouting();
+                });
+        // Decode-engine adjustments: apply the persisted state now,
+        // then live-follow the window's controls. These knobs steer
+        // the tuned reader (and its audio twin) only — the skimmer's
+        // channels run the engine at its defaults (SOM off; see
+        // SkimmerEngine's constructor for why).
+        const auto applyCfg = [this](bool eng, bool som, bool deep,
+                                     int atk, int dcy) {
+            for (CwDecoder* d : {cwDec_, audioDec_}) {
+                d->setEngineMode(eng);
+                d->setSom(som);
+                d->setDeep(deep);
+                d->setAttack(atk);
+                d->setDecay(dcy);
+            }
+        };
+        const auto applySql = [this](int sql) {
+            for (CwDecoder* d : {cwDec_, audioDec_})
+                d->setSquelch(double(sql));
+        };
+        QSettings cs;
+        applyCfg(cs.value("cw/engine", true).toBool(),
+                 cs.value("cw/som", true).toBool(),
+                 cs.value("cw/deep", false).toBool(),
+                 cs.value("cw/attack", 1).toInt(),
+                 cs.value("cw/decay", 1).toInt());
+        applySql(cs.value("cw/squelch", 12).toInt());
+        connect(cwWin_, &CwWindow::rxDecodeConfigChanged, this,
+                applyCfg);
+        connect(cwWin_, &CwWindow::rxSquelchChanged, this, applySql);
+    }
+    wireRigCwPanel();
+}
+
 void MainWindow::setupCwUi() {
     // "CW" button: the WinKeyer sending window (type-ahead + memories).
     // The keyer hardware keeps the paddle in charge; this is the keyboard.
@@ -327,124 +498,7 @@ void MainWindow::setupCwUi() {
     topLay2_->addSpacing(8);
     topLay2_->addWidget(cwBtn);
     connect(cwBtn, &QToolButton::clicked, this, [this] {
-        if (!cwWin_) {
-            cwWin_ = new CwWindow(radio_, toolWinParent(this));
-            adoptToolWindow(cwWin_);
-            cwWin_->setMyCall(QSettings()
-                .value("station/callsign", "N8EM").toString());
-            cwWin_->setHisCall(QString());
-            // Double-clicked call in the decode pane rides the same rails
-            // as a spot click: send it to cqrlog's New QSO, arm the %c macro.
-            connect(cwWin_, &CwWindow::callDoubleClicked, this,
-                    [this](const QString& call) {
-                        cwWin_->setHisCall(call);
-                        sendCqrLookup(call);
-                        statusBar()->showMessage(
-                            QString("cqrlog ← %1 (from CW copy)")
-                                .arg(call), 5000);
-                    });
-            // Same rails for a call typed by hand in the DX box: the
-            // console is the master of the callsign, cqrlog follows.
-            // (There is no path the other way — cqrlog's bridge is
-            // receive-only, so typing it THERE reaches nothing here.)
-            connect(cwWin_, &CwWindow::hisCallEntered, this,
-                    [this](const QString& call) {
-                        sendCqrLookup(call);
-                        statusBar()->showMessage(
-                            QString("cqrlog ← %1 (typed)").arg(call), 5000);
-                    });
-            if (cwDec_) {                  // SDR-fed CW reader plumbing
-                connect(cwDec_, &CwDecoder::textDecoded,
-                        cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
-                connect(cwDec_, &CwDecoder::wpmEstimated,
-                        cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
-                // Two selectable ears for the same reader: the SDR at
-                // the dial (default; AF can be zero) or the RADIO's audio
-                // via the SignaLink — the input real fldigi gets, and the
-                // weak-signal winner while the SDR rides the passive tap.
-                // One decoder instance per source; exactly one enabled.
-                const int pitch =
-                    QSettings().value("cw/pitchHz", 550).toInt();
-                audioDec_ = new CwDecoder(48000.0, double(pitch), this);
-                audioSrc_ = new AudioCwSource(audioDec_, this);
-                audioSrc_->setTargetPitch(pitch);   // never notch the target
-                connect(audioDec_, &CwDecoder::textDecoded,
-                        cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
-                connect(audioDec_, &CwDecoder::wpmEstimated,
-                        cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
-                connect(audioSrc_, &AudioCwSource::pitchMeasured,
-                        cwWin_, &CwWindow::setRxPitch);
-                connect(audioSrc_, &AudioCwSource::pitchMeasured, this,
-                        [this](double hz) {
-                            lastPitchHz_ = hz;
-                            lastPitchMs_ =
-                                QDateTime::currentMSecsSinceEpoch();
-                            pitchTrimFeed(hz);
-                        });
-                connect(audioSrc_, &AudioCwSource::statusChanged, this,
-                        [this](const QString& t) {
-                            statusBar()->showMessage(t, 6000);
-                        });
-                rxRadio_ = QSettings().value("cw/rxRadio", false).toBool();
-                const auto applyRouting = [this] {
-                    cwDec_->setEnabled(rxWanted_ && !rxRadio_);
-                    audioDec_->setEnabled(rxWanted_ && rxRadio_);
-                    // Capture runs whenever decode is on, regardless of
-                    // source: the pitch readout measures the radio's audio
-                    // even while the SDR does the decoding.
-                    if (rxWanted_) audioSrc_->start();
-                    else audioSrc_->stop();
-                };
-                connect(cwWin_, &CwWindow::rxDecodeWanted, this,
-                        [this, applyRouting](bool on) {
-                            rxWanted_ = on;
-                            applyRouting();
-                        });
-                audioSrc_->setNr(QSettings().value("cw/nr", false).toBool());
-                connect(cwWin_, &CwWindow::rxNrChanged, this,
-                        [this](bool on) { audioSrc_->setNr(on); });
-                connect(cwWin_, &CwWindow::zeroBeatRequested, this,
-                        [this] { zeroBeat(); });
-                connect(cwWin_, &CwWindow::txImminent, this, [this] {
-                    txPredictMs_ = QDateTime::currentMSecsSinceEpoch();
-                });
-                connect(cwWin_, &CwWindow::rxSourceChanged, this,
-                        [this, applyRouting](bool radio) {
-                            rxRadio_ = radio;
-                            applyRouting();
-                        });
-                // Decode-engine adjustments: apply the persisted state now,
-                // then live-follow the window's controls. These knobs steer
-                // the tuned reader (and its audio twin) only — the skimmer's
-                // channels run the engine at its defaults (SOM off; see
-                // SkimmerEngine's constructor for why).
-                const auto applyCfg = [this](bool eng, bool som, bool deep,
-                                             int atk, int dcy) {
-                    for (CwDecoder* d : {cwDec_, audioDec_}) {
-                        d->setEngineMode(eng);
-                        d->setSom(som);
-                        d->setDeep(deep);
-                        d->setAttack(atk);
-                        d->setDecay(dcy);
-                    }
-                };
-                const auto applySql = [this](int sql) {
-                    for (CwDecoder* d : {cwDec_, audioDec_})
-                        d->setSquelch(double(sql));
-                };
-                QSettings cs;
-                applyCfg(cs.value("cw/engine", true).toBool(),
-                         cs.value("cw/som", true).toBool(),
-                         cs.value("cw/deep", false).toBool(),
-                         cs.value("cw/attack", 1).toInt(),
-                         cs.value("cw/decay", 1).toInt());
-                applySql(cs.value("cw/squelch", 12).toInt());
-                connect(cwWin_, &CwWindow::rxDecodeConfigChanged, this,
-                        applyCfg);
-                connect(cwWin_, &CwWindow::rxSquelchChanged, this, applySql);
-            }
-            wireRigCwPanel();
-        }
+        ensureCwWindow();
         cwWin_->show();
         cwWin_->raise();
         cwWin_->activateWindow();

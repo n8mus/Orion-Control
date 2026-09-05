@@ -49,6 +49,16 @@ public:
     // first open; may be an OrionKeyer, so callers must qobject_cast.
     CwKeyer* keyer() const { return keyer_; }
 
+    // Contest-window keying: the cwdaemon rails (txImminent, lazy keyer
+    // open, cwdaemon prosign convention) without the UDP hop — and, like
+    // that path, fully working while this window stays closed. Anything
+    // less re-creates the old "F-keys silent until the CW window is up"
+    // trap from the external-logger days.
+    void keyExternal(const QString& text);
+    void stopKeying();                   // dump buffer, key up NOW
+    void setSpeedWpm(int wpm);           // clamps to the keyer's range
+    int  speedWpm() const;
+
 public slots:
     void appendRx(const QString& text);  // decoded CW from the SDR reader
     void setRxWpm(int wpm);

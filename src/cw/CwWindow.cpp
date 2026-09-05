@@ -791,6 +791,26 @@ void CwWindow::sendDaemonText(const QString& t) {
     if (!run.isEmpty()) keyer_->send(run);
 }
 
+void CwWindow::keyExternal(const QString& text) {
+    const QString t = text.trimmed();
+    if (t.isEmpty()) return;
+    emit txImminent();
+    openKeyer();                 // contest window may key before we show
+    sendDaemonText(t);
+}
+
+void CwWindow::stopKeying() { keyer_->stop(); }
+
+void CwWindow::setSpeedWpm(int wpm) {
+    // The spin's own handler would echo the set; block it and drive the
+    // keyer directly, exactly as the cwdaemon speed command does.
+    const QSignalBlocker b(wpm_);
+    wpm_->setValue(wpm);         // spin range does the clamping
+    keyer_->setSpeed(wpm_->value());
+}
+
+int CwWindow::speedWpm() const { return wpm_->value(); }
+
 void CwWindow::updateRigKeyerLine() {
     if (!rigKeyer_) return;
     if (rigKeyerOn_ < 0) { rigKeyer_->setText("rig keyer: —"); return; }

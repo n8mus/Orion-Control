@@ -12,6 +12,7 @@
 #include <cstdio>
 
 #include "contest/ContestDb.h"
+#include "contest/ContestDeck.h"
 #include "contest/ContestWindow.h"
 #include "util/CtyLookup.h"
 
@@ -110,6 +111,58 @@ int main(int argc, char** argv) {
     w.resize(1100, 640);
     CHECK(w.grab().save(png), "window screenshot saved");
     std::printf("      -> %s\n", qPrintable(png));
+
+    // ---- the deck: the in-console primary surface -----------------------
+    ContestDeck deck(&db, &cty, nullptr, nullptr);
+    CHECK(deck.openContestId(cid), "deck opens the contest");
+    deck.setRig(14032000, "CW");
+    deck.setMasterScp({"N3JT", "N3JTX", "K6RB"});
+    deck.show();
+
+    // Spot classification drives the panadapter colors and the walk.
+    CHECK(deck.classifySpot("N3JT") == 'W',
+          "deck: worked call classifies gray (dupe)");
+    CHECK(deck.classifySpot("W9ZZZ") == 'M',
+          "deck: unworked call is a fresh mult (CWT: unique calls)");
+
+    auto* dCall = deck.findChild<QLineEdit*>("entryCall");
+    auto* dEx0 = deck.findChild<QLineEdit*>("exchEdit0");
+    auto* dEx1 = deck.findChild<QLineEdit*>("exchEdit1");
+    CHECK(dCall && dEx0 && dEx1, "deck: entry fields exist");
+    if (!dCall || !dEx0 || !dEx1) return 1;
+
+    // History prefill data, then the deck's log path end-to-end.
+    QList<HistoryRow> hr;
+    HistoryRow h;
+    h.call = "W9ZZZ";
+    h.name = "Ann";
+    h.exch1 = "77";
+    hr << h;
+    CHECK(db.importCallHistory(hr) == 1, "deck: history import");
+    deck.prefillCall("W9ZZZ");
+    QPushButton* dLog = nullptr;
+    for (QPushButton* b : deck.findChildren<QPushButton*>())
+        if (b->text().startsWith("F12")) dLog = b;   // F12 = WIPE exists
+    CHECK(dLog, "deck: F12 WIPE button present");
+    dEx0->setText("ANN");
+    dEx1->setText("77");
+    // ESM off-path: drive logNow via Enter handling is ESM's job; the
+    // deck logs through the same engine — use the widgets directly.
+    QMetaObject::invokeMethod(dCall, "returnPressed");
+    // Run-mode ESM answers first (keys nothing here — null keyer), so
+    // the QSO is not yet logged; a second Enter closes TU+log.
+    QMetaObject::invokeMethod(dCall, "returnPressed");
+    CHECK(db.qsos(cid).size() == 3
+              && db.qsos(cid).last().v.call == "W9ZZZ",
+          "deck: ESM run two-beat logs the QSO");
+    CHECK(dCall->text().isEmpty(), "deck: silent wipe after the log");
+    CHECK(deck.classifySpot("W9ZZZ") == 'W',
+          "deck: freshly logged call reclassifies as worked");
+
+    const QString png2 = png + ".deck.png";
+    deck.resize(1900, 270);
+    CHECK(deck.grab().save(png2), "deck screenshot saved");
+    std::printf("      -> %s\n", qPrintable(png2));
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

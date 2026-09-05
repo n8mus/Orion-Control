@@ -341,6 +341,7 @@ void ContestWindow::openContest(qint64 id) {
     applyFkeyLabels();
     refreshAll();
     trace(QString("OPEN %1 id=%2").arg(row_.defId).arg(id));
+    emit contestOpened(id);
     call_->setFocus();
 }
 

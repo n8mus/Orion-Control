@@ -11,7 +11,10 @@
 #include <QTimeZone>
 #include <cstdio>
 
+#include <QBuffer>
+
 #include "contest/Cabrillo.h"
+#include "contest/CallHistory.h"
 #include "contest/ContestDb.h"
 #include "contest/ContestDef.h"
 #include "contest/ContestEngine.h"
@@ -250,6 +253,158 @@ static void testCabrillo(const CtyLookup& cty) {
           "cab: self-check with uncut serials");
 }
 
+static bool plansAre(const QList<EsmAct>& got,
+                     const QList<EsmAct>& want) {
+    return got == want;
+}
+
+static void testEsm() {
+    using A = EsmAct;
+    EsmInput in;
+
+    // ---- Run mode -------------------------------------------------------
+    in.run = true;
+    CHECK(plansAre(esmPlan(in), {A::KeyCq}), "esm run: empty call -> CQ");
+
+    in.callEmpty = false;               // partial like "DL8" — not loggable
+    CHECK(plansAre(esmPlan(in), {A::KeyHisCall, A::KeyExch}),
+          "esm run: unloggable call never offers log, asks the fill");
+
+    in.callLoggable = true;
+    CHECK(plansAre(esmPlan(in),
+                   {A::KeyHisCall, A::KeyExch, A::FocusExch}),
+          "esm run: answering Enter keys call+exch and moves the cursor");
+
+    in.exchSent = true;                 // answered; his numbers not yet in
+    CHECK(plansAre(esmPlan(in), {}),
+          "esm run: answered + incomplete exchange -> Enter waits");
+
+    in.exchComplete = true;
+    CHECK(plansAre(esmPlan(in), {A::KeyTu, A::Log}),
+          "esm run: closer is TU + log (QRZ slot disabled -> F4)");
+
+    // Exchange typed BEFORE answering: still answer first, never skip.
+    in.exchSent = false;
+    CHECK(plansAre(esmPlan(in),
+                   {A::KeyHisCall, A::KeyExch, A::FocusExch}),
+          "esm run: exchange-first ordering still answers first");
+
+    // ---- S&P: the strict three-beat ------------------------------------
+    in = EsmInput();
+    in.run = false;
+    in.callEmpty = false;
+    in.callLoggable = true;
+    CHECK(plansAre(esmPlan(in), {A::KeyMyCall, A::FocusExch}),
+          "esm s&p beat 1: my call, cursor to exchange");
+
+    in.myCallSent = true;
+    CHECK(plansAre(esmPlan(in), {A::KeyExch}),
+          "esm s&p beat 2: my exchange, once, NOT bundled with log");
+
+    in.exchSent = true;
+    CHECK(plansAre(esmPlan(in), {}),
+          "esm s&p beat 3 refused while his exchange is missing");
+
+    in.exchComplete = true;
+    CHECK(plansAre(esmPlan(in), {A::Log}),
+          "esm s&p beat 3: log, silent, nothing keyed");
+
+    // Serial-first order (his numbers before beat 2) — both orders work.
+    in = EsmInput();
+    in.run = false;
+    in.callEmpty = false;
+    in.callLoggable = true;
+    in.exchComplete = true;
+    in.myCallSent = true;
+    CHECK(plansAre(esmPlan(in), {A::KeyExch}),
+          "esm s&p: serial-first order still keys the exchange once");
+
+    // No CQ from S&P, ever.
+    in = EsmInput();
+    in.run = false;
+    CHECK(plansAre(esmPlan(in), {}), "esm s&p: empty call does nothing");
+
+    // Unloggable call blocks beat 3 but not beats 1-2.
+    in.callEmpty = false;
+    in.callLoggable = false;
+    in.myCallSent = true;
+    in.exchSent = true;
+    in.exchComplete = true;
+    CHECK(plansAre(esmPlan(in), {}),
+          "esm s&p: unloggable call never logs");
+
+    // ESM off = plain Enter-logs.
+    in = EsmInput();
+    in.esmOn = false;
+    in.callEmpty = false;
+    in.callLoggable = true;
+    in.exchComplete = true;
+    CHECK(plansAre(esmPlan(in), {A::Log}), "esm off: plain log");
+    in.exchComplete = false;
+    CHECK(plansAre(esmPlan(in), {}), "esm off: incomplete does nothing");
+}
+
+static void testHistoryParser() {
+    // The corrected-header CWops shape: number lands in Exch1.
+    QByteArray good =
+        "!!Order!!,Call,Name,Exch1,UserText\n"
+        "# comment\n"
+        "N3JT,Jim,1,VA\n"
+        "K6RB,Rob,3,CA\n";
+    QBuffer b(&good);
+    b.open(QIODevice::ReadOnly);
+    QString err;
+    const auto rows = parseCallHistory(b, &err);
+    CHECK(rows.size() == 2 && rows[0].call == "N3JT"
+              && rows[0].name == "Jim" && rows[0].exch1 == "1"
+              && rows[0].userText == "VA",
+          "history: corrected CWops header parses (number in Exch1)");
+
+    // The published file's actual defect: two columns named Misc.
+    QByteArray dup =
+        "!!Order!!,Call,Name,Misc,State,Misc\n"
+        "N3JT,Jim,1,VA,x\n";
+    QBuffer d(&dup);
+    d.open(QIODevice::ReadOnly);
+    const auto none = parseCallHistory(d, &err);
+    CHECK(none.isEmpty() && err.contains("duplicate column"),
+          "history: duplicate header column is REFUSED, with the reason");
+
+    QByteArray noCall = "Name,Exch1\nJim,1\n";
+    QBuffer n(&noCall);
+    n.open(QIODevice::ReadOnly);
+    CHECK(parseCallHistory(n, &err).isEmpty() && err.contains("Call"),
+          "history: missing Call column refused");
+}
+
+static void testScp() {
+    const QSet<QString> scp = {"DL8WPX", "DL8WAA", "DL8WX", "N3JT",
+                               "W8DL8", "K6RB"};
+    const QStringList m = scpMatches("DL8", scp);
+    CHECK(m.size() == 4, "scp: prefix + substring matches found");
+    CHECK(m[0] == "DL8WAA" && m[1] == "DL8WPX" && m[2] == "DL8WX",
+          "scp: prefix matches first, alphabetical");
+    CHECK(m[3] == "W8DL8", "scp: substring matches after");
+    CHECK(scpMatches("D", scp).isEmpty(), "scp: one char is too little");
+}
+
+static void testHistoryDb(const QString& dir) {
+    ContestDb db;
+    CHECK(db.open(dir + "/hist.sqlite"), "historydb: opens");
+    QList<HistoryRow> rows;
+    HistoryRow r;
+    r.call = "n3jt";
+    r.name = "Jim";
+    r.exch1 = "1";
+    rows << r;
+    r.call = "N3JT";                    // upsert replaces, not duplicates
+    r.name = "JIM";
+    rows << r;
+    CHECK(db.importCallHistory(rows) == 2, "historydb: import lands");
+    CHECK(db.historyCount() == 1, "historydb: upsert by call");
+    CHECK(db.historyFor("N3JT").name == "JIM", "historydb: lookup");
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     QTemporaryDir tmp;
@@ -272,7 +427,11 @@ int main(int argc, char** argv) {
     testCqWw(cty);
     testWae(cty);
     testMacros();
+    testEsm();
+    testHistoryParser();
+    testScp();
     testDb(tmp.path());
+    testHistoryDb(tmp.path());
     testCabrillo(cty);
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);

@@ -121,4 +121,33 @@ QString expandMacro(QString text, const ContestDef& def,
     return text.simplified();
 }
 
+QList<EsmAct> esmPlan(const EsmInput& in) {
+    if (!in.esmOn) {
+        // Plain Enter-logs: the window handles the refusal messages.
+        if (in.callLoggable && in.exchComplete) return {EsmAct::Log};
+        return {};
+    }
+    if (in.run) {
+        if (in.callEmpty) return {EsmAct::KeyCq};
+        if (!in.callLoggable) {
+            // Never offer the log for a call the save would refuse —
+            // ask for the fill instead (his call + exchange).
+            return {EsmAct::KeyHisCall, EsmAct::KeyExch};
+        }
+        if (!in.exchSent)
+            // The answering Enter: even with the exchange already typed
+            // (both orders happen on the air), answer BEFORE closing.
+            return {EsmAct::KeyHisCall, EsmAct::KeyExch, EsmAct::FocusExch};
+        if (in.exchComplete) return {EsmAct::KeyTu, EsmAct::Log};
+        return {};                   // answered, waiting on his numbers
+    }
+    // S&P. No CQ from here, ever — and an empty call box keys nothing:
+    // beat one fires at a station you have at least started to type.
+    if (in.callEmpty) return {};
+    if (!in.myCallSent) return {EsmAct::KeyMyCall, EsmAct::FocusExch};
+    if (!in.exchSent) return {EsmAct::KeyExch};
+    if (in.callLoggable && in.exchComplete) return {EsmAct::Log};
+    return {};                       // beat three refused: incomplete QSO
+}
+
 } // namespace ttc

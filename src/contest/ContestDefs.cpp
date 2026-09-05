@@ -18,6 +18,8 @@ QString bandOf(const QString& multKey) {
     return bar < 0 ? QString() : multKey.mid(bar + 1);
 }
 
+// F12 is WIPE everywhere — a reserved action key, not a macro (operator's
+// ruling: no chorded shortcuts in contest mode, so wipe rides an F-key).
 const QHash<int, QString> kBaseRun = {
     {1, "CQ|cq {MYCALL} {MYCALL}"},
     {2, "His Call|{HISCALL}"},
@@ -26,7 +28,6 @@ const QHash<int, QString> kBaseRun = {
     {5, "My Call|{MYCALL}"},
     {9, "AGN|agn"},
     {10, "NR?|nr?"},
-    {12, "73|73 ee"},
 };
 
 QHash<int, QString> withOverrides(QHash<int, QString> base,
@@ -48,8 +49,8 @@ ContestDef makeCwOpen() {
     d.sentSerial = true;
     d.sentExchDefault = "Jon";
     d.fields = {
-        {ExchCol::SerialR, "RCV NR", 6, "", true},
-        {ExchCol::Exch1, "NAME", 10, "", true},
+        {ExchCol::SerialR, "RCV NR", 6, "", true, ""},
+        {ExchCol::Exch1, "NAME", 10, "", true, "name"},
     };
     d.points = [](const CQsoValues&, const CtyInfo&, bool,
                   const ContestContext&) { return 1; };
@@ -78,8 +79,8 @@ ContestDef makeCwt() {
     d.sentSerial = false;
     d.sentExchDefault = "Jon MI";   // non-member: name + state
     d.fields = {
-        {ExchCol::Exch1, "NAME", 10, "", true},
-        {ExchCol::Exch2, "NR / STATE", 8, "", true},
+        {ExchCol::Exch1, "NAME", 10, "", true, "name"},
+        {ExchCol::Exch2, "NR / STATE", 8, "", true, "exch1"},
     };
     d.points = [](const CQsoValues&, const CtyInfo&, bool,
                   const ContestContext&) { return 1; };
@@ -108,8 +109,8 @@ ContestDef makeMst() {
     d.sentSerial = true;
     d.sentExchDefault = "Jon";
     d.fields = {
-        {ExchCol::Exch1, "NAME", 10, "", true},
-        {ExchCol::SerialR, "RCV NR", 6, "", true},
+        {ExchCol::Exch1, "NAME", 10, "", true, "name"},
+        {ExchCol::SerialR, "RCV NR", 6, "", true, ""},
     };
     d.points = [](const CQsoValues&, const CtyInfo&, bool,
                   const ContestContext&) { return 1; };

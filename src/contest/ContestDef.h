@@ -27,6 +27,9 @@ struct ExchFieldDef {
     int     widthCh = 8;         // entry width hint, characters
     QString preset;              // "599" — cleared fields refill with this
     bool    required = true;     // Enter refuses to log while empty
+    // Which call-history column prefills this field ("name", "exch1",
+    // "sect", "state", "ck", "grid"); empty = no prefill.
+    QString historyCol;
 };
 
 // The values one QSO carries, engine-facing. Sent serial is numeric (the

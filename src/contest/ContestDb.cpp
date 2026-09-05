@@ -27,6 +27,13 @@ const char* kSchemaContest =
     " cat_station TEXT DEFAULT 'FIXED', cat_overlay TEXT DEFAULT '',"
     " club TEXT DEFAULT '', soapbox TEXT DEFAULT '')";
 
+const char* kSchemaHistory =
+    "CREATE TABLE IF NOT EXISTS callhistory ("
+    " call TEXT PRIMARY KEY,"
+    " name TEXT DEFAULT '', exch1 TEXT DEFAULT '', sect TEXT DEFAULT '',"
+    " state TEXT DEFAULT '', grid TEXT DEFAULT '', ck TEXT DEFAULT '',"
+    " power TEXT DEFAULT '', usertext TEXT DEFAULT '')";
+
 const char* kSchemaQso =
     "CREATE TABLE IF NOT EXISTS cqso ("
     " id INTEGER PRIMARY KEY,"
@@ -137,6 +144,7 @@ bool ContestDb::open(const QString& path) {
     QSqlQuery q(db);
     if (!q.exec(QString::fromLatin1(kSchemaContest))) return false;
     if (!q.exec(QString::fromLatin1(kSchemaQso))) return false;
+    if (!q.exec(QString::fromLatin1(kSchemaHistory))) return false;
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_contest"
            " ON cqso(contest_id)");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_call"
@@ -280,6 +288,67 @@ QList<CQsoValues> ContestDb::qsoValues(qint64 contestId) const {
     QList<CQsoValues> out;
     for (const ContestQso& o : qsos(contestId)) out << o.v;
     return out;
+}
+
+int ContestDb::importCallHistory(const QList<HistoryRow>& rows) {
+    QSqlDatabase db = QSqlDatabase::database(conn_);
+    if (!db.transaction()) return -1;
+    QSqlQuery q(db);
+    q.prepare(
+        "INSERT INTO callhistory (call, name, exch1, sect, state, grid,"
+        " ck, power, usertext) VALUES (:call, :name, :ex1, :sect, :state,"
+        " :grid, :ck, :pwr, :ut)"
+        " ON CONFLICT(call) DO UPDATE SET name=:name, exch1=:ex1,"
+        " sect=:sect, state=:state, grid=:grid, ck=:ck, power=:pwr,"
+        " usertext=:ut");
+    int n = 0;
+    for (const HistoryRow& r : rows) {
+        q.bindValue(":call", r.call.trimmed().toUpper());
+        q.bindValue(":name", r.name);
+        q.bindValue(":ex1", r.exch1);
+        q.bindValue(":sect", r.sect);
+        q.bindValue(":state", r.state);
+        q.bindValue(":grid", r.grid);
+        q.bindValue(":ck", r.ck);
+        q.bindValue(":pwr", r.power);
+        q.bindValue(":ut", r.userText);
+        if (!q.exec()) {              // one bad row must not eat the rest
+            db.rollback();
+            return -1;
+        }
+        ++n;
+    }
+    if (!db.commit()) {
+        db.rollback();
+        return -1;
+    }
+    return n;
+}
+
+HistoryRow ContestDb::historyFor(const QString& call) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT * FROM callhistory WHERE call=:c");
+    q.bindValue(":c", call.trimmed().toUpper());
+    HistoryRow r;
+    if (q.exec() && q.next()) {
+        r.call = q.value("call").toString();
+        r.name = q.value("name").toString();
+        r.exch1 = q.value("exch1").toString();
+        r.sect = q.value("sect").toString();
+        r.state = q.value("state").toString();
+        r.grid = q.value("grid").toString();
+        r.ck = q.value("ck").toString();
+        r.power = q.value("power").toString();
+        r.userText = q.value("usertext").toString();
+    }
+    return r;
+}
+
+int ContestDb::historyCount() const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (q.exec("SELECT COUNT(*) FROM callhistory") && q.next())
+        return q.value(0).toInt();
+    return 0;
 }
 
 } // namespace ttc

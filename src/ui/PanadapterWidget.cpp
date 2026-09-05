@@ -1049,6 +1049,14 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
                  : v.s->status == 'W' ? QColor(130, 222, 140) // worked
                  : v.s->status == 'C' ? QColor(150, 162, 178) // confirmed
                                       : kindC;                // no log data
+        // Contest mode overrides: the map answers one question now —
+        // what is this spot WORTH — so the contest palette wins over
+        // the lifetime-logbook colors while a contest is open.
+        if (v.s->contest)
+            c = v.s->contest == 'M' ? QColor(255, 82, 82)     // new mult
+              : v.s->contest == 'N' ? QColor(93, 178, 240)    // workable
+              : v.s->contest == 'Z' ? QColor(74, 74, 74)      // zero pts
+                                    : QColor(108, 122, 136);  // worked
         c.setAlpha(alpha);
         p.fillRect(box, QColor(8, 10, 16, 185));         // dark box (.261 idea)
         if (v.s->alert) {                                // DX-watch hit

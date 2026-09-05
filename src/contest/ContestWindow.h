@@ -44,6 +44,10 @@ public:
     // UI harness (contestuitest).
     bool openContestId(qint64 id);
 
+signals:
+    // The deck follows whichever contest this manager opens or creates.
+    void contestOpened(qint64 id);
+
 protected:
     void keyPressEvent(QKeyEvent* e) override;
     void closeEvent(QCloseEvent* e) override;

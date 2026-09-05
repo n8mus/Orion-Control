@@ -164,6 +164,7 @@ MainWindow::MainWindow(QWidget* parent)
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     auto* left = new QVBoxLayout;
+    leftLay_ = left;                   // the contest deck slots in here
     left->setContentsMargins(0, 0, 0, 0);
     left->setSpacing(0);
     // The meter is compact and fixed-size; park it left in a dark strip so the
@@ -984,9 +985,16 @@ MainWindow::MainWindow(QWidget* parent)
                 if (watchBeep->isChecked()) QApplication::beep();
             }
         }
+        // Contest mode: overlay what each spot is WORTH right now (mult /
+        // new / worked / zero) — and keep the list for the ←/→ walk.
+        if (contestDeck_ && contestDeckVisible())
+            for (SpotLabel& l : labels)
+                l.contest = contestClassify(l.call);
+        shownSpots_ = labels;
         pan_->setSpots(labels);
         if (spotTable_) spotTable_->setSpots(labels);
     };
+    pushSpots_ = pushSpots;            // contest toggle re-pushes for color
     connect(skim_, &SkimmerEngine::spotsChanged, this, pushSpots);
     connect(watchEdit, &QAction::triggered, this,
             [this, watchEdit, pushSpots] {
@@ -3228,6 +3236,13 @@ MainWindow::MainWindow(QWidget* parent)
             });
         }
     }
+    // TTC_CONTEST=1: flip contest mode on at startup (pairs with
+    // TTC_SCREENSHOT to review the deck headless; a pre-seeded
+    // contest.db + contest/currentId make it open on a real contest).
+    if (std::getenv("TTC_CONTEST"))
+        QTimer::singleShot(0, this, [this] {
+            if (contestBtn_) contestBtn_->setChecked(true);  // real path
+        });
 #endif
 
     // Open the radio so click-to-tune / drag-to-filter actually reach it, and

@@ -63,4 +63,38 @@ QString expandMacro(QString text, const ContestDef& def,
                     const ContestContext& ctx, const QString& hisCall,
                     const QString& sentExch, int sentSerial);
 
+// ---- ESM: what should Enter do right now? --------------------------------
+//
+// The operator's corrected machine, ported from the 27 WAE tests of the
+// old system. The rules that must survive any refactor:
+//  - S&P is a STRICT three-beat: my call → my exchange (once) → log.
+//    The log is NEVER bundled with the exchange; the silent field wipe
+//    after beat three is the only "it logged" signal.
+//  - Enter logs from ANY field once the call and exchange are complete.
+//  - A call the log would refuse never offers the log action — Enter
+//    asks for a fill (his call + exchange) instead.
+//  - Both sent-flags reset the moment the call text changes.
+
+enum class EsmAct {
+    KeyCq,        // F1
+    KeyHisCall,   // F2
+    KeyExch,      // F3   (sets exchSent)
+    KeyMyCall,    // F5   (sets myCallSent)
+    KeyTu,        // F4   (run-mode closer; QRZ slot is disabled by spec)
+    Log,          // commit the QSO, silently
+    FocusExch,    // move the cursor to the first exchange field
+};
+
+struct EsmInput {
+    bool esmOn = true;
+    bool run = true;           // false = S&P
+    bool callEmpty = true;
+    bool callLoggable = false; // loggableCall() on the entry text
+    bool exchComplete = false; // every required received field filled
+    bool myCallSent = false;   // S&P beat one done (this QSO)
+    bool exchSent = false;     // exchange keyed (this QSO)
+};
+
+QList<EsmAct> esmPlan(const EsmInput& in);
+
 } // namespace ttc

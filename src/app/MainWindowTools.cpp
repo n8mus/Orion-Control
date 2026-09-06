@@ -337,11 +337,45 @@ void MainWindow::toggleContestMode(bool on) {
             auto* feed = new QTimer(contestDeck_);
             feed->setInterval(1000);
             connect(feed, &QTimer::timeout, contestDeck_, [this] {
-                if (contestDeck_->isVisible())
-                    contestDeck_->setRig(qint64(centerHz_),
-                                         adifModeText(rigMode_));
+                if (!contestDeck_->isVisible()) return;
+                contestDeck_->setRig(qint64(centerHz_),
+                                     adifModeText(rigMode_));
+                // The call frame: nearest spot within 500 Hz of the
+                // dial — knob-tune onto someone and their call offers
+                // itself; Space grabs it.
+                const qint64 cur = qint64(centerHz_);
+                const SpotLabel* best = nullptr;
+                qint64 bestD = 501;
+                for (const SpotLabel& s : shownSpots_) {
+                    const qint64 d = qAbs(s.hz - cur);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = &s;
+                    }
+                }
+                contestDeck_->setNearbySpot(
+                    best ? best->call : QString(),
+                    best ? best->contest : 0);
             });
             feed->start();
+            connect(contestDeck_, &ContestDeck::callParked, this,
+                    [this](const QString& call, qint64 hz) {
+                        Spot s;
+                        s.call = call;
+                        s.hz = hz;
+                        s.atSecs = QDateTime::currentSecsSinceEpoch();
+                        for (int i = parkedSpots_.size() - 1; i >= 0; --i)
+                            if (parkedSpots_[i].call == call)
+                                parkedSpots_.removeAt(i);
+                        parkedSpots_.push_back(s);
+                        if (pushSpots_) pushSpots_();
+                        statusBar()->showMessage(
+                            QString("parked %1 at %2 kHz — it's on the "
+                                    "map for 20 min")
+                                .arg(call)
+                                .arg(hz / 1000.0, 0, 'f', 1),
+                            5000);
+                    });
             contestDeck_->setMasterScp(loadMasterScp());
             // Phone contests: {VKn} F-keys play DVR slots on the same
             // rails as the TX-bar buttons; a press during playback

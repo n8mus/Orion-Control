@@ -53,6 +53,11 @@ public:
                        std::function<void()> stop);
     // ↑/↓ anywhere in contest mode: keying speed (CW contests only).
     void nudgeSpeed(int delta);
+    // The call frame: knob-tuned onto a spotted station, its call shows
+    // beside CALL and Space (empty box) grabs it. Empty call = no spot
+    // near the dial.
+    void setNearbySpot(const QString& call, char cls);
+    bool scpHas(const QString& call) const { return scp_.contains(call); }
     bool openContestId(qint64 id);
     bool contestActive() const { return contestId_ >= 0; }
 
@@ -74,6 +79,10 @@ public slots:
 signals:
     void walkSpots(int dir);                // ←/→ on an empty call box
     void openManagerRequested();            // "Contest log…"
+    // A TYPED, unworked call abandoned by turning the knob — parked as
+    // a local spot at the frequency it was heard on (N1MM's "QSYing
+    // wipes the call and spots it in the bandmap").
+    void callParked(const QString& call, qint64 hz);
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -142,6 +151,13 @@ private:
     QLabel* clock_ = nullptr;
     QPushButton* runBtn_ = nullptr;
     QPushButton* spBtn_ = nullptr;
+    QPushButton* autoBtn_ = nullptr;     // AUTO CQ toggle
+    QSpinBox* autoSecs_ = nullptr;       // seconds between CQ starts
+    QTimer autoCqTimer_;
+    bool autoPaused_ = false;            // typing pauses; log/wipe resumes
+    QLabel* frameLbl_ = nullptr;         // knob-tune call frame
+    QString frameCall_;
+    qint64 prevHz_ = 0;                  // QSY detection for the park
     QSpinBox* wpm_ = nullptr;
     QLineEdit* call_ = nullptr;
     QLineEdit* rstS_ = nullptr;

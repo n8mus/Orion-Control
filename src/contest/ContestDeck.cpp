@@ -182,10 +182,53 @@ void ContestDeck::buildUi() {
             runMode_ = false;
             runBtn_->setChecked(false);
             spBtn_->setChecked(true);
+            if (autoBtn_->isChecked()) autoBtn_->setChecked(false);
             applyFkeyLabels();
             updateEsmHint();
         });
+        // AUTO CQ: F1 re-fires every N seconds. Typing a call PAUSES it
+        // (never CQ over a station answering you); logging — or wiping,
+        // which is abandoning — RESUMES it. Esc or the button stops it.
+        autoBtn_ = new QPushButton("AUTO", this);
+        autoBtn_->setCheckable(true);
+        autoBtn_->setFocusPolicy(Qt::NoFocus);
+        autoBtn_->setToolTip(
+            "Repeat CQ (F1) every N seconds while the call box is empty.\n"
+            "Typing pauses it; logging or F12 resumes it; Esc stops it.");
+        hdr->addWidget(autoBtn_);
+        autoSecs_ = new QSpinBox(this);
+        autoSecs_->setRange(3, 120);
+        autoSecs_->setSuffix(" s");
+        autoSecs_->setValue(
+            QSettings().value("contest/autoCqSecs", 15).toInt());
+        autoSecs_->setFocusPolicy(Qt::NoFocus);
+        connect(autoSecs_, &QSpinBox::valueChanged, this, [this](int v) {
+            QSettings().setValue("contest/autoCqSecs", v);
+            autoCqTimer_.setInterval(v * 1000);
+        });
+        hdr->addWidget(autoSecs_);
+        autoCqTimer_.setInterval(autoSecs_->value() * 1000);
+        connect(&autoCqTimer_, &QTimer::timeout, this, [this] {
+            if (!autoBtn_->isChecked() || autoPaused_) return;
+            if (!call_->text().trimmed().isEmpty()) return;
+            keyFkey(0);
+        });
+        connect(autoBtn_, &QPushButton::toggled, this, [this](bool on) {
+            autoPaused_ = false;
+            if (on) {
+                runMode_ = true;         // CQing IS running
+                runBtn_->setChecked(true);
+                spBtn_->setChecked(false);
+                applyFkeyLabels();
+                keyFkey(0);              // first CQ now
+                autoCqTimer_.start();
+            } else {
+                autoCqTimer_.stop();
+            }
+            updateEsmHint();
+        });
         wpm_ = new QSpinBox(this);
+        wpm_->setObjectName("wpmSpin");
         wpm_->setRange(5, 60);
         wpm_->setSuffix(" wpm");
         wpm_->setValue(cw_ ? cw_->speedWpm()
@@ -211,8 +254,16 @@ void ContestDeck::buildUi() {
         auto* row = new QHBoxLayout;
         row->setSpacing(6);
         auto* cbox = new QVBoxLayout;
+        auto* crow = new QHBoxLayout;
         auto* clbl = new QLabel("CALL", this);
         clbl->setStyleSheet("color:#8798a8; font-size:10px;");
+        crow->addWidget(clbl);
+        frameLbl_ = new QLabel(this);    // knob-tune call frame
+        frameLbl_->setStyleSheet("font-size:10px; font-weight:bold;");
+        frameLbl_->setToolTip("Spot under the dial — Space grabs it");
+        crow->addWidget(frameLbl_);
+        crow->addStretch(1);
+        cbox->addLayout(crow);
         call_ = new QLineEdit(this);
         call_->setObjectName("entryCall");
         QFont cf = call_->font();
@@ -223,11 +274,12 @@ void ContestDeck::buildUi() {
         call_->installEventFilter(this);
         connect(call_, &QLineEdit::textEdited, this, [this] {
             callFromSpot_ = false;   // typing reclaims ←/→ for the cursor
+            if (autoBtn_->isChecked() && !call_->text().isEmpty())
+                autoPaused_ = true;  // never CQ over an answering station
             onCallEdited();
         });
         connect(call_, &QLineEdit::returnPressed, this,
                 [this] { enterPressed(); });
-        cbox->addWidget(clbl);
         cbox->addWidget(call_);
         row->addLayout(cbox);
         fieldsBox_ = new QWidget(this);
@@ -370,6 +422,8 @@ void ContestDeck::buildUi() {
     sc(QKeySequence(Qt::Key_Escape), [this] {
         if (cw_) cw_->stopKeying();
         if (stopVoice_) stopVoice_();
+        if (autoBtn_ && autoBtn_->isChecked())
+            autoBtn_->setChecked(false);   // Esc kills the robot too
         status_->setText("keying stopped");
     });
     sc(QKeySequence(Qt::Key_PageUp),
@@ -496,10 +550,42 @@ QString ContestDeck::modeNow() const {
 void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
     const bool bandMoved =
         hz > 0 && LogbookIndex::bandForHz(hz) != currentBand();
+    const qint64 prev = prevHz_;
+    prevHz_ = hz;
     rigHz_ = hz;
     rigMode_ = adifMode.isEmpty() ? QStringLiteral("CW") : adifMode;
     if (qtc_) qtc_->setRigFreq(hz);
+    // The park: a TYPED (never walk-landed), unworked call abandoned by
+    // turning the knob gets remembered as a local spot at the frequency
+    // it was heard on. callFromSpot_ landings are excluded or every
+    // arrow hop would park its own passenger.
+    if (contestId_ >= 0 && prev > 0 && hz > 0 && qAbs(hz - prev) > 1000) {
+        const QString c = call_->text().trimmed();
+        if (!callFromSpot_ && loggableCall(c)
+            && classifySpot(c, prev) != 'W') {
+            emit callParked(c, prev);
+            trace(QString("PARK %1 @ %2").arg(c).arg(prev));
+            wipe();
+        }
+    }
     if (bandMoved) onCallEdited();       // dupe verdict can flip
+}
+
+void ContestDeck::setNearbySpot(const QString& call, char cls) {
+    const QString c = call.trimmed().toUpper();
+    if (c == frameCall_) return;
+    frameCall_ = c;
+    if (c.isEmpty() || c == call_->text().trimmed()) {
+        frameLbl_->clear();
+        return;
+    }
+    const char* color = cls == 'M' ? "#ff5252"
+                      : cls == 'W' ? "#6c7a88"
+                      : cls == 'Z' ? "#4a4a4a"
+                                   : "#5db2f0";
+    frameLbl_->setStyleSheet(QString("font-size:10px; font-weight:bold;"
+                                     " color:%1;").arg(color));
+    frameLbl_->setText("▸ " + c + "  (Space)");
 }
 
 void ContestDeck::prefillCall(const QString& call) {
@@ -693,6 +779,11 @@ void ContestDeck::wipe() {
     updateHeading();                     // call box empty -> "—"
     myCallSent_ = exchSent_ = false;
     refreshScp();
+    // A wipe means logged or abandoned — either way, back to CQing.
+    if (autoBtn_ && autoBtn_->isChecked()) {
+        autoPaused_ = false;
+        autoCqTimer_.start();
+    }
     call_->setFocus();
     updateEsmHint();
 }
@@ -754,6 +845,10 @@ void ContestDeck::keyFkey(int idx0) {
     // played exchange counts exactly like a keyed one.
     if (idx0 == 2) exchSent_ = true;
     if (idx0 == 4) myCallSent_ = true;
+    // Every CQ — timer-fired or hand-pressed — restarts the cadence, so
+    // the rhythm is start-to-start and a manual F1 never double-fires.
+    if (idx0 == 0 && autoBtn_ && autoBtn_->isChecked())
+        autoCqTimer_.start();
     updateEsmHint();
 }
 
@@ -990,15 +1085,31 @@ void ContestDeck::refreshAll() {
         sentNr_->setText(formatSerial(row_.nextSerial, def_->cutNumbers,
                                       def_->serialPad));
     const QDateTime now = QDateTime::currentDateTimeUtc();
-    int in10 = 0;
-    for (const ContestQso& q : qsos_)
-        if (q.tsUtc.secsTo(now) <= 600) ++in10;
-    QString s = QString("· %1 Q · %2 pts · %3 mult · %4 · rate %5/h")
-                    .arg(sb_.qsos)
-                    .arg(sb_.points)
-                    .arg(sb_.weightedMults)
-                    .arg(QLocale::c().toString(qlonglong(sb_.total)))
-                    .arg(in10 * 6);
+    int in10 = 0, pts60 = 0;
+    for (const ContestQso& q : qsos_) {
+        const qint64 secs = q.tsUtc.secsTo(now);
+        if (secs <= 600) ++in10;
+        if (secs <= 3600) pts60 += q.points;
+    }
+    // Near-term meters, N1MM Info-window style: the last-10-QSO pace
+    // (measured to NOW, so it honestly decays while you idle) beside
+    // the 10-minute rate and the points actually banked this hour.
+    int last10 = 0;
+    if (qsos_.size() >= 10) {
+        const qint64 span =
+            qsos_[qsos_.size() - 10].tsUtc.secsTo(now);
+        if (span > 0) last10 = int(10 * 3600 / span);
+    }
+    QString s =
+        QString("· %1 Q · %2 pts · %3 mult · %4 · 10q %5/h · 10m %6/h"
+                " · %7 pt/h")
+            .arg(sb_.qsos)
+            .arg(sb_.points)
+            .arg(sb_.weightedMults)
+            .arg(QLocale::c().toString(qlonglong(sb_.total)))
+            .arg(last10)
+            .arg(in10 * 6)
+            .arg(pts60);
     if (def_->hasQtc) {
         // WAE's rest rule: a break only counts after 60 min with no QSO
         // AND no QTC — the clock shows which side of the line you're on.
@@ -1030,8 +1141,14 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
     if (obj == call_ && ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (ke->key() == Qt::Key_Space) {
-            // Space = history prefill + jump to the exchange, the
+            // Empty box + a spot under the dial: Space grabs the frame.
+            // Otherwise: history prefill + jump to the exchange, the
             // operator's Not1MM muscle memory.
+            if (call_->text().trimmed().isEmpty()
+                && !frameCall_.isEmpty()) {
+                prefillCall(frameCall_);
+                return true;
+            }
             historyPrefill();
             if (!edits_.isEmpty()) edits_[0].second->setFocus();
             return true;

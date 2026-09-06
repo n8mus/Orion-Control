@@ -31,6 +31,11 @@ bool loggableCall(const QString& call);
 // always receives plain digits — this is keying-side formatting only.
 QString formatSerial(int n, bool cut, int pad);
 
+// One edit apart (substitution, insertion or deletion) — the busted-
+// spot test: the same station skimmed at nearly the same frequency
+// under two calls one keystroke apart means one of them is wrong.
+bool nearMissCall(const QString& a, const QString& b);
+
 // A macro whose whole text is "{VK1}".."{VK4}" plays that voice-keyer
 // slot instead of keying CW (the SSB contests' F-key defaults). Returns
 // the 1-based slot, 0 for a normal CW macro.

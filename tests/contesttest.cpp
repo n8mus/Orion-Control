@@ -560,6 +560,16 @@ static void testVoice() {
           "voice: the CW twin still keys text");
 }
 
+static void testNearMiss() {
+    CHECK(nearMissCall("DL2CC", "DL2CE"), "nearmiss: one substitution");
+    CHECK(nearMissCall("DL2CC", "DL2C"), "nearmiss: one deletion");
+    CHECK(nearMissCall("DL2CC", "DDL2CC"), "nearmiss: one insertion");
+    CHECK(!nearMissCall("DL2CC", "DL2CC"), "nearmiss: identical is not");
+    CHECK(!nearMissCall("DL2CC", "DL3CE"), "nearmiss: two edits is not");
+    CHECK(!nearMissCall("DL2CC", "OK1RR"), "nearmiss: different call");
+    CHECK(nearMissCall("N8EM", "N8EN"), "nearmiss: last-letter bust");
+}
+
 static void testOpTime() {
     QList<QDateTime> ev;
     QDateTime t = QDateTime::fromString("2026-08-08 00:00:00",
@@ -763,6 +773,7 @@ int main(int argc, char** argv) {
     testSs(cty);
     testRoster(cty);
     testVoice();
+    testNearMiss();
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

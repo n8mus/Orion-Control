@@ -19,6 +19,7 @@
 #include "contest/ContestDeck.h"
 #include "contest/ContestWindow.h"
 #include "contest/QtcDialog.h"
+#include "ui/SpotTableWindow.h"
 #include "util/CtyLookup.h"
 
 using namespace ttc;
@@ -172,7 +173,7 @@ int main(int argc, char** argv) {
         QCoreApplication::sendEvent(wCall, &left);
         CHECK(walked == 2, "walk: typing reclaims the arrows for editing");
         // ↑/↓ = keying speed, even with text in the box (CW contest).
-        auto* wpmSpin = deck.findChild<QSpinBox*>();
+        auto* wpmSpin = deck.findChild<QSpinBox*>("wpmSpin");
         const int wpm0 = wpmSpin->value();
         QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
         QCoreApplication::sendEvent(wCall, &up);
@@ -216,6 +217,36 @@ int main(int argc, char** argv) {
             if (b->text().startsWith("F2\n")) f2 = b;
         CHECK(f2 && !f2->isEnabled(),
               "voiceui: F2 (his call) is blank on phone — you speak it");
+    }
+
+    // ---- spot table: contest view + per-band summary --------------------
+    {
+        SpotTableWindow tw(nullptr, nullptr);
+        tw.setContestMode(true);
+        QVector<SpotLabel> sl;
+        const auto mk = [](const char* c, qint64 hz, char cls) {
+            SpotLabel l;
+            l.call = c;
+            l.hz = hz;
+            l.atSecs = QDateTime::currentSecsSinceEpoch();
+            l.contest = cls;
+            return l;
+        };
+        sl << mk("DL2CC", 7004500, 'M') << mk("OK1RR", 7012000, 'N')
+           << mk("F5IN", 7020000, 'W') << mk("G4AMT", 14022000, 'M')
+           << mk("SM5CAK", 14030000, 'M') << mk("W1AW", 14040000, 'Z');
+        tw.setSpots(sl);
+        tw.show();                        // triggers rebuild
+        QLabel* bandLine = nullptr;
+        for (QLabel* l : tw.findChildren<QLabel*>())
+            if (l->text().contains("40m")) bandLine = l;
+        CHECK(bandLine && bandLine->text().contains("40m 2Q 1M")
+                  && bandLine->text().contains("20m 2Q 2M ◀"),
+              "table: per-band summary counts and marks the best band");
+        bool countOk = false;
+        for (QLabel* l : tw.findChildren<QLabel*>())
+            if (l->text().contains("3 new mults")) countOk = true;
+        CHECK(countOk, "table: mult total in the count line");
     }
 
     // ---- screenshots ----------------------------------------------------

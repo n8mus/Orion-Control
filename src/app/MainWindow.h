@@ -427,6 +427,7 @@ private:
     QToolButton* contestBtn_ = nullptr;        // CNTST toggle (old DIGI slot)
     QVBoxLayout* leftLay_ = nullptr;           // pan column; deck slots in
     QVector<SpotLabel> shownSpots_;            // last push, for the walk
+    QVector<Spot> parkedSpots_;                // knob-QSY memories (local)
     std::function<void()> pushSpots_;          // re-push (contest recolor)
     float savedSplit_ = 0.42f;                 // waterfall split to restore
     bool contestRx_ = false;                   // deck wants the CW decoder

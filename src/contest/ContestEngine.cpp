@@ -44,6 +44,35 @@ bool loggableCall(const QString& call) {
     return letter && digit;
 }
 
+bool nearMissCall(const QString& a, const QString& b) {
+    if (a == b) return false;
+    const int la = int(a.size()), lb = int(b.size());
+    if (qAbs(la - lb) > 1) return false;
+    if (la == lb) {                      // one substitution
+        int diff = 0;
+        for (int i = 0; i < la; ++i)
+            if (a[i] != b[i] && ++diff > 1) return false;
+        return diff == 1;
+    }
+    // One insertion: walk the longer string past a single skip.
+    const QString& s = la < lb ? a : b;
+    const QString& l = la < lb ? b : a;
+    int i = 0, j = 0;
+    bool skipped = false;
+    while (i < s.size() && j < l.size()) {
+        if (s[i] == l[j]) {
+            ++i;
+            ++j;
+        } else if (!skipped) {
+            skipped = true;
+            ++j;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 int vkSlot(const QString& macroText) {
     const QString t = macroText.trimmed().toUpper();
     if (t.size() == 5 && t.startsWith("{VK") && t.endsWith('}')) {

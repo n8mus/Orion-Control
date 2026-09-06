@@ -53,6 +53,7 @@ private:
     QVector<SpotLabel> spots_;
     QTableWidget* table_ = nullptr;
     QLabel* count_ = nullptr;
+    QLabel* bands_ = nullptr;        // contest: per-band Qs/mults line
     QPushButton* fDx_ = nullptr;
     QPushButton* fPota_ = nullptr;
     QPushButton* fFt8_ = nullptr;

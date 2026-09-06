@@ -3,6 +3,8 @@
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
 #include "contest/ContestDeck.h"
+#include "contest/ContestEngine.h"
+#include <numeric>
 #include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
@@ -964,6 +966,24 @@ MainWindow::MainWindow(QWidget* parent)
                 needFill(l);
                 labels.push_back(l);
             }
+        // Parked calls — knob-QSY memories from the contest deck — ride
+        // like local cluster spots and age out on a 20-minute clock.
+        if (!parkedSpots_.isEmpty()) {
+            const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
+            for (int i = parkedSpots_.size() - 1; i >= 0; --i)
+                if (nowSecs - parkedSpots_[i].atSecs > 1200)
+                    parkedSpots_.removeAt(i);
+            for (const Spot& s : parkedSpots_) {
+                SpotLabel l{s.call, s.hz, s.atSecs, 'D', QString(),
+                            s.lat, s.lon};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                l.spotter = QStringLiteral("parked");
+                l.comment = QStringLiteral("parked here");
+                needFill(l);
+                labels.push_back(l);
+            }
+        }
         // DX watch: flag hits, call out fresh ones (once per call per
         // half hour so a busy feed doesn't nag).
         if (!watch_.empty()) {
@@ -1011,6 +1031,37 @@ MainWindow::MainWindow(QWidget* parent)
                         return !cat.isEmpty() && m != cat;
                     }),
                 labels.end());
+            // Busted-spot removal, N1MM's idea with a strict referee:
+            // two calls one edit apart within 300 Hz are one station
+            // skimmed twice; when master.scp vouches for exactly one,
+            // the other is the busted copy. No referee, keep both.
+            {
+                QVector<int> idx(labels.size());
+                std::iota(idx.begin(), idx.end(), 0);
+                std::sort(idx.begin(), idx.end(),
+                          [&labels](int a, int b) {
+                              return labels[a].hz < labels[b].hz;
+                          });
+                QSet<int> drop;
+                for (int a = 0; a + 1 < idx.size(); ++a)
+                    for (int b = a + 1;
+                         b < idx.size()
+                         && labels[idx[b]].hz - labels[idx[a]].hz <= 300;
+                         ++b) {
+                        const SpotLabel& A = labels[idx[a]];
+                        const SpotLabel& B = labels[idx[b]];
+                        if (!nearMissCall(A.call, B.call)) continue;
+                        const bool aOk = contestDeck_->scpHas(A.call);
+                        const bool bOk = contestDeck_->scpHas(B.call);
+                        if (aOk == bOk) continue;
+                        drop.insert(aOk ? idx[b] : idx[a]);
+                    }
+                if (!drop.isEmpty()) {
+                    QList<int> dl = drop.values();
+                    std::sort(dl.begin(), dl.end(), std::greater<int>());
+                    for (int i : dl) labels.removeAt(i);
+                }
+            }
             for (SpotLabel& l : labels)
                 l.contest = contestClassify(l.call, l.hz);
         }

@@ -22,6 +22,7 @@
 #include <QStandardPaths>
 #include <QTextCursor>
 #include <QVBoxLayout>
+#include <algorithm>
 
 #include "contest/QtcDialog.h"
 #include "cw/CwWindow.h"
@@ -95,17 +96,52 @@ void ContestDeck::buildUi() {
     // ---- CW READ (left) -------------------------------------------------
     {
         auto* box = new QVBoxLayout;
-        auto* t = new QLabel("CW READ — double-click a call to grab it",
-                             this);
+        auto* trow = new QHBoxLayout;
+        auto* t = new QLabel(
+            "CW READ — double-click a call to grab it · right-click: size",
+            this);
         t->setStyleSheet("color:#8798a8; font-size:10px;");
+        trow->addWidget(t);
+        trow->addStretch(1);
+        auto* clr = new QPushButton("clear", this);
+        clr->setFlat(true);
+        clr->setFocusPolicy(Qt::NoFocus);
+        clr->setStyleSheet("color:#8798a8; font-size:10px; border:0;");
+        clr->setCursor(Qt::PointingHandCursor);
+        trow->addWidget(clr);
+        box->addLayout(trow);
         read_ = new QPlainTextEdit(this);
         read_->setReadOnly(true);
         read_->setMaximumBlockCount(200);
-        QFont mf("DejaVu Sans Mono");
-        mf.setPointSize(10);
-        read_->setFont(mf);
+        const auto applyReadFont = [this](int pt) {
+            QFont mf("DejaVu Sans Mono");
+            mf.setPointSize(std::clamp(pt, 8, 24));
+            read_->setFont(mf);
+            QSettings().setValue("contest/readPt", std::clamp(pt, 8, 24));
+        };
+        applyReadFont(QSettings().value("contest/readPt", 12).toInt());
+        connect(clr, &QPushButton::clicked, read_,
+                &QPlainTextEdit::clear);
+        // Right-click sizes the copy — chords stay banned in contest
+        // mode, and the mouse is allowed for setup gestures.
+        read_->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(read_, &QPlainTextEdit::customContextMenuRequested, this,
+                [this, applyReadFont](const QPoint& p) {
+                    QMenu m(read_);
+                    m.addAction("Clear", read_, &QPlainTextEdit::clear);
+                    m.addAction("Text bigger", this, [applyReadFont] {
+                        applyReadFont(
+                            QSettings().value("contest/readPt", 12).toInt()
+                            + 1);
+                    });
+                    m.addAction("Text smaller", this, [applyReadFont] {
+                        applyReadFont(
+                            QSettings().value("contest/readPt", 12).toInt()
+                            - 1);
+                    });
+                    m.exec(read_->mapToGlobal(p));
+                });
         read_->viewport()->installEventFilter(this);
-        box->addWidget(t);
         box->addWidget(read_, 1);
         lay->addLayout(box, 11);
     }

@@ -979,36 +979,55 @@ void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
     const auto glow = [this](int key) {
         if (fk_[key - 1]) fk_[key - 1]->setStyleSheet(kGlowStyle);
     };
+    // Collect the CW macros into ONE transmission: chaining his call and
+    // the exchange as separate keyer sends butted them together with no
+    // word gap (N2IC ran into 5NN 4). keyExternal trims edge spaces, so
+    // the separator must sit BETWEEN the parts — hence one joined string.
+    // Voice slots play as they come (audio can't be concatenated).
+    QStringList cw;
+    bool doLog = false, doFocus = false, didCq = false;
+    bool didExch = false, didMyCall = false;
     for (const EsmAct a : plan) {
+        int key = -1, beat = 0;   // beat: 3=exch, 5=mycall
         switch (a) {
-            case EsmAct::KeyCq:
-                glow(1);
-                if (!updateOnly) keyFkey(0);
-                break;
-            case EsmAct::KeyHisCall:
-                glow(2);
-                if (!updateOnly) keyFkey(1);
-                break;
-            case EsmAct::KeyExch:
-                glow(3);
-                if (!updateOnly) keyFkey(2);
-                break;
-            case EsmAct::KeyMyCall:
-                glow(5);
-                if (!updateOnly) keyFkey(4);
-                break;
-            case EsmAct::KeyTu:
-                glow(4);
-                if (!updateOnly) keyFkey(3);
-                break;
-            case EsmAct::Log:
-                if (!updateOnly) logNow();
-                break;
-            case EsmAct::FocusExch:
-                if (!updateOnly) focusExchange();
-                break;
+            case EsmAct::KeyCq:      glow(1); key = 0; didCq = true; break;
+            case EsmAct::KeyHisCall: glow(2); key = 1; break;
+            case EsmAct::KeyExch:    glow(3); key = 2; beat = 3; break;
+            case EsmAct::KeyMyCall:  glow(5); key = 4; beat = 5; break;
+            case EsmAct::KeyTu:      glow(4); key = 3; break;
+            case EsmAct::Log:        doLog = true;   continue;
+            case EsmAct::FocusExch:  doFocus = true; continue;
         }
+        // Beat flags flip only on REAL execution (never the updateOnly
+        // hint preview) AND only when the action actually went out — a
+        // dead voice slot advances nothing, or Enter would wander off.
+        if (updateOnly || key < 0) continue;
+        const QString raw = fkeyText(fkeySpec(key + 1));
+        bool sent = false;
+        if (const int slot = vkSlot(raw)) {
+            sent = playVk_ && playVk_(slot - 1);
+            if (!sent)
+                status_->setText(
+                    QString("VK%1 has no recording — right-click it on "
+                            "the TX bar, or turn ESM off").arg(slot));
+        } else {
+            const QString t = expandMacro(raw, *def_, ctx_, call_->text(),
+                                          row_.sentExch, row_.nextSerial);
+            if (!t.isEmpty()) { cw << t; sent = true; }
+        }
+        if (sent && beat == 3) didExch = true;
+        if (sent && beat == 5) didMyCall = true;
     }
+    if (updateOnly) return;
+    if (didExch) exchSent_ = true;
+    if (didMyCall) myCallSent_ = true;
+    if (!cw.isEmpty()) {
+        keyText(cw.join(' '));   // spaces intact between call and exch
+        status_->setText("→ " + cw.join(' '));
+    }
+    if (didCq && autoBtn_ && autoBtn_->isChecked()) autoCqTimer_.start();
+    if (doFocus) focusExchange();
+    if (doLog) logNow();
 }
 
 void ContestDeck::updateEsmHint() {

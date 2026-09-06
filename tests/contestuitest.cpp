@@ -108,6 +108,15 @@ int main(int argc, char** argv) {
     dEx0->setText("JIM");
     dEx1->setText("1");
     QMetaObject::invokeMethod(dCall, "returnPressed");  // answer beat
+    // The answer keys his call and the exchange as ONE spaced string —
+    // separate sends butted them together with no word gap (N2IC5NN4).
+    {
+        QString keyed;
+        for (QLabel* l : deck.findChildren<QLabel*>())
+            if (l->text().startsWith("→ ")) keyed = l->text();
+        CHECK(keyed.contains("N3JT ") && keyed.contains("Jon MI"),
+              "deck: ESM answer keys call + exch spaced, not run together");
+    }
     QMetaObject::invokeMethod(dCall, "returnPressed");  // TU + log
     deck.prefillCall("K6RB");
     dEx0->setText("ROB");

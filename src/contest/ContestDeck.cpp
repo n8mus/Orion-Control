@@ -490,13 +490,15 @@ void ContestDeck::appendRead(const QString& text) {
     read_->setTextCursor(c);
 }
 
-char ContestDeck::classifySpot(const QString& call) const {
+char ContestDeck::classifySpot(const QString& call, qint64 hz) const {
     if (contestId_ < 0 || !def_) return 0;
     const QString c = call.trimmed().toUpper();
-    if (isDupe(*def_, values_, c, currentBand(), modeNow())) return 'W';
+    const QString band =
+        hz > 0 ? LogbookIndex::bandForHz(hz) : currentBand();
+    if (isDupe(*def_, values_, c, band, modeNow())) return 'W';
     CQsoValues probe;
     probe.call = c;
-    probe.band = currentBand();
+    probe.band = band;
     probe.mode = modeNow();
     CtyInfo ci;
     const bool ok = cty_ && cty_->info(normalizeForCty(c), ci);

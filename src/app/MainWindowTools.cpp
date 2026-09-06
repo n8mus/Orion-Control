@@ -296,8 +296,8 @@ bool MainWindow::contestDeckVisible() const {
     return contestDeck_ && contestDeck_->isVisible();
 }
 
-char MainWindow::contestClassify(const QString& call) const {
-    return contestDeck_ ? contestDeck_->classifySpot(call) : 0;
+char MainWindow::contestClassify(const QString& call, qint64 hz) const {
+    return contestDeck_ ? contestDeck_->classifySpot(call, hz) : 0;
 }
 
 // CONTEST button: swap the waterfall for the contest deck and back. The
@@ -361,10 +361,12 @@ void MainWindow::toggleContestMode(bool on) {
         contestRx_ = true;
         applyCwRxRouting();
         pan_->installEventFilter(this);      // arrows walk from the pan too
+        if (spotTable_) spotTable_->setContestMode(true);
         if (!contestDeck_->contestActive()) openContestWindow();
     } else {
         if (contestDeck_) contestDeck_->setVisible(false);
         pan_->removeEventFilter(this);
+        if (spotTable_) spotTable_->setContestMode(false);
         DisplaySettings ds = pan_->displaySettings();
         ds.split = savedSplit_ > 0.0f && savedSplit_ < 1.0f ? savedSplit_
                                                             : 0.42f;
@@ -492,6 +494,11 @@ void MainWindow::openSpotTable() {
                        const QString& tag) {
                     if (hz > 0) radio_->setFrequencyHz(Rx::Main, hz);
                     if (cwWin_) cwWin_->setHisCall(call);
+                    // A table row is the deliberate cross-band gesture
+                    // (antennas and tuner follow the operator) — the
+                    // deck rides along like any spot click.
+                    if (contestDeckVisible())
+                        contestDeck_->prefillCall(call);
                     QString park, grid;
                     if (kind == QChar('P')) {
                         park = tag;
@@ -501,6 +508,8 @@ void MainWindow::openSpotTable() {
                     sendCqrLookup(call, park, grid);
                 });
     }
+    // Opened mid-contest: come up already wearing the contest view.
+    spotTable_->setContestMode(contestDeckVisible());
     spotTable_->show();
     spotTable_->raise();
     spotTable_->activateWindow();

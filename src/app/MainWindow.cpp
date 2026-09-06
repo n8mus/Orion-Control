@@ -999,7 +999,7 @@ MainWindow::MainWindow(QWidget* parent)
                                         }),
                          labels.end());
             for (SpotLabel& l : labels)
-                l.contest = contestClassify(l.call);
+                l.contest = contestClassify(l.call, l.hz);
         }
         shownSpots_ = labels;
         pan_->setSpots(labels);

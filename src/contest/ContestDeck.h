@@ -56,9 +56,11 @@ public:
     bool openContestId(qint64 id);
     bool contestActive() const { return contestId_ >= 0; }
 
-    // Contest coloring for a panadapter spot: 'M' new mult, 'N' new,
-    // 'W' worked/dupe, 'Z' zero points. 0 = leave the normal colors.
-    char classifySpot(const QString& call) const;
+    // Contest coloring for a spot: 'M' new mult, 'N' new, 'W' worked/
+    // dupe, 'Z' zero points. 0 = leave the normal colors. hz picks the
+    // band the spot LIVES on (the cross-band spot table's whole point);
+    // 0 = the band under the dial.
+    char classifySpot(const QString& call, qint64 hz = 0) const;
 
 public slots:
     void appendRead(const QString& text);   // decoded CW rides in here

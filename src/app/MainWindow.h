@@ -97,7 +97,7 @@ private:
     bool eventFilter(QObject* obj, QEvent* ev) override;  // pan arrows
     void applyCwRxRouting();           // decode enables incl. contest feed
     bool contestDeckVisible() const;
-    char contestClassify(const QString& call) const;
+    char contestClassify(const QString& call, qint64 hz) const;
     void openDigiWindow();             // fldigi link (now on LOG right-click)
     void ensureCwWindow();             // build (not show) the CW window —
                                        // contest keying needs the keyer

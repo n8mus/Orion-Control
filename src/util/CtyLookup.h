@@ -28,6 +28,12 @@ public:
     // Maidenhead grid (4 or 6 chars) -> center of the square, east-positive.
     static bool gridToLatLon(const QString& grid, double& lat, double& lon);
 
+    // CQ zone of a US state (2-letter USPS code), 0 if unknown. In the
+    // lower 48 the CQ zone is a clean function of the state, so this is
+    // the accurate fill when a QRZ profile omits its zone — which most
+    // US ops do. AK=1, HI=31; everything else is 3/4/5.
+    static int usStateCqZone(const QString& state);
+
 private:
     int find(const QString& call) const;           // country index, -1 none
     struct Country { QString name, cont; int cq, itu; float lat, lon; };

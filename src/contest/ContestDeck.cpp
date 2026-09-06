@@ -1329,15 +1329,20 @@ void ContestDeck::onCallEdited() {
     } else {
         dupe_->clear();
     }
-    // The zone field is filled from QRZ (authoritative per station),
-    // not cty.dat, whose US zones are the country default and wrong for
-    // half the country — the expected zone is cleared here and set when
-    // the QRZ lookup lands (see the zones handler).
+    // Zone-field seed: cty.dat is right for DX (single-zone countries) so
+    // seed it there for an instant guess, but its US zone is the country
+    // default (5) — wrong for the western half — so US waits for QRZ,
+    // which supplies the real zone (explicit, or derived from the state).
+    // No wrong "5" ever flashes, and no correct entry gets a false amber.
     expectedCqz_ = expectedItuz_ = 0;
     CtyInfo ci;
     if (cty_ && cty_->info(normalizeForCty(c), ci)) {
         info_->setStyleSheet("color:#8798a8;");
         info_->setText(ci.country + " · " + ci.cont);
+        if (ci.country != QLatin1String("United States")) {
+            expectedCqz_ = ci.cq;
+            expectedItuz_ = ci.itu;
+        }
     } else if (loggableCall(c)) {
         // The loudest bust alarm there is: a call that maps to NO
         // country. J12MED wore a quiet "—" while the real JI2MED sat
@@ -1348,6 +1353,7 @@ void ContestDeck::onCallEdited() {
         info_->setStyleSheet("color:#8798a8;");
         info_->setText("—");
     }
+    autoFillExch();                          // DX zone fills now; US on QRZ
     updateHeading();
     if (loggableCall(c)) qrzTimer_.start();  // ask QRZ once typing settles
     updateEsmHint();

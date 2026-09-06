@@ -105,6 +105,16 @@ static void testCtyZones(const CtyLookup& cty) {
           "cty: per-prefix CQ/ITU override survives the load (K6ACV 4/7)");
     CHECK(us.cq == 5, "cty: US default zone 5 when no override");
     CHECK(dl.cq == 14, "cty: single-zone DX keeps its country zone");
+
+    // US-state CQ zones: the accurate fill when QRZ omits its zone (most
+    // US ops leave it blank). N2IC in NM is zone 4, not the cty default 5.
+    CHECK(CtyLookup::usStateCqZone("NM") == 4, "state: NM (N2IC) is CQ 4");
+    CHECK(CtyLookup::usStateCqZone("CA") == 3, "state: CA is CQ 3");
+    CHECK(CtyLookup::usStateCqZone("OH") == 5, "state: OH is CQ 5");
+    CHECK(CtyLookup::usStateCqZone("WI") == 5, "state: WI east of the river is 5");
+    CHECK(CtyLookup::usStateCqZone("MN") == 4, "state: MN west of the river is 4");
+    CHECK(CtyLookup::usStateCqZone("AK") == 1, "state: AK is CQ 1");
+    CHECK(CtyLookup::usStateCqZone("ZZ") == 0, "state: unknown -> 0 (fall back)");
 }
 
 static void testCqWw(const CtyLookup& cty) {

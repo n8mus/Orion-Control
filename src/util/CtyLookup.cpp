@@ -117,6 +117,22 @@ bool CtyLookup::info(const QString& call, CtyInfo& out) const {
     return true;
 }
 
+int CtyLookup::usStateCqZone(const QString& state) {
+    // The zone-4/5 line follows the Mississippi; the western tier is 3.
+    static const QHash<QString, int> z = {
+        {"AZ",3},{"CA",3},{"ID",3},{"NV",3},{"OR",3},{"UT",3},{"WA",3},
+        {"AR",4},{"CO",4},{"IA",4},{"KS",4},{"LA",4},{"MN",4},{"MO",4},
+        {"MT",4},{"ND",4},{"NE",4},{"NM",4},{"OK",4},{"SD",4},{"TX",4},
+        {"WY",4},
+        {"AL",5},{"CT",5},{"DC",5},{"DE",5},{"FL",5},{"GA",5},{"IL",5},
+        {"IN",5},{"KY",5},{"MA",5},{"MD",5},{"ME",5},{"MI",5},{"MS",5},
+        {"NC",5},{"NH",5},{"NJ",5},{"NY",5},{"OH",5},{"PA",5},{"RI",5},
+        {"SC",5},{"TN",5},{"VA",5},{"VT",5},{"WI",5},{"WV",5},
+        {"AK",1},{"HI",31},
+    };
+    return z.value(state.trimmed().toUpper(), 0);
+}
+
 bool CtyLookup::gridToLatLon(const QString& grid, double& lat, double& lon) {
     const QString g = grid.trimmed().toUpper();
     if (g.size() < 4 || !g[0].isLetter() || !g[1].isLetter()

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "log/QrzLookup.h"
 
+#include "util/CtyLookup.h"
+
 #include <QHash>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
@@ -119,8 +121,12 @@ void QrzLookup::query(const QString& call, bool retryOnBadKey) {
         if (!state.isEmpty()) qth += (qth.isEmpty() ? "" : ", ") + state;
         emit result(call, true, name, qth, xml.value("grid").toUpper(),
                     QString());
-        emit zones(call, xml.value("cqzone").toInt(),
-                   xml.value("ituzone").toInt());
+        // QRZ's explicit zone wins; when the profile omits it, fill the CQ
+        // zone from the US state (accurate) so US calls still auto-fill.
+        int cqz = xml.value("cqzone").toInt();
+        if (cqz == 0 && xml.value("country") == QLatin1String("United States"))
+            cqz = CtyLookup::usStateCqZone(state);
+        emit zones(call, cqz, xml.value("ituzone").toInt());
     });
 }
 

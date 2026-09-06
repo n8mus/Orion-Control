@@ -150,6 +150,14 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
                     updateBadges();
                     updateRotor();
                 });
+        // QRZ's zone (explicit or derived from the US state) beats cty.dat.
+        connect(qrz_, &QrzLookup::zones, this,
+                [this](const QString& call, int cqz, int ituz) {
+                    if (call != call_->text().trimmed().toUpper()) return;
+                    if (cqz > 0) qrzCqz_ = cqz;
+                    if (ituz > 0) qrzItuz_ = ituz;
+                    updateBadges();
+                });
     }
 
     // Needed badges (country-centric, HRD's three checkboxes).
@@ -324,6 +332,7 @@ void LogWindow::setModeHint(const QString& mode) {
 }
 
 void LogWindow::onCallEdited() {
+    qrzCqz_ = qrzItuz_ = 0;                 // call changed: last QRZ zone is stale
     updateBadges();
     updateRotor();
     // Previous QSOs.
@@ -363,9 +372,11 @@ void LogWindow::updateBadges() {
     if (cty_ && !call.isEmpty()) {
         CtyInfo ci;
         if (cty_->info(call, ci)) {
+            const int cq = qrzCqz_ > 0 ? qrzCqz_ : ci.cq;   // QRZ zone wins
+            const int itu = qrzItuz_ > 0 ? qrzItuz_ : ci.itu;
             line = ci.country;
-            if (ci.cq > 0) line += QString(" · CQ %1").arg(ci.cq);
-            if (ci.itu > 0) line += QString(" · ITU %1").arg(ci.itu);
+            if (cq > 0) line += QString(" · CQ %1").arg(cq);
+            if (itu > 0) line += QString(" · ITU %1").arg(itu);
         }
     }
     country_->setText(line);
@@ -499,6 +510,10 @@ void LogWindow::logNow() {
             q.ituz = ci.itu;
         }
     }
+    // QRZ (explicit, or derived from the US state) overrides cty's default,
+    // which is wrong for the western US — N2IC in NM is zone 4, not 5.
+    if (qrzCqz_ > 0) q.cqz = qrzCqz_;
+    if (qrzItuz_ > 0) q.ituz = qrzItuz_;
     const qint64 id = db_->addQso(q);
     if (id < 0) return;
     emit qsoLogged(id, call);
@@ -506,6 +521,7 @@ void LogWindow::logNow() {
 }
 
 void LogWindow::clearForNext() {
+    qrzCqz_ = qrzItuz_ = 0;
     call_->clear();
     name_->clear();
     qth_->clear();

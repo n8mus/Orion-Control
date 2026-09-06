@@ -84,6 +84,11 @@ private:
     QTableWidget* prev_ = nullptr;
     QTimer* clock_ = nullptr;
 
+    // QRZ's per-station zones for the call in the box (0 = not yet / none).
+    // QRZ's explicit value, or its US-state derivation — either beats
+    // cty.dat's country default, which is wrong for the western US.
+    int qrzCqz_ = 0, qrzItuz_ = 0;
+
     double spAz_ = -1.0, lpAz_ = -1.0;
     double dxLat_ = 999.0, dxLon_ = 999.0;   // last located DX (999 = none)
     bool autoTime_ = true;

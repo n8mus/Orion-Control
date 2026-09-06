@@ -253,6 +253,38 @@ static void testCabrillo(const CtyLookup& cty) {
           "cab: self-check with uncut serials");
 }
 
+static void testSentExchInCab(const CtyLookup& cty) {
+    // All Asian's EN-on-every-line lesson: the sent exchange (age) MUST
+    // ride on the sent side. With it present, both sides carry age.
+    const ContestDef* d = contestDef("AADX-SSB");
+    ContestRow c;
+    c.defId = d->id;
+    c.sentExch = "57";               // the operator's age
+    ContestQso q;
+    q.tsUtc = QDateTime::fromString("2026-09-06 14:18:00",
+                                    "yyyy-MM-dd HH:mm:ss");
+    q.tsUtc.setTimeZone(QTimeZone::utc());
+    q.freqHz = 21302000;
+    q.v = mkq("JI2MED", "15M", "45");
+    q.v.mode = "SSB";
+    q.v.rstS = q.v.rstR = "59";      // phone report
+    QList<ContestQso> qsos{q};
+    CabrilloStation st;
+    st.call = "N8EM";
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    const QString text = Cabrillo::build(*d, c, qsos, {}, st, &cty, ctx);
+    QString qline;
+    for (const QString& l : text.split("\r\n"))
+        if (l.startsWith("QSO: ")) qline = l;
+    const int sent = qline.indexOf("59 57");   // my RST + my age
+    const int call = qline.indexOf("JI2MED");
+    const int rcvd = qline.indexOf("59 45");    // his RST + his age
+    CHECK(sent > 0 && call > sent && rcvd > call,
+          "aadx cab: sent RST+age, then call, then rcvd RST+age");
+}
+
 static void testQtc(const QString& dir, const CtyLookup& cty) {
     ContestDb db;
     CHECK(db.open(dir + "/qtc.sqlite"), "qtc: db opens");
@@ -817,6 +849,7 @@ int main(int argc, char** argv) {
     testDb(tmp.path());
     testHistoryDb(tmp.path());
     testCabrillo(cty);
+    testSentExchInCab(cty);
     testQtc(tmp.path(), cty);
     testOpTime();
     testWpx(cty);

@@ -126,6 +126,25 @@ void ContestWindow::buildUi() {
         bf.setBold(true);
         title_->setFont(bf);
         h->addWidget(title_);
+        // The OPEN contest's sent exchange, editable — All Asian showed
+        // why: the age was left blank at Start and every Cabrillo line
+        // shipped without it. Change here writes straight to the row.
+        h->addSpacing(14);
+        h->addWidget(new QLabel("sent exch:", this));
+        openExchEdit_ = new QLineEdit(this);
+        openExchEdit_->setObjectName("openSentExch");
+        openExchEdit_->setFixedWidth(120);
+        openExchEdit_->setToolTip(
+            "What you send every QSO besides RST/serial — your age for "
+            "All Asian, zone for CQ WW.\nEmpty here means a blank field "
+            "in the Cabrillo, which log checkers reject.");
+        connect(openExchEdit_, &QLineEdit::editingFinished, this, [this] {
+            if (contestId_ < 0) return;
+            row_.sentExch = openExchEdit_->text().trimmed();
+            db_->updateContest(row_);
+            refreshAll();
+        });
+        h->addWidget(openExchEdit_);
         score_ = new QLabel(this);
         h->addWidget(score_);
         h->addStretch(1);
@@ -284,6 +303,15 @@ void ContestWindow::openContest(qint64 id) {
     }
     title_->setText(row_.title);
     setWindowTitle("Contest manager — " + row_.title);
+    if (openExchEdit_) {
+        openExchEdit_->setText(row_.sentExch);
+        // Only meaningful when the contest sends a fixed exchange token.
+        const bool needsExch =
+            def_ && def_->cabExch.contains(QStringLiteral("exch"));
+        openExchEdit_->setEnabled(needsExch);
+        openExchEdit_->setPlaceholderText(
+            needsExch ? QStringLiteral("REQUIRED") : QString());
+    }
     refreshAll();
     trace(QString("MGR OPEN %1 id=%2").arg(row_.defId).arg(id));
     emit contestOpened(id);
@@ -447,6 +475,23 @@ void ContestWindow::deleteSelected() {
 
 void ContestWindow::exportCabrillo() {
     if (contestId_ < 0 || !def_) return;
+    // A contest that sends a fixed exchange token (age, zone, section)
+    // MUST have one — a blank ships a hole the log checker rejects on
+    // every line (All Asian, the EN-on-every-QSO lesson). The round-
+    // trip check can't see this: an empty sent exchange is internally
+    // consistent, just externally wrong.
+    if (def_->cabExch.contains(QStringLiteral("exch"))
+        && row_.sentExch.trimmed().isEmpty()) {
+        QMessageBox::warning(
+            this, "Sent exchange is empty",
+            QString("%1 sends a fixed exchange every QSO (your age, "
+                    "zone, section…) and it is BLANK — the Cabrillo "
+                    "would ship an empty field on every line and be "
+                    "rejected.\n\nFill \"sent exch\" at the top, then "
+                    "export again.").arg(def_->title));
+        if (openExchEdit_) openExchEdit_->setFocus();
+        return;
+    }
     CabrilloStation st;
     QSettings s;
     st.call = s.value("station/callsign", "N8EM").toString().toUpper();

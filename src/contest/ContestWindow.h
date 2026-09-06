@@ -75,7 +75,8 @@ private:
 
     QComboBox* defPick_ = nullptr;
     QComboBox* resumePick_ = nullptr;
-    QLineEdit* sentExchEdit_ = nullptr;
+    QLineEdit* sentExchEdit_ = nullptr;   // New-contest row
+    QLineEdit* openExchEdit_ = nullptr;   // open contest, editable
     QLineEdit* locationEdit_ = nullptr;
     QLabel* title_ = nullptr;
     QLabel* score_ = nullptr;

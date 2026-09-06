@@ -35,6 +35,9 @@ public:
 signals:
     // The deck follows whichever contest this manager opens or creates.
     void contestOpened(qint64 id);
+    // N fresh QSOs just landed in the everyday log — the owner should
+    // wake the online-log sweep so they ride to LoTW & friends.
+    void pushedToLogbook(int count);
 
 protected:
     void closeEvent(QCloseEvent* e) override;

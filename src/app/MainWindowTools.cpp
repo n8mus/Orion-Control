@@ -536,6 +536,16 @@ void MainWindow::openContestWindow() {
                 [this](qint64 id) {
                     if (contestDeck_) contestDeck_->openContestId(id);
                 });
+        // Pushed contest QSOs ride to LoTW & the online logs on the
+        // uploader's catch-up sweep — one batch, one tqsl run.
+        connect(contestWin_, &ContestWindow::pushedToLogbook, this,
+                [this](int n) {
+                    if (!uploader_) return;
+                    uploader_->sweepSoon(500);
+                    statusBar()->showMessage(
+                        QString("%1 contest QSOs queued for the online "
+                                "logs").arg(n), 6000);
+                });
     }
     contestWin_->show();
     contestWin_->raise();

@@ -510,11 +510,14 @@ void ContestWindow::pushToLogbook() {
               .arg(skipped)
               .arg(failed));
     status_->setText(
-        QString("→ logbook: %1 pushed, %2 already there%3")
+        QString("→ logbook: %1 pushed, %2 already there%3%4")
             .arg(pushed)
             .arg(skipped)
             .arg(failed ? QString(", %1 FAILED").arg(failed)
+                        : QString())
+            .arg(pushed ? QStringLiteral(" · online logs sweeping…")
                         : QString()));
+    if (pushed) emit pushedToLogbook(pushed);
 }
 
 void ContestWindow::exportAdif() {

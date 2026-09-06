@@ -115,12 +115,18 @@ int main(int argc, char** argv) {
               "push: logbook opens");
         ContestWindow wp(&db, &cty, &ldb);
         wp.openContestId(cid);
+        int swept = 0;
+        QObject::connect(&wp, &ContestWindow::pushedToLogbook,
+                         [&swept](int n) { swept = n; });
         QPushButton* push = buttonWithText(&wp, "→ Logbook");
         CHECK(push, "push: button exists");
         push->click();
         CHECK(ldb.count() == 2, "push: both QSOs land in the logbook");
+        CHECK(swept == 2, "push: the online-log sweep gets rung");
+        swept = 0;
         push->click();
-        CHECK(ldb.count() == 2, "push: second press doubles nothing");
+        CHECK(ldb.count() == 2 && swept == 0,
+              "push: second press doubles nothing, rings nothing");
         const Qso q0 = ldb.qso(1);
         CHECK(q0.comment.contains("CW-OPS"),
               "push: comment names the contest");

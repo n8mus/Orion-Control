@@ -213,12 +213,12 @@ int main(int argc, char** argv) {
         f1->click();
         CHECK(played == QList<int>{0},
               "voiceui: F1 plays VK1 (slot 0) instead of keying CW");
-        // THE PHONE RULE: Enter on an empty call box plays NOTHING —
-        // only a pushed F-key speaks.
+        // ESM on phone (restored by the operator once he knew the
+        // toggle): Enter on an empty box plays the CQ message.
         auto* vCall = vdeck.findChild<QLineEdit*>("entryCall");
         QMetaObject::invokeMethod(vCall, "returnPressed");
-        CHECK(played.size() == 1,
-              "voiceui: phone Enter on an empty box stays silent");
+        CHECK(played.size() == 2 && played.last() == 0,
+              "voiceui: ESM Enter plays the CQ message");
         QPushButton* f2 = nullptr;
         for (QPushButton* b : vdeck.findChildren<QPushButton*>())
             if (b->text().startsWith("F2\n")) f2 = b;
@@ -230,26 +230,43 @@ int main(int argc, char** argv) {
         CHECK(snt && snt->text() == "59" && rcv && rcv->text() == "59",
               "voiceui: SSB contest presets 59, not 599");
 
-        // THE PHONE RULE: Enter NEVER transmits on voice — even with
-        // ESM on and slots recorded. It logs when complete, or names
-        // the missing field. Voice moves only on a pushed F-key.
-        const int before = played.size();
+        // The full phone ESM flow: answering Enter plays the exchange,
+        // closing Enter plays TU and logs.
         auto* vCall2 = vdeck.findChild<QLineEdit*>("entryCall");
         vdeck.prefillCall("JI2MED");
-        QMetaObject::invokeMethod(vCall2, "returnPressed");  // AGE empty
-        CHECK(played.size() == before && !vCall2->text().isEmpty(),
-              "voiceui: phone Enter with missing field plays NOTHING");
         rcv->setText("59");
         vdeck.findChild<QLineEdit*>("exchEdit1")->setText("45");
-        QMetaObject::invokeMethod(vCall2, "returnPressed");
-        CHECK(played.size() == before && db.qsos(sid).size() == 1
+        QMetaObject::invokeMethod(vCall2, "returnPressed");  // answer
+        CHECK(played.size() == 3 && played.last() == 1,
+              "voiceui: answering Enter plays the exchange (VK2)");
+        QMetaObject::invokeMethod(vCall2, "returnPressed");  // TU + log
+        CHECK(played.size() == 4 && played.last() == 2
+                  && db.qsos(sid).size() == 1
                   && db.qsos(sid).last().v.call == "JI2MED"
                   && vCall2->text().isEmpty(),
-              "voiceui: phone Enter logs and wipes, still silent");
-        // F-keys remain the only voice trigger.
-        f1->click();
-        CHECK(played.size() == before + 1,
-              "voiceui: a pushed F-key still speaks");
+              "voiceui: closing Enter plays TU and logs");
+
+        // Dead slots never advance the beats: Enter retries the answer
+        // forever instead of wandering into a state where it means
+        // nothing (the original JI2MED failure mode).
+        vdeck.setVoiceKeyer([](int) { return false; }, [] {});
+        vdeck.prefillCall("JA3AAA");
+        rcv->setText("59");
+        vdeck.findChild<QLineEdit*>("exchEdit1")->setText("30");
+        QMetaObject::invokeMethod(vCall2, "returnPressed");
+        QMetaObject::invokeMethod(vCall2, "returnPressed");
+        CHECK(db.qsos(sid).size() == 1 && !vCall2->text().isEmpty(),
+              "voiceui: dead slots never advance the beats");
+
+        // ESM off: Enter is a plain log — no keying, box wipes.
+        QPushButton* esm = buttonWithText(&vdeck, "ESM");
+        CHECK(esm && esm->isChecked(), "voiceui: ESM button exists, on");
+        esm->click();
+        QMetaObject::invokeMethod(vCall2, "returnPressed");
+        CHECK(db.qsos(sid).size() == 2
+                  && db.qsos(sid).last().v.call == "JA3AAA"
+                  && vCall2->text().isEmpty(),
+              "voiceui: ESM off, Enter just logs and wipes");
 
         // Space skips the preset RST and lands on the field that needs
         // copy — the JI2MED trap: the age went into the 59 box.

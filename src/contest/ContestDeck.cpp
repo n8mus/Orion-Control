@@ -212,10 +212,10 @@ void ContestDeck::buildUi() {
         esmOn_ = QSettings().value("contest/esm", true).toBool();
         esmBtn_->setChecked(esmOn_);
         esmBtn_->setToolTip(
-            "CW contests only: Enter keys the next CW message for you "
-            "(answer, TU+log).\nOFF: Enter only logs.\nOn PHONE, Enter "
-            "NEVER transmits regardless — voice plays only from an "
-            "F-key you push.");
+            "Enter Sends Message: Enter keys the next CW message or "
+            "plays the next voice slot for you\n(answer, then TU+log)."
+            "\nOFF: Enter only logs when the exchange is complete — "
+            "nothing transmits by itself.");
         connect(esmBtn_, &QPushButton::toggled, this, [this](bool on) {
             esmOn_ = on;
             QSettings().setValue("contest/esm", on);
@@ -243,6 +243,13 @@ void ContestDeck::buildUi() {
             autoCqTimer_.setInterval(v * 1000);
         });
         hdr->addWidget(autoSecs_);
+        // The mode buttons wear the F-key green when ON — "is it on?"
+        // must be answerable from across the shack.
+        for (QPushButton* b : {runBtn_, spBtn_, esmBtn_, autoBtn_})
+            b->setStyleSheet(
+                "QPushButton:checked { background:#173423;"
+                " border:1px solid #3fb46a; color:#a9f0c6;"
+                " font-weight:bold; }");
         autoCqTimer_.setInterval(autoSecs_->value() * 1000);
         connect(&autoCqTimer_, &QTimer::timeout, this, [this] {
             if (!autoBtn_->isChecked() || autoPaused_) return;
@@ -847,10 +854,11 @@ char ContestDeck::classifySpot(const QString& call, qint64 hz) const {
 void ContestDeck::enterPressed() {
     if (contestId_ < 0 || !def_) return;
     EsmInput in;
-    // THE PHONE RULE (operator's, absolute): on voice, the transmitter
-    // moves only when an F-key is deliberately pushed — Enter never
-    // speaks. Enter-sends-message automation is a CW concept.
-    in.esmOn = esmOn_ && modeNow() == QLatin1String("CW");
+    // ESM drives BOTH modes when the (now clearly lit) button is on —
+    // the operator's revised ruling once the toggle was understood:
+    // Enter keys CW or plays the VK slots alike; the button is the off
+    // switch, not a hidden mode rule.
+    in.esmOn = esmOn_;
     in.run = runMode_;
     const QString c = call_->text().trimmed();
     in.callEmpty = c.isEmpty();
@@ -967,7 +975,7 @@ void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
 void ContestDeck::updateEsmHint() {
     if (contestId_ < 0 || !def_) return;
     EsmInput in;
-    in.esmOn = esmOn_ && modeNow() == QLatin1String("CW");
+    in.esmOn = esmOn_;
     in.run = runMode_;
     const QString c = call_->text().trimmed();
     in.callEmpty = c.isEmpty();

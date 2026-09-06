@@ -219,6 +219,33 @@ int main(int argc, char** argv) {
               "voiceui: F2 (his call) is blank on phone — you speak it");
     }
 
+    // ---- abandon-on-QSY: grabbed calls clear, typed calls park ----------
+    {
+        int parks = 0;
+        QObject::connect(&deck, &ContestDeck::callParked,
+                         [&parks](const QString&, qint64) { ++parks; });
+        auto* aCall = deck.findChild<QLineEdit*>("entryCall");
+        // Grabbed from a spot at 14032, then rolled away: box clears,
+        // nothing parks (the spot is already on the map).
+        deck.setRig(14032000, "CW");
+        deck.prefillCall("K6TK", 14032000);
+        deck.setRig(14040000, "CW");
+        CHECK(aCall->text().isEmpty() && parks == 0,
+              "qsy: a grabbed call clears on roll-away, no park");
+        // Typed at 14040 (real key events set the anchor), rolled away:
+        // parks once, box clears.
+        for (const char* k : {"K", "6", "T", "K"}) {
+            QKeyEvent ev(QEvent::KeyPress,
+                         k[0] == '6' ? Qt::Key_6 : Qt::Key_K,
+                         Qt::NoModifier, QString::fromLatin1(k));
+            QCoreApplication::sendEvent(aCall, &ev);
+        }
+        CHECK(aCall->text() == "K6TK", "qsy: typing lands in the box");
+        deck.setRig(14060000, "CW");
+        CHECK(parks == 1 && aCall->text().isEmpty(),
+              "qsy: a typed call parks once and clears");
+    }
+
     // ---- spot table: contest view + per-band summary --------------------
     {
         SpotTableWindow tw(nullptr, nullptr);

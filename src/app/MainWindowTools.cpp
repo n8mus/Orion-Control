@@ -140,7 +140,13 @@ void MainWindow::setupLogUi() {
     connect(pan_, &PanadapterWidget::spotClicked, this,
             [this](const QString& call, QChar kind, const QString& tg) {
                 if (cwWin_) cwWin_->setHisCall(call);
-                if (contestDeckVisible()) contestDeck_->prefillCall(call);
+                if (contestDeckVisible()) {
+                    // The clicked spot's frequency anchors the call.
+                    qint64 spotHz = 0;
+                    for (const SpotLabel& s : shownSpots_)
+                        if (s.call == call) { spotHz = s.hz; break; }
+                    contestDeck_->prefillCall(call, spotHz);
+                }
                 QString park, grid;
                 if (kind == QChar('P')) {
                     park = tg;
@@ -355,7 +361,7 @@ void MainWindow::toggleContestMode(bool on) {
                 }
                 contestDeck_->setNearbySpot(
                     best ? best->call : QString(),
-                    best ? best->contest : 0);
+                    best ? best->contest : 0, best ? best->hz : 0);
             });
             feed->start();
             connect(contestDeck_, &ContestDeck::callParked, this,
@@ -462,7 +468,7 @@ void MainWindow::walkContestSpot(int dir) {
     }
     if (!pick) return;                 // nothing worth tuning that way
     onTuneRequested(int(pick->hz - cur), true);
-    if (contestDeck_) contestDeck_->prefillCall(pick->call);
+    if (contestDeck_) contestDeck_->prefillCall(pick->call, pick->hz);
     if (cwWin_) cwWin_->setHisCall(pick->call);
 }
 
@@ -532,7 +538,7 @@ void MainWindow::openSpotTable() {
                     // (antennas and tuner follow the operator) — the
                     // deck rides along like any spot click.
                     if (contestDeckVisible())
-                        contestDeck_->prefillCall(call);
+                        contestDeck_->prefillCall(call, hz);
                     QString park, grid;
                     if (kind == QChar('P')) {
                         park = tag;

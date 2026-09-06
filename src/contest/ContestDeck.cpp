@@ -274,6 +274,8 @@ void ContestDeck::buildUi() {
         call_->installEventFilter(this);
         connect(call_, &QLineEdit::textEdited, this, [this] {
             callFromSpot_ = false;   // typing reclaims ←/→ for the cursor
+            if (anchorHz_ == 0 && !call_->text().isEmpty())
+                anchorHz_ = rigHz_;  // heard HERE — the park remembers
             if (autoBtn_->isChecked() && !call_->text().isEmpty())
                 autoPaused_ = true;  // never CQ over an answering station
             onCallEdited();
@@ -550,29 +552,37 @@ QString ContestDeck::modeNow() const {
 void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
     const bool bandMoved =
         hz > 0 && LogbookIndex::bandForHz(hz) != currentBand();
-    const qint64 prev = prevHz_;
-    prevHz_ = hz;
     rigHz_ = hz;
     rigMode_ = adifMode.isEmpty() ? QStringLiteral("CW") : adifMode;
     if (qtc_) qtc_->setRigFreq(hz);
-    // The park: a TYPED (never walk-landed), unworked call abandoned by
-    // turning the knob gets remembered as a local spot at the frequency
-    // it was heard on. callFromSpot_ landings are excluded or every
-    // arrow hop would park its own passenger.
-    if (contestId_ >= 0 && prev > 0 && hz > 0 && qAbs(hz - prev) > 1000) {
+    // Abandon-on-QSY, judged against where the call was ACQUIRED — not
+    // the previous poll tick, which is what let a Space-grabbed call
+    // survive the roll-away (live-found with K6TK). A typed call parks
+    // as a local spot; a grabbed/landed one just clears, because its
+    // spot is already on the map. Walk hops are safe: every landing
+    // re-anchors before the tune reports back.
+    if (contestId_ >= 0 && hz > 0 && anchorHz_ > 0
+        && qAbs(hz - anchorHz_) > 1000) {
         const QString c = call_->text().trimmed();
-        if (!callFromSpot_ && loggableCall(c)
-            && classifySpot(c, prev) != 'W') {
-            emit callParked(c, prev);
-            trace(QString("PARK %1 @ %2").arg(c).arg(prev));
-            wipe();
+        if (c.isEmpty()) {
+            anchorHz_ = 0;
+        } else {
+            if (!callFromSpot_ && loggableCall(c)
+                && classifySpot(c, anchorHz_) != 'W') {
+                emit callParked(c, anchorHz_);
+                trace(QString("PARK %1 @ %2").arg(c).arg(anchorHz_));
+            } else {
+                status_->setText(c + " left behind");
+            }
+            wipe();                      // resets the anchor too
         }
     }
     if (bandMoved) onCallEdited();       // dupe verdict can flip
 }
 
-void ContestDeck::setNearbySpot(const QString& call, char cls) {
+void ContestDeck::setNearbySpot(const QString& call, char cls, qint64 hz) {
     const QString c = call.trimmed().toUpper();
+    frameHz_ = hz;
     if (c == frameCall_) return;
     frameCall_ = c;
     if (c.isEmpty() || c == call_->text().trimmed()) {
@@ -588,12 +598,13 @@ void ContestDeck::setNearbySpot(const QString& call, char cls) {
     frameLbl_->setText("▸ " + c + "  (Space)");
 }
 
-void ContestDeck::prefillCall(const QString& call) {
+void ContestDeck::prefillCall(const QString& call, qint64 hz) {
     if (contestId_ < 0) return;
     call_->setText(call.trimmed().toUpper());
     myCallSent_ = exchSent_ = false;
     onCallEdited();
     callFromSpot_ = true;            // ←/→ keep walking from here
+    anchorHz_ = hz > 0 ? hz : rigHz_;
     requestQrz(call_->text().trimmed());  // a spot call is complete: ask now
     call_->setFocus();
 }
@@ -779,6 +790,7 @@ void ContestDeck::wipe() {
     updateHeading();                     // call box empty -> "—"
     myCallSent_ = exchSent_ = false;
     refreshScp();
+    anchorHz_ = 0;                       // nothing in the box to abandon
     // A wipe means logged or abandoned — either way, back to CQing.
     if (autoBtn_ && autoBtn_->isChecked()) {
         autoPaused_ = false;
@@ -1146,7 +1158,7 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
             // operator's Not1MM muscle memory.
             if (call_->text().trimmed().isEmpty()
                 && !frameCall_.isEmpty()) {
-                prefillCall(frameCall_);
+                prefillCall(frameCall_, frameHz_);
                 return true;
             }
             historyPrefill();

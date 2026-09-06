@@ -56,7 +56,7 @@ public:
     // The call frame: knob-tuned onto a spotted station, its call shows
     // beside CALL and Space (empty box) grabs it. Empty call = no spot
     // near the dial.
-    void setNearbySpot(const QString& call, char cls);
+    void setNearbySpot(const QString& call, char cls, qint64 hz);
     bool scpHas(const QString& call) const { return scp_.contains(call); }
     bool openContestId(qint64 id);
     bool contestActive() const { return contestId_ >= 0; }
@@ -74,7 +74,9 @@ public:
 
 public slots:
     void appendRead(const QString& text);   // decoded CW rides in here
-    void prefillCall(const QString& call);  // spot click / arrow landing
+    // Spot click / arrow landing / Space grab. hz anchors the call at
+    // the frequency it lives on (QSY-abandon detection); 0 = the dial.
+    void prefillCall(const QString& call, qint64 hz = 0);
 
 signals:
     void walkSpots(int dir);                // ←/→ on an empty call box
@@ -157,7 +159,11 @@ private:
     bool autoPaused_ = false;            // typing pauses; log/wipe resumes
     QLabel* frameLbl_ = nullptr;         // knob-tune call frame
     QString frameCall_;
-    qint64 prevHz_ = 0;                  // QSY detection for the park
+    qint64 frameHz_ = 0;
+    // Where the call in the box was ACQUIRED (typed, grabbed, landed).
+    // Rolling >1 kHz from here means abandoned: typed calls park,
+    // spot-sourced calls just clear (their spot is already on the map).
+    qint64 anchorHz_ = 0;
     QSpinBox* wpm_ = nullptr;
     QLineEdit* call_ = nullptr;
     QLineEdit* rstS_ = nullptr;

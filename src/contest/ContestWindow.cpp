@@ -119,10 +119,10 @@ void ContestWindow::buildUi() {
 
     // ---- the log --------------------------------------------------------
     table_ = new QTableWidget(this);
-    table_->setColumnCount(11);
+    table_->setColumnCount(12);
     table_->setHorizontalHeaderLabels({"UTC", "Call", "kHz", "Snt", "SNr",
-                                       "Rcv", "RNr", "Ex1", "Ex2", "Pt",
-                                       "QTC"});
+                                       "Rcv", "RNr", "Ex1", "Ex2", "Ex3",
+                                       "Pt", "QTC"});
     table_->horizontalHeader()->setStretchLastSection(true);
     table_->verticalHeader()->setVisible(false);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -212,6 +212,7 @@ void ContestWindow::openContest(qint64 id) {
         ctx_.myCont = me.cont;
         ctx_.myCountry = me.country;
         ctx_.myCq = me.cq;
+        ctx_.myItu = me.itu;
     }
     title_->setText(row_.title);
     setWindowTitle("Contest manager — " + row_.title);
@@ -255,8 +256,9 @@ void ContestWindow::refreshAll() {
         put(6, q.v.serialR);
         put(7, q.v.exch1);
         put(8, q.v.exch2);
-        put(9, QString::number(q.points));
-        put(10, reported.contains(q.id) ? QStringLiteral("✓ sent")
+        put(9, q.v.exch3);
+        put(10, QString::number(q.points));
+        put(11, reported.contains(q.id) ? QStringLiteral("✓ sent")
                                         : QString());
     }
 }
@@ -290,7 +292,7 @@ void ContestWindow::editSelected() {
     auto* call = new QLineEdit(q.v.call, &d);
     form->addRow("Call", call);
     QLineEdit *rstS = nullptr, *rstR = nullptr, *serR = nullptr,
-              *ex1 = nullptr, *ex2 = nullptr;
+              *ex1 = nullptr, *ex2 = nullptr, *ex3 = nullptr;
     if (def_->hasRst) {
         rstS = new QLineEdit(q.v.rstS, &d);
         rstR = new QLineEdit(q.v.rstR, &d);
@@ -312,6 +314,10 @@ void ContestWindow::editSelected() {
                 ex2 = new QLineEdit(q.v.exch2, &d);
                 form->addRow(fd.label, ex2);
                 break;
+            case ExchCol::Exch3:
+                ex3 = new QLineEdit(q.v.exch3, &d);
+                form->addRow(fd.label, ex3);
+                break;
         }
     }
     auto* bb = new QDialogButtonBox(
@@ -331,6 +337,7 @@ void ContestWindow::editSelected() {
     if (serR) q.v.serialR = serR->text().trimmed();
     if (ex1) q.v.exch1 = ex1->text().trimmed();
     if (ex2) q.v.exch2 = ex2->text().trimmed();
+    if (ex3) q.v.exch3 = ex3->text().trimmed();
     // Points follow the edit (a corrected call can change the country).
     CtyInfo ci;
     const bool ok = cty_ && cty_->info(normalizeForCty(q.v.call), ci);

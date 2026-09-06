@@ -31,6 +31,12 @@ bool loggableCall(const QString& call);
 // always receives plain digits — this is keying-side formatting only.
 QString formatSerial(int n, bool cut, int pad);
 
+// The WPX prefix: letters+digits through the call's last leading digit
+// (N8EM -> N8, WA3ABC -> WA3, 4X4AA -> 4X4). Portable designators take
+// over: DL/N8EM -> DL0 (no digit gains a 0), W1AW/4 -> W4 (a bare
+// digit replaces the home number). Per the CQ WPX rules text.
+QString wpxPrefix(const QString& call);
+
 // One row of a computed score.
 struct BandCount {
     int qsos = 0, points = 0, mults = 0, weighted = 0;

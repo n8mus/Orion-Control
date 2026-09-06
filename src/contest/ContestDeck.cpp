@@ -356,6 +356,7 @@ void ContestDeck::openContest(qint64 id) {
         ctx_.myCont = me.cont;
         ctx_.myCountry = me.country;
         ctx_.myCq = me.cq;
+        ctx_.myItu = me.itu;
     }
     title_->setText(row_.title);
     setEnabled(true);
@@ -424,6 +425,12 @@ QString ContestDeck::currentBand() const {
                       : QStringLiteral("20M");
 }
 
+QString ContestDeck::modeNow() const {
+    // Mixed-mode contests dupe per band+mode; follow the rig.
+    return rigMode_ == QLatin1String("SSB") ? QStringLiteral("SSB")
+                                            : QStringLiteral("CW");
+}
+
 void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
     const bool bandMoved =
         hz > 0 && LogbookIndex::bandForHz(hz) != currentBand();
@@ -452,11 +459,11 @@ void ContestDeck::appendRead(const QString& text) {
 char ContestDeck::classifySpot(const QString& call) const {
     if (contestId_ < 0 || !def_) return 0;
     const QString c = call.trimmed().toUpper();
-    if (isDupe(*def_, values_, c, currentBand(), "CW")) return 'W';
+    if (isDupe(*def_, values_, c, currentBand(), modeNow())) return 'W';
     CQsoValues probe;
     probe.call = c;
     probe.band = currentBand();
-    probe.mode = "CW";
+    probe.mode = modeNow();
     CtyInfo ci;
     const bool ok = cty_ && cty_->info(normalizeForCty(c), ci);
     const int pts = def_->points ? def_->points(probe, ci, ok, ctx_) : 0;
@@ -569,7 +576,7 @@ void ContestDeck::logNow() {
     q.freqHz = rigHz_ > 0 ? rigHz_ : 14030000;
     q.v.call = c;
     q.v.band = currentBand();
-    q.v.mode = rigMode_ == QLatin1String("SSB") ? "SSB" : "CW";
+    q.v.mode = modeNow();
     q.v.rstS = def_->hasRst && rstS_ ? rstS_->text().trimmed() : QString();
     q.v.serialS = def_->sentSerial ? row_.nextSerial : 0;
     q.runSp = runMode_ ? "R" : "S";
@@ -580,6 +587,7 @@ void ContestDeck::logNow() {
             case ExchCol::SerialR: q.v.serialR = t; break;
             case ExchCol::Exch1: q.v.exch1 = t; break;
             case ExchCol::Exch2: q.v.exch2 = t; break;
+            case ExchCol::Exch3: q.v.exch3 = t; break;
         }
     }
     CtyInfo ci;

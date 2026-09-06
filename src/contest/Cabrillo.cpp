@@ -71,10 +71,11 @@ QStringList Cabrillo::exchTokens(const ContestDef& def,
             if (sentSide) {
                 out << contest.sentExch.trimmed().toUpper();
             } else {
-                QString r = q.v.exch1.trimmed();
-                if (!q.v.exch2.trimmed().isEmpty())
-                    r += ' ' + q.v.exch2.trimmed();
-                out << r.toUpper();
+                QStringList parts;
+                for (const QString& e :
+                     {q.v.exch1, q.v.exch2, q.v.exch3})
+                    if (!e.trimmed().isEmpty()) parts << e.trimmed();
+                out << parts.join(' ').toUpper();
             }
         }
     }

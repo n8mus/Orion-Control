@@ -44,6 +44,50 @@ bool loggableCall(const QString& call) {
     return letter && digit;
 }
 
+namespace {
+// Prefix of a PLAIN call: everything through the call's LAST digit
+// ("WA3ABC" -> WA3; "4X4AA" -> 4X4 — the digit after the X counts). A
+// call with no digit at all (rare specials) takes first-two-plus-0.
+QString plainPrefix(const QString& call) {
+    int lastDigit = -1;
+    for (int i = 0; i < call.size(); ++i)
+        if (call[i].isDigit()) lastDigit = i;
+    if (lastDigit < 0) return call.left(2) + '0';
+    return call.left(lastDigit + 1);
+}
+} // namespace
+
+QString wpxPrefix(const QString& call) {
+    QString c = call.trimmed().toUpper();
+    if (c.isEmpty()) return c;
+    if (!c.contains('/')) return plainPrefix(c);
+    static const QSet<QString> kTails = {
+        "M", "MM", "P", "QRP", "A", "J", "LH", "LGT", "LS",
+        "NLD", "T", "R", "TR",
+    };
+    QStringList parts = c.split('/', Qt::SkipEmptyParts);
+    while (parts.size() > 1 && kTails.contains(parts.last()))
+        parts.removeLast();
+    if (parts.size() == 1) return plainPrefix(parts[0]);
+    // Designator = the shortest segment (either side of the slash).
+    QString desig = parts[0], home = parts[1];
+    if (home.size() < desig.size()) std::swap(desig, home);
+    bool digitOnly = true;
+    for (QChar ch : desig)
+        if (!ch.isDigit()) { digitOnly = false; break; }
+    if (digitOnly) {
+        // W1AW/4 -> the home prefix with its number swapped: W4.
+        QString hp = plainPrefix(home);
+        int i = hp.size() - 1;
+        while (i >= 0 && hp[i].isDigit()) --i;
+        return hp.left(i + 1) + desig;
+    }
+    bool hasDigit = false;
+    for (QChar ch : desig)
+        if (ch.isDigit()) { hasDigit = true; break; }
+    return hasDigit ? plainPrefix(desig) : desig + '0';
+}
+
 QString formatSerial(int n, bool cut, int pad) {
     QString s = QString::number(n < 0 ? 0 : n);
     while (s.size() < pad) s.prepend('0');

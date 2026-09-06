@@ -83,6 +83,7 @@ private:
     void refreshScp();
     void keyText(const QString& text);
     QString currentBand() const;
+    QString modeNow() const;         // rig mode as the contest mode
     void trace(const QString& line);
 
     ContestDb* db_;

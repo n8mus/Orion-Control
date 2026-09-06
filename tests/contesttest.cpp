@@ -350,6 +350,198 @@ static void testQtc(const QString& dir, const CtyLookup& cty) {
           "qtc: score adds QTC points before the multiplier");
 }
 
+static void testWpx(const CtyLookup& cty) {
+    CHECK(wpxPrefix("N8EM") == "N8", "wpx: N8EM -> N8");
+    CHECK(wpxPrefix("WA3ABC") == "WA3", "wpx: WA3ABC -> WA3");
+    CHECK(wpxPrefix("4X4AA") == "4X4", "wpx: 4X4AA -> 4X4");
+    CHECK(wpxPrefix("DL/N8EM") == "DL0",
+          "wpx: designator without a digit gains a 0");
+    CHECK(wpxPrefix("N8EM/DL") == "DL0", "wpx: designator on either side");
+    CHECK(wpxPrefix("W1AW/4") == "W4",
+          "wpx: bare-digit designator swaps the home number");
+    CHECK(wpxPrefix("KH6/N8EM") == "KH6", "wpx: KH6/N8EM -> KH6");
+    CHECK(wpxPrefix("N8EM/QRP") == "N8", "wpx: /QRP tail ignored");
+
+    const ContestDef* d = contestDef("CQ-WPX-CW");
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    CtyInfo me;
+    cty.info("N8EM", me);
+    ctx.myCountry = me.country;
+    QList<CQsoValues> log;
+    log << mkq("DL2CC", "20M", "", "1")     // other cont, high: 3
+        << mkq("DL8WPX", "40M", "", "2")    // other cont, low: 6
+        << mkq("VE3AT", "40M", "", "3")     // NA-NA, low: 4
+        << mkq("W1AW", "20M", "", "4")      // same country: 1
+        << mkq("N8XYZ", "40M", "", "5");    // same country low: still 1
+    const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+    CHECK(sb.points == 3 + 6 + 4 + 1 + 1, "wpx: point ladder incl. low bands");
+    CHECK(sb.mults == 5, "wpx: five distinct prefixes");
+    // Same prefix on another band adds nothing.
+    log << mkq("W1AW", "40M", "", "6");
+    CHECK(computeScore(*d, log, &cty, ctx).mults == 5,
+          "wpx: prefixes count once for the whole contest");
+}
+
+static void testSs(const CtyLookup& cty) {
+    const ContestDef* d = contestDef("ARRL-SS-CW");
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    QList<CQsoValues> log;
+    CQsoValues q = mkq("W1AW", "20M");
+    q.serialR = "123";
+    q.exch1 = "B";       // prec
+    q.exch2 = "55";      // check
+    q.exch3 = "CT";      // section
+    log << q;
+    CHECK(isDupe(*d, log, "W1AW", "40M", "CW"),
+          "ss: whole-contest dupe — other band still a dupe");
+    const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+    CHECK(sb.points == 2 && sb.mults == 1, "ss: 2 points, section mult");
+    CQsoValues q2 = q;
+    q2.call = "K1ZZ";
+    q2.exch3 = "CT";
+    log << q2;
+    CHECK(computeScore(*d, log, &cty, ctx).mults == 1,
+          "ss: sections count once, ever");
+
+    // Cabrillo: the four received values ride the exch token in order.
+    ContestRow c;
+    c.defId = d->id;
+    c.sentExch = "A 71 MI";
+    ContestQso cq;
+    cq.tsUtc = QDateTime::fromString("2026-11-01 21:02:00",
+                                     "yyyy-MM-dd HH:mm:ss");
+    cq.tsUtc.setTimeZone(QTimeZone::utc());
+    cq.freqHz = 21042000;
+    cq.v = q;
+    cq.v.serialS = 17;
+    QList<ContestQso> qsos{cq};
+    CabrilloStation st;
+    st.call = "N8EM";
+    const QString text = Cabrillo::build(*d, c, qsos, {}, st, &cty, ctx);
+    CHECK(text.contains("017 A 71 MI") && text.contains("123 B 55 CT"),
+          "ss cab: serial + prec/ck/sec both sides, in order");
+    CHECK(Cabrillo::selfCheck(text, *d, c, qsos, {}, nullptr),
+          "ss cab: parse-back verifies");
+}
+
+static void testRoster(const CtyLookup& cty) {
+    CHECK(contestDefs().size() == 21, "roster: 21 definitions registered");
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    ctx.myItu = 8;
+    CtyInfo me;
+    cty.info("N8EM", me);
+    ctx.myCountry = me.country;
+
+    // ARRL DX from the W side: DX 3 points, W/VE zero, country per band.
+    {
+        const ContestDef* d = contestDef("ARRL-DX-CW");
+        QList<CQsoValues> log;
+        log << mkq("DL2CC", "20M", "KW") << mkq("VE3AT", "20M", "100");
+        const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+        CHECK(sb.points == 3 && sb.mults == 1,
+              "arrl-dx: VE is zero points and no mult from the W side");
+    }
+    // NAQP: everything a point; only NA states multiply.
+    {
+        const ContestDef* d = contestDef("NAQP-CW");
+        QList<CQsoValues> log;
+        CQsoValues a = mkq("VE3AT", "20M", "BOB");
+        a.exch2 = "ON";
+        CQsoValues b = mkq("DL2CC", "20M", "HANS");  // no state, still 1 pt
+        log << a << b;
+        const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+        CHECK(sb.points == 2 && sb.mults == 1,
+              "naqp: DX pays a point but no mult");
+    }
+    // Sprint: state mults count once across bands.
+    {
+        const ContestDef* d = contestDef("NA-SPRINT-CW");
+        QList<CQsoValues> log;
+        CQsoValues a = mkq("N6RO", "20M", "KEN");
+        a.exch2 = "CA";
+        a.serialR = "1";
+        CQsoValues b = a;
+        b.call = "K6XX";
+        b.band = "40M";
+        b.serialR = "2";
+        log << a << b;
+        CHECK(computeScore(*d, log, &cty, ctx).mults == 1,
+              "sprint: CA counts once, not per band");
+    }
+    // IARU: zone ladder 1 / 3 / 5, HQ strings pay 1.
+    {
+        const ContestDef* d = contestDef("IARU-HF");
+        QList<CQsoValues> log;
+        log << mkq("W9ZZZ", "20M", "8")     // my zone: 1
+            << mkq("VE3AT", "20M", "4")     // same continent: 3
+            << mkq("DL2CC", "20M", "28")    // other continent: 5
+            << mkq("DA0HQ", "20M", "DARC"); // HQ: 1
+        CHECK(computeScore(*d, log, &cty, ctx).points == 1 + 3 + 5 + 1,
+              "iaru: zone-distance point ladder + HQ");
+    }
+    // CQ 160: 2 / 5 / 10 ladder; W/VE state mult, DX country mult.
+    {
+        const ContestDef* d = contestDef("CQ-160-CW");
+        QList<CQsoValues> log;
+        log << mkq("W1AW", "160M", "CT") << mkq("XE2X", "160M", "")
+            << mkq("DL2CC", "160M", "");
+        const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+        CHECK(sb.points == 2 + 5 + 10, "cq160: point ladder");
+        CHECK(sb.mults == 3, "cq160: state + two countries");
+    }
+    // ARRL 10: CW pays double, dupes are per band+mode.
+    {
+        const ContestDef* d = contestDef("ARRL-10");
+        QList<CQsoValues> log;
+        CQsoValues cw = mkq("W1AW", "10M", "CT");
+        CQsoValues ph = cw;
+        ph.mode = "SSB";
+        log << cw << ph;
+        CHECK(computeScore(*d, log, &cty, ctx).points == 4 + 2,
+              "arrl10: 4 CW / 2 PH points");
+        CHECK(!isDupe(*d, log, "K1ZZ", "10M", "CW")
+                  && isDupe(*d, log, "W1AW", "10M", "SSB"),
+              "arrl10: dupes are per mode");
+    }
+    // Every definition survives a Cabrillo round-trip with a generic QSO.
+    {
+        for (const ContestDef* d : contestDefs()) {
+            ContestRow c;
+            c.defId = d->id;
+            c.sentExch = "TEST EX";
+            ContestQso q;
+            q.tsUtc = QDateTime::fromString("2026-01-01 00:00:00",
+                                            "yyyy-MM-dd HH:mm:ss");
+            q.tsUtc.setTimeZone(QTimeZone::utc());
+            q.freqHz = 14030000;
+            q.v = mkq("DL1ABC", "20M", "EX1", "5");
+            q.v.exch2 = "EX2";
+            q.v.exch3 = "EX3";
+            q.v.serialS = 1;
+            q.v.mode = d->modeCategory == QLatin1String("SSB") ? "SSB"
+                                                               : "CW";
+            QList<ContestQso> qsos{q};
+            CabrilloStation st;
+            st.call = "N8EM";
+            const QString text =
+                Cabrillo::build(*d, c, qsos, {}, st, &cty, ctx);
+            QString err;
+            if (!Cabrillo::selfCheck(text, *d, c, qsos, {}, &err)) {
+                std::printf("FAIL  roster cab round-trip: %s — %s\n",
+                            qPrintable(d->id), qPrintable(err));
+                ++fails;
+            }
+        }
+        CHECK(true, "roster: every definition round-trips its Cabrillo");
+    }
+}
+
 static void testOpTime() {
     QList<QDateTime> ev;
     QDateTime t = QDateTime::fromString("2026-08-08 00:00:00",
@@ -549,6 +741,9 @@ int main(int argc, char** argv) {
     testCabrillo(cty);
     testQtc(tmp.path(), cty);
     testOpTime();
+    testWpx(cty);
+    testSs(cty);
+    testRoster(cty);
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

@@ -58,6 +58,7 @@ const char* kSchemaQso =
     " rst_s TEXT DEFAULT '', rst_r TEXT DEFAULT '',"
     " serial_s INTEGER DEFAULT 0, serial_r TEXT DEFAULT '',"
     " exch1 TEXT DEFAULT '', exch2 TEXT DEFAULT '',"
+    " exch3 TEXT DEFAULT '',"
     " points INTEGER DEFAULT 0,"
     " run_sp TEXT DEFAULT 'R')";
 
@@ -103,6 +104,7 @@ ContestQso qsoFromQuery(const QSqlQuery& q) {
     o.v.serialR = q.value("serial_r").toString();
     o.v.exch1   = q.value("exch1").toString();
     o.v.exch2   = q.value("exch2").toString();
+    o.v.exch3   = q.value("exch3").toString();
     o.points    = q.value("points").toInt();
     o.runSp     = q.value("run_sp").toString();
     return o;
@@ -121,6 +123,7 @@ void bindQso(QSqlQuery& q, const ContestQso& o) {
     q.bindValue(":serr", o.v.serialR.trimmed().toUpper());
     q.bindValue(":ex1", o.v.exch1.trimmed().toUpper());
     q.bindValue(":ex2", o.v.exch2.trimmed().toUpper());
+    q.bindValue(":ex3", o.v.exch3.trimmed().toUpper());
     q.bindValue(":pts", o.points);
     q.bindValue(":rsp", o.runSp);
 }
@@ -163,6 +166,9 @@ bool ContestDb::open(const QString& path) {
     if (!q.exec(QString::fromLatin1(kSchemaQtc))) return false;
     q.exec("CREATE INDEX IF NOT EXISTS idx_qtc_contest"
            " ON qtc_sent(contest_id, to_call)");
+    // Migration for a db born before Sweepstakes needed a third
+    // exchange column; fails harmlessly once the column exists.
+    q.exec("ALTER TABLE cqso ADD COLUMN exch3 TEXT DEFAULT ''");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_contest"
            " ON cqso(contest_id)");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_call"
@@ -259,9 +265,10 @@ qint64 ContestDb::addQso(const ContestQso& o) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare(
         "INSERT INTO cqso (contest_id, ts_utc, call, freq_hz, band, mode,"
-        " rst_s, rst_r, serial_s, serial_r, exch1, exch2, points, run_sp)"
+        " rst_s, rst_r, serial_s, serial_r, exch1, exch2, exch3, points,"
+        " run_sp)"
         " VALUES (:cid, :ts, :call, :freq, :band, :mode, :rsts, :rstr,"
-        " :sers, :serr, :ex1, :ex2, :pts, :rsp)");
+        " :sers, :serr, :ex1, :ex2, :ex3, :pts, :rsp)");
     bindQso(q, o);
     if (!q.exec()) return -1;
     emit changed();
@@ -277,7 +284,7 @@ bool ContestDb::updateQso(const ContestQso& o) {
         "UPDATE cqso SET contest_id=:cid, ts_utc=:ts, call=:call,"
         " freq_hz=:freq, band=:band, mode=:mode, rst_s=:rsts, rst_r=:rstr,"
         " serial_s=:sers, serial_r=:serr, exch1=:ex1, exch2=:ex2,"
-        " points=:pts, run_sp=:rsp WHERE id=:id");
+        " exch3=:ex3, points=:pts, run_sp=:rsp WHERE id=:id");
     bindQso(q, o);
     q.bindValue(":id", o.id);
     const bool ok = q.exec();

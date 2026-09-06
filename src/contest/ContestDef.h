@@ -16,10 +16,10 @@ struct CtyInfo;
 enum class DupeScope { Never, Contest, PerBand, PerBandMode };
 
 // Which contest.db column a received-exchange entry field fills. The
-// schema stays fixed (serial_r, exch1, exch2) and each contest names what
-// its columns mean — the CWT "number or state" and the SS check both live
-// in exch1 without schema churn.
-enum class ExchCol { RstR, SerialR, Exch1, Exch2 };
+// schema stays fixed (serial_r, exch1..exch3) and each contest names
+// what its columns mean — Sweepstakes needs all three besides the
+// serial (precedence, check, section).
+enum class ExchCol { RstR, SerialR, Exch1, Exch2, Exch3 };
 
 struct ExchFieldDef {
     ExchCol col;
@@ -41,7 +41,7 @@ struct CQsoValues {
     QString rstS, rstR;
     int     serialS = 0;
     QString serialR;
-    QString exch1, exch2;
+    QString exch1, exch2, exch3;
 };
 
 // My side, precomputed once per contest open.
@@ -50,6 +50,7 @@ struct ContestContext {
     QString myCont;              // "NA"
     QString myCountry;           // cty.dat name, e.g. "United States"
     int     myCq = 0;
+    int     myItu = 0;           // IARU HF scores by ITU zone distance
 };
 
 // One contest's rules. A table entry, not a subclass: every hook is a

@@ -611,12 +611,19 @@ Qso ContestWindow::logbookQso(const ContestQso& q) const {
         o.cqz = ci.cq;
         o.ituz = ci.itu;
     }
-    QStringList ex;
-    if (q.v.serialS > 0) ex << QString("sent %1").arg(q.v.serialS);
+    // Full exchange in the comment, BOTH ways — the contest-wide sent
+    // exchange (age/zone/section) rides here too, so a pushed record
+    // isn't half a QSO. What went out: my serial and the fixed
+    // sent-exch; what came back: his serial + exch fields.
+    QStringList s;
+    if (q.v.serialS > 0) s << QString::number(q.v.serialS);
+    if (!row_.sentExch.trimmed().isEmpty()) s << row_.sentExch.trimmed();
     QStringList r;
     if (!q.v.serialR.isEmpty()) r << q.v.serialR;
     for (const QString& e : {q.v.exch1, q.v.exch2, q.v.exch3})
         if (!e.isEmpty()) r << e;
+    QStringList ex;
+    if (!s.isEmpty()) ex << "sent " + s.join(' ');
     if (!r.isEmpty()) ex << "rcvd " + r.join(' ');
     o.comment = (def_ ? def_->cabrilloName : row_.defId)
         + (ex.isEmpty() ? QString() : " · " + ex.join(" · "));

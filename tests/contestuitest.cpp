@@ -145,6 +145,8 @@ int main(int argc, char** argv) {
         const Qso q0 = ldb.qso(1);
         CHECK(q0.comment.contains("CW-OPS"),
               "push: comment names the contest");
+        CHECK(q0.comment.contains("sent") && q0.comment.contains("rcvd"),
+              "push: comment carries BOTH sent and received exchange");
     }
 
     // ---- QTC: seeded WAE contest, full load/send/confirm ----------------

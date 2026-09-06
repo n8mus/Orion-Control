@@ -61,6 +61,11 @@ public:
     // band the spot LIVES on (the cross-band spot table's whole point);
     // 0 = the band under the dial.
     char classifySpot(const QString& call, qint64 hz = 0) const;
+    // "CW" / "SSB" / "MIXED" — the running contest's mode category, for
+    // the spot-feed mode fence. Empty when no contest is open.
+    QString contestModeCategory() const {
+        return def_ ? def_->modeCategory : QString();
+    }
 
 public slots:
     void appendRead(const QString& text);   // decoded CW rides in here

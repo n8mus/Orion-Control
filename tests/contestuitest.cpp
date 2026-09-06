@@ -147,6 +147,39 @@ int main(int argc, char** argv) {
     CHECK(qtable->rowCount() == 0,
           "qtcui: station at the 10-QTC cap loads nothing");
 
+    // ---- phone contest: F-keys play voice slots -------------------------
+    {
+        ContestRow ssb;
+        ssb.defId = "CQ-WW-SSB";
+        ssb.title = "CQWW SSB ui";
+        ssb.startUtc = QDateTime::currentDateTimeUtc();
+        ssb.sentExch = "4";
+        const qint64 sid = db.createContest(ssb);
+        ContestDeck vdeck(&db, &cty, nullptr, nullptr);
+        CHECK(vdeck.openContestId(sid), "voiceui: SSB contest opens");
+        vdeck.setRig(14250000, "SSB");
+        vdeck.show();
+        QList<int> played;
+        vdeck.setVoiceKeyer([&played](int s) { played << s; }, [] {});
+        QPushButton* f1 = nullptr;
+        for (QPushButton* b : vdeck.findChildren<QPushButton*>())
+            if (b->text().startsWith("F1\n")) f1 = b;
+        CHECK(f1 && f1->isEnabled(), "voiceui: F1 is the CQ voice key");
+        f1->click();
+        CHECK(played == QList<int>{0},
+              "voiceui: F1 plays VK1 (slot 0) instead of keying CW");
+        // ESM on an empty call box: Enter = CQ = the same voice slot.
+        auto* vCall = vdeck.findChild<QLineEdit*>("entryCall");
+        QMetaObject::invokeMethod(vCall, "returnPressed");
+        CHECK(played.size() == 2 && played.last() == 0,
+              "voiceui: ESM Enter plays the CQ message");
+        QPushButton* f2 = nullptr;
+        for (QPushButton* b : vdeck.findChildren<QPushButton*>())
+            if (b->text().startsWith("F2\n")) f2 = b;
+        CHECK(f2 && !f2->isEnabled(),
+              "voiceui: F2 (his call) is blank on phone — you speak it");
+    }
+
     // ---- screenshots ----------------------------------------------------
     deck.prefillCall("N3J");
     deck.resize(1900, 270);

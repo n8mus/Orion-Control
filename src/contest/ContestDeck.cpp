@@ -240,6 +240,7 @@ void ContestDeck::buildUi() {
         stop->setFixedHeight(34);
         connect(stop, &QPushButton::clicked, this, [this] {
             if (cw_) cw_->stopKeying();
+            if (stopVoice_) stopVoice_();
         });
         fr->addWidget(stop);
         mid->addLayout(fr);
@@ -309,6 +310,7 @@ void ContestDeck::buildUi() {
         sc(QKeySequence(Qt::Key_F1 + i), [this, i] { keyFkey(i); });
     sc(QKeySequence(Qt::Key_Escape), [this] {
         if (cw_) cw_->stopKeying();
+        if (stopVoice_) stopVoice_();
         status_->setText("keying stopped");
     });
     sc(QKeySequence(Qt::Key_PageUp),
@@ -641,6 +643,12 @@ QString ContestDeck::fkeySpec(int key) const {
     return set.value(key);
 }
 
+void ContestDeck::setVoiceKeyer(std::function<void(int)> play,
+                                std::function<void()> stop) {
+    playVk_ = std::move(play);
+    stopVoice_ = std::move(stop);
+}
+
 void ContestDeck::keyFkey(int idx0) {
     if (contestId_ < 0 || !def_) return;
     if (idx0 == 11) {                // F12 is WIPE, always
@@ -649,15 +657,27 @@ void ContestDeck::keyFkey(int idx0) {
     }
     const QString spec = fkeySpec(idx0 + 1);
     if (spec.isEmpty()) return;
-    const QString text =
-        expandMacro(fkeyText(spec), *def_, ctx_, call_->text(),
-                    row_.sentExch, row_.nextSerial);
-    if (text.isEmpty()) return;
-    keyText(text);
-    // Hand-keyed F3/F5 advance the same ESM beats Enter would.
+    const QString raw = fkeyText(spec);
+    if (const int slot = vkSlot(raw)) {
+        // Phone: the key plays a recorded message instead of keying CW.
+        if (!playVk_) {
+            status_->setText("voice keyer not wired");
+            return;
+        }
+        playVk_(slot - 1);           // DVR slots are 0-based
+        status_->setText(QString("▶ VK%1").arg(slot));
+    } else {
+        const QString text =
+            expandMacro(raw, *def_, ctx_, call_->text(),
+                        row_.sentExch, row_.nextSerial);
+        if (text.isEmpty()) return;
+        keyText(text);
+        status_->setText("→ " + text);
+    }
+    // Hand-keyed F3/F5 advance the same ESM beats Enter would — a
+    // played exchange counts exactly like a keyed one.
     if (idx0 == 2) exchSent_ = true;
     if (idx0 == 4) myCallSent_ = true;
-    status_->setText("→ " + text);
     updateEsmHint();
 }
 

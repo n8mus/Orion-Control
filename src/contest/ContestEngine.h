@@ -31,6 +31,11 @@ bool loggableCall(const QString& call);
 // always receives plain digits — this is keying-side formatting only.
 QString formatSerial(int n, bool cut, int pad);
 
+// A macro whose whole text is "{VK1}".."{VK4}" plays that voice-keyer
+// slot instead of keying CW (the SSB contests' F-key defaults). Returns
+// the 1-based slot, 0 for a normal CW macro.
+int vkSlot(const QString& macroText);
+
 // The WPX prefix: letters+digits through the call's last leading digit
 // (N8EM -> N8, WA3ABC -> WA3, 4X4AA -> 4X4). Portable designators take
 // over: DL/N8EM -> DL0 (no digit gains a 0), W1AW/4 -> W4 (a bare

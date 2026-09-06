@@ -54,6 +54,18 @@ QHash<int, QString> withOverrides(QHash<int, QString> base,
     return base;
 }
 
+// Phone contests: F-keys play voice-keyer slots. VK1=CQ, VK2=exchange,
+// VK3=TU, VK4=my call — record them once via the VK buttons on the TX
+// bar. His call (F2) stays empty: you SPEAK the call, then Enter/F3
+// plays the exchange. The CW text keys (AGN, NR?) blank out so a stray
+// F9 can't send Morse into a phone pileup.
+const QHash<int, QString> kVoiceRun = {
+    {1, "CQ|{VK1}"},      {2, ""},
+    {3, "Exch|{VK2}"},    {4, "TU|{VK3}"},
+    {5, "My Call|{VK4}"}, {9, ""},
+    {10, ""},
+};
+
 int one(const CQsoValues&, const CtyInfo&, bool, const ContestContext&) {
     return 1;
 }
@@ -185,9 +197,10 @@ ContestDef makeCqWw(bool cw) {
         return keys;
     };
     d.cabExch = {"rst", "exch"};
-    d.fkeyRun = withOverrides(kBaseRun, {
-        {1, "CQ|cq test {MYCALL} {MYCALL}"},
-    });
+    d.fkeyRun = cw ? withOverrides(kBaseRun, {
+                         {1, "CQ|cq test {MYCALL} {MYCALL}"},
+                     })
+                   : withOverrides(kBaseRun, kVoiceRun);
     return d;
 }
 
@@ -226,10 +239,11 @@ ContestDef makeWpx(bool cw) {
         return p.isEmpty() ? QStringList{} : QStringList{"P:" + p};
     };
     d.cabExch = {"rst", "serial"};
-    d.fkeyRun = withOverrides(kBaseRun, {
-        {1, "CQ|cq test {MYCALL} {MYCALL}"},
-        {3, "Exch|{SNT} {SENTNR}"},
-    });
+    d.fkeyRun = cw ? withOverrides(kBaseRun, {
+                         {1, "CQ|cq test {MYCALL} {MYCALL}"},
+                         {3, "Exch|{SNT} {SENTNR}"},
+                     })
+                   : withOverrides(kBaseRun, kVoiceRun);
     return d;
 }
 
@@ -262,9 +276,10 @@ ContestDef makeArrlDx(bool cw) {
         return QStringList{"C:" + ci.country + "|" + q.band};
     };
     d.cabExch = {"rst", "exch"};
-    d.fkeyRun = withOverrides(kBaseRun, {
-        {1, "CQ|cq test {MYCALL} {MYCALL}"},
-    });
+    d.fkeyRun = cw ? withOverrides(kBaseRun, {
+                         {1, "CQ|cq test {MYCALL} {MYCALL}"},
+                     })
+                   : withOverrides(kBaseRun, kVoiceRun);
     return d;
 }
 
@@ -295,10 +310,11 @@ ContestDef makeSs(bool cw) {
         return s.isEmpty() ? QStringList{} : QStringList{"S:" + s};
     };
     d.cabExch = {"serial", "exch"};
-    d.fkeyRun = withOverrides(kBaseRun, {
-        {1, "CQ|cq ss {MYCALL} {MYCALL}"},
-        {3, "Exch|{SENTNR} {EXCH}"},
-    });
+    d.fkeyRun = cw ? withOverrides(kBaseRun, {
+                         {1, "CQ|cq ss {MYCALL} {MYCALL}"},
+                         {3, "Exch|{SENTNR} {EXCH}"},
+                     })
+                   : withOverrides(kBaseRun, kVoiceRun);
     return d;
 }
 
@@ -396,11 +412,12 @@ ContestDef makeNaqp(bool cw) {
         return QStringList{};
     };
     d.cabExch = {"exch"};
-    d.fkeyRun = withOverrides(kBaseRun, {
-        {1, "CQ|cq naqp {MYCALL}"},
-        {3, "Exch|{EXCH}"},
-        {8, "NAME?|name?"},
-    });
+    d.fkeyRun = cw ? withOverrides(kBaseRun, {
+                         {1, "CQ|cq naqp {MYCALL}"},
+                         {3, "Exch|{EXCH}"},
+                         {8, "NAME?|name?"},
+                     })
+                   : withOverrides(kBaseRun, kVoiceRun);
     return d;
 }
 

@@ -158,6 +158,8 @@ private:
     void dvrPlayOverAir(const QString& wav, int slot); // line-in + PTT + play
     QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
     QString vkPath(int slot) const;    // voice keyer message file for a slot
+    void playVoiceSlot(int slot);      // the VK play path, callable
+    bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers
     void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
     RadioController* radio_;                  // owned (QObject child); see makeRadio

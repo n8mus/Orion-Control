@@ -2256,17 +2256,7 @@ MainWindow::MainWindow(QWidget* parent)
     // handler clears the lights and drops PTT, so just stop and swallow. A
     // keyed-but-not-yet-playing state is the arming window (line-in switch
     // settling): unwind it directly, the deck has nothing to stop yet.
-    const auto dvrBusy = [this] {
-        if (dvr_->state() != ClipDeck::State::Idle) {
-            dvr_->stop();
-            return true;
-        }
-        if (dvrTxPlayback_) {
-            dvrStopped();
-            return true;
-        }
-        return false;
-    };
+    const auto dvrBusy = [this] { return stopVoicePlayback(); };
     connect(txBar_, &TxBar::dvrRecordClicked, this, [this, dvrBusy] {
         if (dvrBusy()) return;
         if (radioSource_.isEmpty()) {
@@ -2319,26 +2309,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(txBar_, &TxBar::vkClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
-        const QString f = vkPath(slot);
-        if (!QFileInfo::exists(f)) {
-            statusBar()->showMessage(QString(
-                "VK%1 is empty — right-click it to record a message").arg(slot + 1));
-            return;
-        }
-        if (radioDevUsed_.startsWith("udp:")) {
-            if (!QSettings().value("radio/tripAudio", false).toBool()) {
-                statusBar()->showMessage(
-                    "VK: turn on TX audio first (SDR ▸ TX audio ▸ Mic or "
-                    "Digital) — the keyed radio takes the Ethernet stream");
-                return;
-            }
-        } else if (radioSink_.isEmpty()) {
-            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
-            return;
-        }
-        dvrPlayOverAir(f, slot);
-        statusBar()->showMessage(QString(
-            "VK%1 on the air — click it again to abort").arg(slot + 1));
+        playVoiceSlot(slot);
     });
     connect(txBar_, &TxBar::vkRecordClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
@@ -2350,6 +2321,9 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
     connect(dvr_, &ClipDeck::finished, this, &MainWindow::dvrStopped);
+    // (playVoiceSlot / stopVoicePlayback are the same paths the VK
+    // buttons use, split out so the contest deck's phone F-keys and Esc
+    // ride them too.)
     connect(dvr_, &ClipDeck::failed, this, [this](const QString& why) {
         statusBar()->showMessage("DVR: " + why);
     });

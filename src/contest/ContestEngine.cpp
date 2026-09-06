@@ -44,6 +44,15 @@ bool loggableCall(const QString& call) {
     return letter && digit;
 }
 
+int vkSlot(const QString& macroText) {
+    const QString t = macroText.trimmed().toUpper();
+    if (t.size() == 5 && t.startsWith("{VK") && t.endsWith('}')) {
+        const int n = t.mid(3, 1).toInt();
+        if (n >= 1 && n <= 4) return n;
+    }
+    return 0;
+}
+
 namespace {
 // Prefix of a PLAIN call: everything through the call's LAST digit
 // ("WA3ABC" -> WA3; "4X4AA" -> 4X4 — the digit after the X counts). A

@@ -343,6 +343,14 @@ void MainWindow::toggleContestMode(bool on) {
             });
             feed->start();
             contestDeck_->setMasterScp(loadMasterScp());
+            // Phone contests: {VKn} F-keys play DVR slots on the same
+            // rails as the TX-bar buttons; a press during playback
+            // aborts rather than stacking clips.
+            contestDeck_->setVoiceKeyer(
+                [this](int slot) {
+                    if (!stopVoicePlayback()) playVoiceSlot(slot);
+                },
+                [this] { stopVoicePlayback(); });
         }
         contestDeck_->setRig(qint64(centerHz_), adifModeText(rigMode_));
         savedSplit_ = pan_->displaySettings().split;

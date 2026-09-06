@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QTimer>
 #include <QWidget>
+#include <functional>
 
 #include "contest/ContestDb.h"
 #include "contest/ContestEngine.h"
@@ -44,6 +45,9 @@ public:
 
     void setRig(qint64 hz, const QString& adifMode);
     void setMasterScp(const QSet<QString>& scp) { scp_ = scp; }
+    // Phone contests: {VK1}..{VK4} macros play DVR slots through these.
+    void setVoiceKeyer(std::function<void(int)> play,
+                       std::function<void()> stop);
     bool openContestId(qint64 id);
     bool contestActive() const { return contestId_ >= 0; }
 
@@ -132,6 +136,8 @@ private:
     QLabel* status_ = nullptr;
     QPushButton* qtcBtn_ = nullptr;      // WAE only
     QtcDialog* qtc_ = nullptr;           // lazy
+    std::function<void(int)> playVk_;    // 0-based DVR slot
+    std::function<void()> stopVoice_;
     QList<QShortcut*> shortcuts_;
     QTimer clockTimer_;
 };

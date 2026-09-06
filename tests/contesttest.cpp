@@ -542,6 +542,24 @@ static void testRoster(const CtyLookup& cty) {
     }
 }
 
+static void testVoice() {
+    CHECK(vkSlot("{VK1}") == 1 && vkSlot("{vk4}") == 4,
+          "voice: VK tokens recognized, case-insensitive");
+    CHECK(vkSlot("{VK5}") == 0 && vkSlot("5NN MI") == 0
+              && vkSlot("cq {VK1}") == 0,
+          "voice: out-of-range and CW text are not VK macros");
+    const ContestDef* ssb = contestDef("CQ-WW-SSB");
+    CHECK(vkSlot(ssb->fkeyRun.value(1).section('|', 1)) == 1
+              && vkSlot(ssb->fkeyRun.value(3).section('|', 1)) == 2,
+          "voice: CQ WW SSB F1/F3 play VK slots");
+    CHECK(ssb->fkeyRun.value(2).section('|', 1).isEmpty()
+              && ssb->fkeyRun.value(9).isEmpty(),
+          "voice: his-call and CW text keys are blank on phone");
+    const ContestDef* cw = contestDef("CQ-WW-CW");
+    CHECK(vkSlot(cw->fkeyRun.value(1).section('|', 1)) == 0,
+          "voice: the CW twin still keys text");
+}
+
 static void testOpTime() {
     QList<QDateTime> ev;
     QDateTime t = QDateTime::fromString("2026-08-08 00:00:00",
@@ -744,6 +762,7 @@ int main(int argc, char** argv) {
     testWpx(cty);
     testSs(cty);
     testRoster(cty);
+    testVoice();
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

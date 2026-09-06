@@ -144,11 +144,26 @@ ScoreBreakdown computeScore(const ContestDef& def,
     ScoreBreakdown out;
     out.qtcPoints = qtcPoints;
     out.qsos = int(qsos.size());
+    // Dupes log freely (working him again is legal and safe) but score
+    // ZERO — six Enters on the same station must not claim six points.
+    QSet<QString> seen;
     for (const CQsoValues& q : qsos) {
+        QString dupeKey;
+        switch (def.dupe) {
+            case DupeScope::Never: break;
+            case DupeScope::Contest: dupeKey = q.call; break;
+            case DupeScope::PerBand: dupeKey = q.call + '|' + q.band; break;
+            case DupeScope::PerBandMode:
+                dupeKey = q.call + '|' + q.band + '|' + q.mode;
+                break;
+        }
+        const bool dupe = !dupeKey.isEmpty() && seen.contains(dupeKey);
+        if (!dupeKey.isEmpty()) seen.insert(dupeKey);
         CtyInfo ci;
         const bool ok =
             cty && cty->info(normalizeForCty(q.call), ci);
-        const int pts = def.points ? def.points(q, ci, ok, ctx) : 0;
+        const int pts =
+            dupe ? 0 : (def.points ? def.points(q, ci, ok, ctx) : 0);
         out.points += pts;
         BandCount& bc = out.perBand[q.band];
         bc.qsos++;

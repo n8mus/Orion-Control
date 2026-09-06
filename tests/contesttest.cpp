@@ -584,6 +584,32 @@ static void testVoice() {
           "voice: the CW twin still keys text");
 }
 
+static void testDupeScoring(const CtyLookup& cty) {
+    // Six Enters on JI2MED = one QSO's points, not six (live-found).
+    const ContestDef* d = contestDef("AADX-SSB");
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    CtyInfo me;
+    cty.info("N8EM", me);
+    ctx.myCountry = me.country;
+    QList<CQsoValues> log;
+    for (int i = 0; i < 6; ++i) {
+        CQsoValues q = mkq("JI2MED", "20M", "45");
+        q.mode = "SSB";
+        log << q;
+    }
+    const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+    CHECK(sb.qsos == 6 && sb.points == 1 && sb.mults == 1,
+          "dupes: six identical rows score once");
+    // The same station on ANOTHER band is a fresh QSO, not a dupe.
+    CQsoValues q15 = mkq("JI2MED", "15M", "45");
+    q15.mode = "SSB";
+    log << q15;
+    CHECK(computeScore(*d, log, &cty, ctx).points == 2,
+          "dupes: per-band scope frees the other band");
+}
+
 static void testNearMiss() {
     CHECK(nearMissCall("DL2CC", "DL2CE"), "nearmiss: one substitution");
     CHECK(nearMissCall("DL2CC", "DL2C"), "nearmiss: one deletion");
@@ -798,6 +824,7 @@ int main(int argc, char** argv) {
     testRoster(cty);
     testVoice();
     testNearMiss();
+    testDupeScoring(cty);
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

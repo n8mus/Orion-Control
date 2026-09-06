@@ -93,9 +93,11 @@ void ContestDeck::buildUi() {
     lay->setContentsMargins(4, 4, 4, 4);
     lay->setSpacing(6);
 
-    // ---- CW READ (left) -------------------------------------------------
+    // ---- CW READ (left; phone contests hide it) -------------------------
     {
-        auto* box = new QVBoxLayout;
+        readPane_ = new QWidget(this);
+        auto* box = new QVBoxLayout(readPane_);
+        box->setContentsMargins(0, 0, 0, 0);
         auto* trow = new QHBoxLayout;
         auto* t = new QLabel(
             "CW READ — double-click a call to grab it · right-click: size",
@@ -143,7 +145,7 @@ void ContestDeck::buildUi() {
                 });
         read_->viewport()->installEventFilter(this);
         box->addWidget(read_, 1);
-        lay->addLayout(box, 11);
+        lay->addWidget(readPane_, 11);
     }
 
     // ---- center: SCP + entry -------------------------------------------
@@ -380,9 +382,12 @@ void ContestDeck::buildUi() {
         lay->addLayout(mid, 22);
     }
 
-    // ---- CW TYPE (right) ------------------------------------------------
+    // ---- CW TYPE (right; the box itself hides on phone) -----------------
     {
         auto* box = new QVBoxLayout;
+        typeTop_ = new QWidget(this);
+        auto* tt = new QVBoxLayout(typeTop_);
+        tt->setContentsMargins(0, 0, 0, 0);
         auto* t = new QLabel("CW TYPE — Enter sends", this);
         t->setStyleSheet("color:#8798a8; font-size:10px;");
         type_ = new QLineEdit(this);
@@ -397,9 +402,10 @@ void ContestDeck::buildUi() {
         });
         sent_ = new QLabel(this);
         sent_->setStyleSheet("color:#8798a8; font-size:10px;");
-        box->addWidget(t);
-        box->addWidget(type_);
-        box->addWidget(sent_);
+        tt->addWidget(t);
+        tt->addWidget(type_);
+        tt->addWidget(sent_);
+        box->addWidget(typeTop_);
         box->addStretch(1);
         auto* br = new QHBoxLayout;
         qtcBtn_ = new QPushButton("QTC", this);
@@ -499,6 +505,10 @@ void ContestDeck::openContest(qint64 id) {
     setEnabled(true);
     myCallSent_ = exchSent_ = false;
     if (qtcBtn_) qtcBtn_->setVisible(def_->hasQtc);
+    // A phone contest has no use for CW panes — the entry gets the room.
+    const bool phone = def_->modeCategory == QLatin1String("SSB");
+    if (readPane_) readPane_->setVisible(!phone);
+    if (typeTop_) typeTop_->setVisible(!phone);
     rebuildEntryFields();
     applyFkeyLabels();
     refreshAll();
@@ -715,23 +725,50 @@ void ContestDeck::enterPressed() {
     in.exchSent = exchSent_;
     const QList<EsmAct> plan = esmPlan(in);
     if (plan.isEmpty() && !in.callEmpty) {
-        // Enter has nothing to do — SAY WHY instead of sitting mute
-        // (live-found: an incomplete exchange read as "nothing logs").
+        // Enter has nothing to do — SHOUT why: red-flash the field that
+        // needs copy. The quiet version was pressed six times over an
+        // age that had landed in the wrong box.
         for (int i = 0; i < def_->fields.size(); ++i)
             if (def_->fields[i].required
                 && edits_[i].second->text().trimmed().isEmpty()) {
-                edits_[i].second->setFocus();
-                status_->setText(def_->fields[i].label
+                flashRefusal(edits_[i].second,
+                             def_->fields[i].label
                                  + " missing — Enter logs once the "
                                    "exchange is complete");
                 return;
             }
         if (!in.callLoggable)
-            status_->setText("call needs 3+ chars with a letter and a "
-                             "digit");
+            flashRefusal(call_, "call needs 3+ chars with a letter and "
+                                "a digit");
     }
     execPlan(plan, false);
     updateEsmHint();
+}
+
+void ContestDeck::focusExchange() {
+    for (int i = 0; i < def_->fields.size() && i < edits_.size(); ++i)
+        if (def_->fields[i].required
+            && edits_[i].second->text().trimmed().isEmpty()) {
+            edits_[i].second->setFocus();
+            return;
+        }
+    for (int i = 0; i < def_->fields.size() && i < edits_.size(); ++i)
+        if (def_->fields[i].col != ExchCol::RstR) {
+            edits_[i].second->setFocus();
+            return;
+        }
+    if (!edits_.isEmpty()) edits_[0].second->setFocus();
+}
+
+void ContestDeck::flashRefusal(QLineEdit* field, const QString& msg) {
+    status_->setText("⚠ " + msg);
+    trace("ENTER refused: " + msg);
+    if (!field) return;
+    field->setFocus();
+    field->setStyleSheet(
+        "QLineEdit { border: 2px solid #e05d5d; }");
+    QTimer::singleShot(1400, field,
+                       [field] { field->setStyleSheet(QString()); });
 }
 
 void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
@@ -766,8 +803,7 @@ void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
                 if (!updateOnly) logNow();
                 break;
             case EsmAct::FocusExch:
-                if (!updateOnly && !edits_.isEmpty())
-                    edits_[0].second->setFocus();
+                if (!updateOnly) focusExchange();
                 break;
         }
     }
@@ -1239,7 +1275,7 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
                 return true;
             }
             historyPrefill();
-            if (!edits_.isEmpty()) edits_[0].second->setFocus();
+            focusExchange();     // skip preset RST — land on real copy
             return true;
         }
         if ((ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right)

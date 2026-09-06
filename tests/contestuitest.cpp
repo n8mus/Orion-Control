@@ -9,6 +9,7 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSpinBox>
 #include <QTableWidget>
@@ -249,6 +250,24 @@ int main(int argc, char** argv) {
         f1->click();
         CHECK(played.size() == before + 1,
               "voiceui: a pushed F-key still speaks");
+
+        // Space skips the preset RST and lands on the field that needs
+        // copy — the JI2MED trap: the age went into the 59 box.
+        vdeck.prefillCall("JA9XYZ");
+        QKeyEvent sp(QEvent::KeyPress, Qt::Key_Space, Qt::NoModifier,
+                     " ");
+        QCoreApplication::sendEvent(vCall2, &sp);
+        auto* age = vdeck.findChild<QLineEdit*>("exchEdit1");
+        CHECK(vdeck.focusWidget() == age,
+              "voiceui: Space lands on AGE, not the 59 box");
+
+        // Phone deck: no CW panes.
+        bool readVisible = false;
+        for (QWidget* w : vdeck.findChildren<QWidget*>())
+            if (w->objectName().isEmpty() && w->isVisible()
+                && qobject_cast<QPlainTextEdit*>(w))
+                readVisible = true;
+        CHECK(!readVisible, "voiceui: CW READ pane hidden on phone");
     }
 
     // ---- abandon-on-QSY: grabbed calls clear, typed calls park ----------

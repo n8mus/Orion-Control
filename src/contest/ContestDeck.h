@@ -103,6 +103,12 @@ private:
     void updateEsmHint();
     void logNow();
     void wipe();                            // F12
+    // Cursor to the field that needs COPY: first empty required field,
+    // else the first non-RST field. Space once dumped the operator into
+    // the preset 59 box and his age landed there — AGE stayed empty and
+    // Enter refused all afternoon (the JI2MED trace).
+    void focusExchange();
+    void flashRefusal(QLineEdit* field, const QString& msg);
     void keyFkey(int idx0);
     void editFkey(int idx0);                // right-click editor
     QString fkeySpec(int key) const;        // override -> def fallback
@@ -149,6 +155,8 @@ private:
     QString rigMode_ = "CW";
 
     // widgets
+    QWidget* readPane_ = nullptr;    // CW READ column (hidden on phone)
+    QWidget* typeTop_ = nullptr;     // CW TYPE box (hidden on phone)
     QPlainTextEdit* read_ = nullptr;
     QWidget* scpRow_ = nullptr;
     QLabel* title_ = nullptr;

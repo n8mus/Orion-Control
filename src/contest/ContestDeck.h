@@ -151,6 +151,7 @@ private:
     bool esmOn_ = true;
     bool myCallSent_ = false, exchSent_ = false;
     bool callFromSpot_ = false;      // box filled by walk/click, untouched
+    QString confirmPending_;         // no-country call awaiting 2nd Enter
     double myLat_ = 0, myLon_ = 0;
     int hdg_ = -1;
 

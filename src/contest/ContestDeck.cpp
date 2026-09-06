@@ -310,6 +310,7 @@ void ContestDeck::buildUi() {
         call_->installEventFilter(this);
         connect(call_, &QLineEdit::textEdited, this, [this] {
             callFromSpot_ = false;   // typing reclaims ←/→ for the cursor
+            confirmPending_.clear(); // an edit restarts the double-check
             if (anchorHz_ == 0 && !call_->text().isEmpty())
                 anchorHz_ = rigHz_;  // heard HERE — the park remembers
             if (autoBtn_->isChecked() && !call_->text().isEmpty())
@@ -849,7 +850,23 @@ void ContestDeck::enterPressed() {
             in.exchComplete = false;
     in.myCallSent = myCallSent_;
     in.exchSent = exchSent_;
-    const QList<EsmAct> plan = esmPlan(in);
+    QList<EsmAct> plan = esmPlan(in);
+    // N1MM's "won't take a bad call easily": a call that resolves to NO
+    // country needs Enter TWICE — the first press refuses and says so,
+    // an unedited second press logs it on the operator's authority
+    // (special-event calls exist; silence about J12MED does not).
+    if (plan.contains(EsmAct::Log)) {
+        const QString c = call_->text().trimmed();
+        CtyInfo ci;
+        const bool resolves = cty_ && cty_->info(normalizeForCty(c), ci);
+        if (!resolves && confirmPending_ != c) {
+            confirmPending_ = c;
+            flashRefusal(call_,
+                         c + " maps to NO country — press Enter again "
+                             "to log it anyway");
+            return;
+        }
+    }
     if (plan.isEmpty() && !in.callEmpty) {
         // Enter has nothing to do — SHOUT why: red-flash the field that
         // needs copy. The quiet version was pressed six times over an
@@ -1003,6 +1020,7 @@ void ContestDeck::logNow() {
         row_.nextSerial++;
         db_->setNextSerial(contestId_, row_.nextSerial);
     }
+    confirmPending_.clear();
     trace(QString("DECK QSO %1 %2 ser %3")
               .arg(c, q.v.band)
               .arg(q.v.serialS));

@@ -268,6 +268,19 @@ int main(int argc, char** argv) {
             if (l->text().contains("no country")) alarm = true;
         CHECK(alarm, "voiceui: J12MED raises the no-country alarm");
 
+        // And the double-check gate: first Enter refuses, an unedited
+        // second Enter logs on the operator's authority.
+        rcv->setText("59");
+        vdeck.findChild<QLineEdit*>("exchEdit1")->setText("45");
+        const int qsoCount = int(db.qsos(sid).size());
+        QMetaObject::invokeMethod(vCall2, "returnPressed");
+        CHECK(int(db.qsos(sid).size()) == qsoCount,
+              "voiceui: no-country call refused on the first Enter");
+        QMetaObject::invokeMethod(vCall2, "returnPressed");
+        CHECK(int(db.qsos(sid).size()) == qsoCount + 1
+                  && db.qsos(sid).last().v.call == "J12MED",
+              "voiceui: unedited second Enter logs it anyway");
+
         // Phone deck: no CW panes.
         bool readVisible = false;
         for (QWidget* w : vdeck.findChildren<QWidget*>())

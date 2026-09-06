@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/Cabrillo.h"
 
+#include <QHash>
+#include <algorithm>
+
 #include "contest/ContestEngine.h"
 #include "util/CtyLookup.h"
 
@@ -80,12 +83,14 @@ QStringList Cabrillo::exchTokens(const ContestDef& def,
 
 QString Cabrillo::build(const ContestDef& def, const ContestRow& contest,
                         const QList<ContestQso>& qsos,
+                        const QList<ContestDb::QtcRow>& qtcs,
                         const CabrilloStation& st, const CtyLookup* cty,
                         const ContestContext& ctx) {
     // Claimed score is recomputed here, never taken from the screen.
     QList<CQsoValues> vals;
     for (const ContestQso& q : qsos) vals << q.v;
-    const ScoreBreakdown sb = computeScore(def, vals, cty, ctx);
+    const ScoreBreakdown sb =
+        computeScore(def, vals, cty, ctx, int(qtcs.size()));
 
     QString out;
     header(out, "START-OF-LOG", "3.0");
@@ -112,18 +117,56 @@ QString Cabrillo::build(const ContestDef& def, const ContestRow& contest,
     header(out, "CREATED-BY", "tentec-console");
     header(out, "SOAPBOX", contest.soapbox);
 
+    // QSO and QTC lines interleave chronologically (a QTC's timestamp is
+    // its confirm time), the order the DARC robot expects.
+    struct Line {
+        QDateTime ts;
+        QString text;
+    };
+    QList<Line> lines;
     for (const ContestQso& q : qsos) {
         const QDateTime ts = q.tsUtc.toUTC();
-        out += "QSO: " + freqField(q.freqHz) + ' '
+        QString t = "QSO: " + freqField(q.freqHz) + ' '
              + pad(modeToken(q.v.mode), 2) + ' '
              + ts.toString("yyyy-MM-dd") + ' ' + ts.toString("HHmm") + ' '
              + pad(st.call.toUpper(), kCallW) + ' '
              + pad(exchTokens(def, contest, q, true).join(' '), kExchW) + ' '
              + pad(q.v.call.toUpper(), kCallW) + ' '
              + pad(exchTokens(def, contest, q, false).join(' '), kExchW);
-        // A padded field trims trailing spaces at end of line.
-        while (out.endsWith(' ')) out.chop(1);
-        out += "\r\n";
+        lines.push_back({ts, t});
+    }
+    if (!qtcs.isEmpty()) {
+        QHash<qint64, const ContestQso*> byId;
+        for (const ContestQso& q : qsos) byId.insert(q.id, &q);
+        QHash<int, int> blockCount;          // block -> items in it
+        for (const ContestDb::QtcRow& r : qtcs) blockCount[r.block]++;
+        for (const ContestDb::QtcRow& r : qtcs) {
+            const ContestQso* q = byId.value(r.qsoId);
+            if (!q) continue;                // selfCheck will scream
+            const QDateTime ts = r.tsUtc.toUTC();
+            // Receiver's call FIRST, then series, then us, then the
+            // reported QSO's time / call / serial-as-received.
+            QString t = "QTC: " + freqField(r.freqHz) + ' '
+                 + pad(modeToken(r.mode), 2) + ' '
+                 + ts.toString("yyyy-MM-dd") + ' ' + ts.toString("HHmm")
+                 + ' ' + pad(r.toCall.toUpper(), kCallW) + ' '
+                 + pad(QString("%1/%2").arg(r.block)
+                           .arg(blockCount[r.block]), 9) + ' '
+                 + pad(st.call.toUpper(), kCallW) + ' '
+                 + q->tsUtc.toUTC().toString("HHmm") + ' '
+                 + pad(q->v.call.toUpper(), kCallW) + ' '
+                 + uncut(q->v.serialR);
+            lines.push_back({ts, t});
+        }
+        std::stable_sort(lines.begin(), lines.end(),
+                         [](const Line& a, const Line& b) {
+                             return a.ts < b.ts;
+                         });
+    }
+    for (const Line& l : lines) {
+        QString t = l.text;
+        while (t.endsWith(' ')) t.chop(1);
+        out += t + "\r\n";
     }
     header(out, "END-OF-LOG", "");
     return out;
@@ -131,19 +174,74 @@ QString Cabrillo::build(const ContestDef& def, const ContestRow& contest,
 
 bool Cabrillo::selfCheck(const QString& text, const ContestDef& def,
                          const ContestRow& contest,
-                         const QList<ContestQso>& qsos, QString* err) {
+                         const QList<ContestQso>& qsos,
+                         const QList<ContestDb::QtcRow>& qtcs,
+                         QString* err) {
     // Slice each QSO: line by the fixed columns build() used and compare
     // every field to what the DATABASE row says it should be. Catches a
     // side swap, a wrong token order, a timestamp bug — the class of
     // mistake a sponsor's robot finds weeks too late.
-    QList<QString> lines;
-    for (const QString& l : text.split("\r\n"))
+    QList<QString> lines, qtcLines;
+    for (const QString& l : text.split("\r\n")) {
         if (l.startsWith("QSO: ")) lines << l;
+        if (l.startsWith("QTC: ")) qtcLines << l;
+    }
     if (lines.size() != qsos.size()) {
         if (err)
             *err = QString("QSO line count %1 != database %2")
                        .arg(lines.size()).arg(qsos.size());
         return false;
+    }
+    if (qtcLines.size() != qtcs.size()) {
+        if (err)
+            *err = QString("QTC line count %1 != database %2")
+                       .arg(qtcLines.size()).arg(qtcs.size());
+        return false;
+    }
+    // Every QTC line: receiver first, then series, then us, then the
+    // reported QSO's time/call/serial — cross-checked against BOTH the
+    // qtc row and the QSO it snapshots.
+    {
+        QHash<qint64, const ContestQso*> byId;
+        for (const ContestQso& q : qsos) byId.insert(q.id, &q);
+        for (int i = 0; i < qtcs.size(); ++i) {
+            const ContestDb::QtcRow& r = qtcs[i];
+            const ContestQso* q = byId.value(r.qsoId);
+            const QString& l = qtcLines[i];
+            if (!q) {
+                if (err)
+                    *err = QString("QTC %1 references a missing QSO id %2")
+                               .arg(i + 1).arg(r.qsoId);
+                return false;
+            }
+            int p = 5 + 5 + 1 + 2 + 1 + 10 + 1 + 4 + 1;  // up to receiver
+            const QString recv = l.mid(p, kCallW).trimmed();
+            p += kCallW + 1;
+            const QString series = l.mid(p, 9).trimmed();
+            p += 9 + 1;
+            const QString sender = l.mid(p, kCallW).trimmed();
+            p += kCallW + 1;
+            const QString qtime = l.mid(p, 4).trimmed();
+            p += 4 + 1;
+            const QString qcall = l.mid(p, kCallW).trimmed();
+            p += kCallW + 1;
+            const QString qser = l.mid(p).trimmed();
+            QString bad;
+            if (recv != r.toCall.toUpper()) bad = "receiver call";
+            else if (!series.startsWith(QString::number(r.block) + "/"))
+                bad = "series";
+            else if (sender.isEmpty()) bad = "sender call";
+            else if (qtime != q->tsUtc.toUTC().toString("HHmm"))
+                bad = "reported time";
+            else if (qcall != q->v.call.toUpper()) bad = "reported call";
+            else if (qser != uncut(q->v.serialR)) bad = "reported serial";
+            if (!bad.isEmpty()) {
+                if (err)
+                    *err = QString("QTC %1 (%2): %3 mismatch\n%4")
+                               .arg(i + 1).arg(r.toCall, bad, l);
+                return false;
+            }
+        }
     }
     for (int i = 0; i < qsos.size(); ++i) {
         const ContestQso& q = qsos[i];

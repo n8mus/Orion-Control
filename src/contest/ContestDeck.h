@@ -21,6 +21,7 @@ namespace ttc {
 
 class CtyLookup;
 class CwWindow;
+class QtcDialog;
 class RotorLink;
 
 // The contest deck: the strip that replaces the WATERFALL while contest
@@ -128,6 +129,8 @@ private:
     QLineEdit* type_ = nullptr;
     QLabel* sent_ = nullptr;
     QLabel* status_ = nullptr;
+    QPushButton* qtcBtn_ = nullptr;      // WAE only
+    QtcDialog* qtc_ = nullptr;           // lazy
     QList<QShortcut*> shortcuts_;
     QTimer clockTimer_;
 };

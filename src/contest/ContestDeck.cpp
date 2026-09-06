@@ -23,6 +23,7 @@
 #include <QTextCursor>
 #include <QVBoxLayout>
 
+#include "contest/QtcDialog.h"
 #include "cw/CwWindow.h"
 #include "net/RotorLink.h"
 #include "util/Bearing.h"
@@ -267,6 +268,22 @@ void ContestDeck::buildUi() {
         box->addWidget(sent_);
         box->addStretch(1);
         auto* br = new QHBoxLayout;
+        qtcBtn_ = new QPushButton("QTC", this);
+        qtcBtn_->setFocusPolicy(Qt::NoFocus);
+        qtcBtn_->setVisible(false);          // WAE-family defs only
+        qtcBtn_->setToolTip("Send QTC traffic (WAE) — the To box follows "
+                            "the call you're working");
+        connect(qtcBtn_, &QPushButton::clicked, this, [this] {
+            if (contestId_ < 0) return;
+            if (!qtc_)
+                qtc_ = new QtcDialog(
+                    db_, [this](const QString& t) { keyText(t); },
+                    [this] { if (cw_) cw_->stopKeying(); }, this);
+            qtc_->setRigFreq(rigHz_);
+            qtc_->openFor(contestId_);
+            qtc_->followCall(call_->text());
+        });
+        br->addWidget(qtcBtn_);
         auto* mgr = new QPushButton("Contest log…", this);
         mgr->setFocusPolicy(Qt::NoFocus);
         connect(mgr, &QPushButton::clicked, this,
@@ -319,6 +336,10 @@ bool ContestDeck::openContestId(qint64 id) {
 }
 
 void ContestDeck::openContest(qint64 id) {
+    if (id == contestId_ && def_) {    // already live — just refresh
+        refreshAll();
+        return;
+    }
     row_ = db_->contest(id);
     def_ = contestDef(row_.defId);
     if (row_.id < 0 || !def_) {
@@ -339,6 +360,7 @@ void ContestDeck::openContest(qint64 id) {
     title_->setText(row_.title);
     setEnabled(true);
     myCallSent_ = exchSent_ = false;
+    if (qtcBtn_) qtcBtn_->setVisible(def_->hasQtc);
     rebuildEntryFields();
     applyFkeyLabels();
     refreshAll();
@@ -350,11 +372,15 @@ void ContestDeck::rebuildEntryFields() {
     edits_.clear();
     rstS_ = nullptr;
     sentNr_ = nullptr;
+    // The fields sit in nested label+edit columns, and a QLayoutItem
+    // does NOT own child widgets — draining the layout alone left the
+    // old edits alive (two sets of "exchEdit0", one orphaned; the
+    // harness typed into the ghost). Delete the widgets first.
+    for (QWidget* w : fieldsBox_->findChildren<QWidget*>(
+             QString(), Qt::FindDirectChildrenOnly))
+        delete w;
     QLayout* l = fieldsBox_->layout();
-    while (QLayoutItem* it = l->takeAt(0)) {
-        delete it->widget();
-        delete it;
-    }
+    while (QLayoutItem* it = l->takeAt(0)) delete it;
     auto addField = [&](const QString& label, int widthCh,
                         const QString& preset) {
         auto* box = new QVBoxLayout;
@@ -403,6 +429,7 @@ void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
         hz > 0 && LogbookIndex::bandForHz(hz) != currentBand();
     rigHz_ = hz;
     rigMode_ = adifMode.isEmpty() ? QStringLiteral("CW") : adifMode;
+    if (qtc_) qtc_->setRigFreq(hz);
     if (bandMoved) onCallEdited();       // dupe verdict can flip
 }
 
@@ -712,6 +739,7 @@ void ContestDeck::onCallEdited() {
     myCallSent_ = exchSent_ = false;   // new station, new beats
     if (contestId_ < 0) return;
     const QString c = up.trimmed();
+    if (qtc_) qtc_->followCall(c);     // QTC To box rides the entry
     refreshScp();
     if (c.isEmpty()) {
         dupe_->clear();
@@ -825,7 +853,8 @@ void ContestDeck::refreshAll() {
     values_.clear();
     for (const ContestQso& q : qsos_) values_ << q.v;
     row_ = db_->contest(contestId_);   // serial may have moved elsewhere
-    sb_ = computeScore(*def_, values_, cty_, ctx_);
+    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_) : 0;
+    sb_ = computeScore(*def_, values_, cty_, ctx_, qtcN);
     if (sentNr_)
         sentNr_->setText(formatSerial(row_.nextSerial, def_->cutNumbers,
                                       def_->serialPad));
@@ -833,13 +862,26 @@ void ContestDeck::refreshAll() {
     int in10 = 0;
     for (const ContestQso& q : qsos_)
         if (q.tsUtc.secsTo(now) <= 600) ++in10;
-    score_->setText(
-        QString("· %1 Q · %2 pts · %3 mult · %4 · rate %5/h")
-            .arg(sb_.qsos)
-            .arg(sb_.points)
-            .arg(sb_.weightedMults)
-            .arg(QLocale::c().toString(qlonglong(sb_.total)))
-            .arg(in10 * 6));
+    QString s = QString("· %1 Q · %2 pts · %3 mult · %4 · rate %5/h")
+                    .arg(sb_.qsos)
+                    .arg(sb_.points)
+                    .arg(sb_.weightedMults)
+                    .arg(QLocale::c().toString(qlonglong(sb_.total)))
+                    .arg(in10 * 6);
+    if (def_->hasQtc) {
+        // WAE's rest rule: a break only counts after 60 min with no QSO
+        // AND no QTC — the clock shows which side of the line you're on.
+        QList<QDateTime> ev;
+        for (const ContestQso& q : qsos_) ev << q.tsUtc;
+        for (const ContestDb::QtcRow& r : db_->qtcRows(contestId_))
+            ev << r.tsUtc;
+        const int op = opTimeSecs(ev);
+        s += QString(" · QTC %1 · op %2:%3")
+                 .arg(qtcN)
+                 .arg(op / 3600)
+                 .arg((op % 3600) / 60, 2, 10, QChar('0'));
+    }
+    score_->setText(s);
 }
 
 // ---- key routing ---------------------------------------------------------

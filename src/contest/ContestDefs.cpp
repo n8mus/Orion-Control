@@ -214,6 +214,7 @@ ContestDef makeWaeCw() {
         return 2;                   // 20/15/10
     };
     d.cabExch = {"rst", "serial"};
+    d.hasQtc = true;
     d.fkeyRun = withOverrides(kBaseRun, {
         {1, "CQ|cq wae {MYCALL} {MYCALL} wae"},
         {3, "Exch|{SNT} {SENTNR}"},

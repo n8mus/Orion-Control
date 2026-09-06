@@ -72,6 +72,30 @@ public:
     HistoryRow historyFor(const QString& call) const;
     int historyCount() const;
 
+    // ---- WAE QTC (sending side) ----------------------------------------
+    // A confirmed block spends its QSOs forever; a QSO that has gone out
+    // in a QTC can never be edited or deleted again (the stored snapshot
+    // would disagree with the log) — deletes are refused by the schema
+    // (FK RESTRICT), edits by updateQso itself.
+    struct QtcRow {
+        qint64 id = -1, qsoId = -1;
+        QString toCall;
+        int block = 0, item = 0;
+        QDateTime tsUtc;             // when the block was confirmed
+        qint64 freqHz = 0;
+        QString mode;
+    };
+    int  qtcCount(qint64 contestId) const;          // total lines sent
+    int  qtcSentTo(qint64 contestId, const QString& toCall) const;
+    int  nextQtcBlock(qint64 contestId) const;      // contest-wide seq
+    QSet<qint64> qtcReportedQsoIds(qint64 contestId) const;
+    bool qsoReported(qint64 qsoId) const;
+    // All-or-nothing: any failed insert rolls the whole block back.
+    bool addQtcBlock(qint64 contestId, const QString& toCall, int block,
+                     const QList<qint64>& qsoIds, qint64 freqHz,
+                     const QString& mode);
+    QList<QtcRow> qtcRows(qint64 contestId) const;  // confirm order
+
 signals:
     void changed();
 

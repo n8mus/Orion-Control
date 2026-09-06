@@ -26,17 +26,23 @@ struct CabrilloStation {
 // CRLF line endings per spec.
 class Cabrillo {
 public:
+    // qtcs may be empty (every contest but WAE). QTC: lines interleave
+    // with QSO: lines chronologically, receiver's call first, per the
+    // WWROF WAE template — the field order the DARC robot parses.
     static QString build(const ContestDef& def, const ContestRow& contest,
                          const QList<ContestQso>& qsos,
+                         const QList<ContestDb::QtcRow>& qtcs,
                          const CabrilloStation& st, const CtyLookup* cty,
                          const ContestContext& ctx);
 
     // Parse-back verification of build()'s output. Returns true when
-    // every QSO: line round-trips to its database row; on failure err
-    // names the first offending line.
+    // every QSO: and QTC: line round-trips to its database row; on
+    // failure err names the first offending line.
     static bool selfCheck(const QString& text, const ContestDef& def,
                           const ContestRow& contest,
-                          const QList<ContestQso>& qsos, QString* err);
+                          const QList<ContestQso>& qsos,
+                          const QList<ContestDb::QtcRow>& qtcs,
+                          QString* err);
 
     // "  7024" — kHz right-aligned in 5, the classic QSO: line freq.
     static QString freqField(qint64 hz);

@@ -97,6 +97,10 @@ struct ContestDef {
     // Serial formatting on the air (Cabrillo always gets plain digits).
     bool cutNumbers = true;      // 0->T, 9->N
     int  serialPad = 3;          // 1 -> TT1 at pad 3
+
+    // WAE: QTC traffic exists (sending side; each reported QSO is one
+    // point, limits enforced by the QTC engine).
+    bool hasQtc = false;
 };
 
 // The registry. Order is the picker order.

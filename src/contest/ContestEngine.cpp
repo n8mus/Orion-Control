@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestEngine.h"
 
+#include <algorithm>
+
 #include "util/CtyLookup.h"
 
 namespace ttc {
@@ -55,8 +57,10 @@ QString formatSerial(int n, bool cut, int pad) {
 ScoreBreakdown computeScore(const ContestDef& def,
                             const QList<CQsoValues>& qsos,
                             const CtyLookup* cty,
-                            const ContestContext& ctx) {
+                            const ContestContext& ctx,
+                            int qtcPoints) {
     ScoreBreakdown out;
+    out.qtcPoints = qtcPoints;
     out.qsos = int(qsos.size());
     for (const CQsoValues& q : qsos) {
         CtyInfo ci;
@@ -80,9 +84,37 @@ ScoreBreakdown computeScore(const ContestDef& def,
         }
     }
     // No mults yet must still show the points earned, not zero.
-    out.total = qint64(out.points)
+    out.total = qint64(out.points + out.qtcPoints)
               * qint64(out.weightedMults > 0 ? out.weightedMults : 1);
     return out;
+}
+
+QList<qint64> allocateQtc(const QList<ContestQso>& qsos,
+                          const QSet<qint64>& reportedIds,
+                          const QString& toCall, int alreadySentTo) {
+    const QString to = toCall.trimmed().toUpper();
+    const int room = 10 - alreadySentTo;
+    QList<qint64> out;
+    if (room <= 0 || to.isEmpty()) return out;
+    // qsos arrive oldest-first from the db; keep that order.
+    for (const ContestQso& q : qsos) {
+        if (out.size() >= qMin(10, room)) break;
+        if (q.id < 0 || reportedIds.contains(q.id)) continue;
+        if (q.v.call.compare(to, Qt::CaseInsensitive) == 0) continue;
+        out << q.id;
+    }
+    return out;
+}
+
+int opTimeSecs(QList<QDateTime> events) {
+    if (events.size() < 2) return 0;
+    std::sort(events.begin(), events.end());
+    qint64 onAir = 0;
+    for (int i = 1; i < events.size(); ++i) {
+        const qint64 gap = events[i - 1].secsTo(events[i]);
+        if (gap < 3600) onAir += gap;   // 59:59 of silence still counts
+    }
+    return int(onAir);
 }
 
 bool isDupe(const ContestDef& def, const QList<CQsoValues>& qsos,

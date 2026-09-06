@@ -34,6 +34,18 @@ const char* kSchemaHistory =
     " state TEXT DEFAULT '', grid TEXT DEFAULT '', ck TEXT DEFAULT '',"
     " power TEXT DEFAULT '', usertext TEXT DEFAULT '')";
 
+const char* kSchemaQtc =
+    "CREATE TABLE IF NOT EXISTS qtc_sent ("
+    " id INTEGER PRIMARY KEY,"
+    " contest_id INTEGER NOT NULL REFERENCES contest(id),"
+    " to_call TEXT NOT NULL,"
+    " block INTEGER NOT NULL,"
+    " item INTEGER NOT NULL,"              // 1..10 within the block
+    " qso_id INTEGER NOT NULL REFERENCES cqso(id) ON DELETE RESTRICT,"
+    " ts_utc TEXT NOT NULL,"
+    " freq_hz INTEGER DEFAULT 0,"
+    " mode TEXT DEFAULT 'CW')";
+
 const char* kSchemaQso =
     "CREATE TABLE IF NOT EXISTS cqso ("
     " id INTEGER PRIMARY KEY,"
@@ -142,9 +154,15 @@ bool ContestDb::open(const QString& path) {
     db.setDatabaseName(path_);
     if (!db.open()) return false;
     QSqlQuery q(db);
+    // SQLite ships with foreign keys OFF per connection; the QTC
+    // delete-guard (ON DELETE RESTRICT) is dead code without this.
+    q.exec("PRAGMA foreign_keys = ON");
     if (!q.exec(QString::fromLatin1(kSchemaContest))) return false;
     if (!q.exec(QString::fromLatin1(kSchemaQso))) return false;
     if (!q.exec(QString::fromLatin1(kSchemaHistory))) return false;
+    if (!q.exec(QString::fromLatin1(kSchemaQtc))) return false;
+    q.exec("CREATE INDEX IF NOT EXISTS idx_qtc_contest"
+           " ON qtc_sent(contest_id, to_call)");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_contest"
            " ON cqso(contest_id)");
     q.exec("CREATE INDEX IF NOT EXISTS idx_cqso_call"
@@ -251,6 +269,9 @@ qint64 ContestDb::addQso(const ContestQso& o) {
 }
 
 bool ContestDb::updateQso(const ContestQso& o) {
+    // A QSO that has been reported in a QTC is frozen: the receiving
+    // station holds a copy of exactly what we logged.
+    if (qsoReported(o.id)) return false;
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare(
         "UPDATE cqso SET contest_id=:cid, ts_utc=:ts, call=:call,"
@@ -287,6 +308,102 @@ QList<ContestQso> ContestDb::qsos(qint64 contestId) const {
 QList<CQsoValues> ContestDb::qsoValues(qint64 contestId) const {
     QList<CQsoValues> out;
     for (const ContestQso& o : qsos(contestId)) out << o.v;
+    return out;
+}
+
+int ContestDb::qtcCount(qint64 contestId) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT COUNT(*) FROM qtc_sent WHERE contest_id=:c");
+    q.bindValue(":c", contestId);
+    return q.exec() && q.next() ? q.value(0).toInt() : 0;
+}
+
+int ContestDb::qtcSentTo(qint64 contestId, const QString& toCall) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT COUNT(*) FROM qtc_sent WHERE contest_id=:c"
+              " AND to_call=:t");
+    q.bindValue(":c", contestId);
+    q.bindValue(":t", toCall.trimmed().toUpper());
+    return q.exec() && q.next() ? q.value(0).toInt() : 0;
+}
+
+int ContestDb::nextQtcBlock(qint64 contestId) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT MAX(block) FROM qtc_sent WHERE contest_id=:c");
+    q.bindValue(":c", contestId);
+    return (q.exec() && q.next() ? q.value(0).toInt() : 0) + 1;
+}
+
+QSet<qint64> ContestDb::qtcReportedQsoIds(qint64 contestId) const {
+    QSet<qint64> out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT qso_id FROM qtc_sent WHERE contest_id=:c");
+    q.bindValue(":c", contestId);
+    if (q.exec())
+        while (q.next()) out.insert(q.value(0).toLongLong());
+    return out;
+}
+
+bool ContestDb::qsoReported(qint64 qsoId) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT 1 FROM qtc_sent WHERE qso_id=:q LIMIT 1");
+    q.bindValue(":q", qsoId);
+    return q.exec() && q.next();
+}
+
+bool ContestDb::addQtcBlock(qint64 contestId, const QString& toCall,
+                            int block, const QList<qint64>& qsoIds,
+                            qint64 freqHz, const QString& mode) {
+    if (qsoIds.isEmpty()) return false;
+    QSqlDatabase db = QSqlDatabase::database(conn_);
+    if (!db.transaction()) return false;
+    QSqlQuery q(db);
+    q.prepare(
+        "INSERT INTO qtc_sent (contest_id, to_call, block, item, qso_id,"
+        " ts_utc, freq_hz, mode) VALUES (:c, :t, :b, :i, :q, :ts, :f, :m)");
+    const QString ts = QDateTime::currentDateTimeUtc()
+                           .toString("yyyy-MM-dd HH:mm:ss");
+    for (int i = 0; i < qsoIds.size(); ++i) {
+        q.bindValue(":c", contestId);
+        q.bindValue(":t", toCall.trimmed().toUpper());
+        q.bindValue(":b", block);
+        q.bindValue(":i", i + 1);
+        q.bindValue(":q", qsoIds[i]);
+        q.bindValue(":ts", ts);
+        q.bindValue(":f", freqHz);
+        q.bindValue(":m", mode);
+        if (!q.exec()) {             // half a block must never reach disk
+            db.rollback();
+            return false;
+        }
+    }
+    if (!db.commit()) {
+        db.rollback();
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+QList<ContestDb::QtcRow> ContestDb::qtcRows(qint64 contestId) const {
+    QList<QtcRow> out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT * FROM qtc_sent WHERE contest_id=:c"
+              " ORDER BY ts_utc, block, item");
+    q.bindValue(":c", contestId);
+    if (!q.exec()) return out;
+    while (q.next()) {
+        QtcRow r;
+        r.id = q.value("id").toLongLong();
+        r.qsoId = q.value("qso_id").toLongLong();
+        r.toCall = q.value("to_call").toString();
+        r.block = q.value("block").toInt();
+        r.item = q.value("item").toInt();
+        r.tsUtc = utcFrom(q.value("ts_utc").toString());
+        r.freqHz = q.value("freq_hz").toLongLong();
+        r.mode = q.value("mode").toString();
+        out << r;
+    }
     return out;
 }
 

@@ -108,6 +108,7 @@ add_executable(tentec-console
   src/contest/CallHistory.cpp   src/contest/CallHistory.h
   src/contest/ContestWindow.cpp src/contest/ContestWindow.h
   src/contest/ContestDeck.cpp   src/contest/ContestDeck.h
+  src/contest/QtcDialog.cpp     src/contest/QtcDialog.h
   src/log/Adif.cpp              src/log/Adif.h
   src/log/LogDb.cpp             src/log/LogDb.h
   src/log/QslUploader.cpp       src/log/QslUploader.h
@@ -266,7 +267,7 @@ add_executable(contestuitest EXCLUDE_FROM_ALL
   src/contest/ContestWindow.cpp src/contest/ContestDefs.cpp
   src/contest/ContestEngine.cpp src/contest/ContestDb.cpp
   src/contest/Cabrillo.cpp src/contest/CallHistory.cpp
-  src/contest/ContestDeck.cpp
+  src/contest/ContestDeck.cpp src/contest/QtcDialog.cpp
   src/net/RotorLink.cpp src/net/RotorClient.cpp src/net/RotorServer.cpp
   src/radio/DcuRotor.cpp src/radio/SerialPort.cpp
   src/cw/CwWindow.cpp src/cw/WinKeyer.cpp src/cw/OrionKeyer.cpp

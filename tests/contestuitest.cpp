@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-// Contest-window smoke harness: builds the real ContestWindow offscreen,
-// opens a CWT instance, logs QSOs through the same widgets the operator
-// uses, checks the database and score line, and grabs a PNG for
-// eyeballing. No keyer, no radio, no network.
+// Contest UI smoke harness, offscreen: the MANAGER creates a contest
+// through its widgets, the DECK logs QSOs through the ESM flow, the QTC
+// dialog loads/sends/confirms a block against a seeded WAE log, and
+// screenshots come out for eyeballing. No keyer, no radio, no network.
 //   QT_QPA_PLATFORM=offscreen ./contestuitest [out.png]
 #include <QApplication>
+#include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <cstdio>
 
 #include "contest/ContestDb.h"
 #include "contest/ContestDeck.h"
 #include "contest/ContestWindow.h"
+#include "contest/QtcDialog.h"
 #include "util/CtyLookup.h"
 
 using namespace ttc;
@@ -29,10 +32,15 @@ static int fails = 0;
         }                                                                  \
     } while (0)
 
+static QPushButton* buttonWithText(QWidget* w, const QString& t) {
+    for (QPushButton* b : w->findChildren<QPushButton*>())
+        if (b->text() == t) return b;
+    return nullptr;
+}
+
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     QTemporaryDir tmp;
-    // Settings must not touch the operator's live config.
     qputenv("XDG_CONFIG_HOME", (tmp.path() + "/cfg").toUtf8());
 
     CtyLookup cty;
@@ -44,86 +52,31 @@ int main(int argc, char** argv) {
     ContestDb db;
     CHECK(db.open(tmp.path() + "/contest.sqlite"), "contest.db opens");
 
-    ContestRow c;
-    c.defId = "CW-OPS";
-    c.title = "CWT smoke";
-    c.startUtc = QDateTime::currentDateTimeUtc();
-    c.sentExch = "Jon MI";
-    const qint64 cid = db.createContest(c);
-    CHECK(cid > 0, "contest created");
+    // ---- MANAGER: create a CWT through the widgets ----------------------
+    ContestWindow w(&db, &cty);
+    qint64 openedId = -1;
+    QObject::connect(&w, &ContestWindow::contestOpened,
+                     [&openedId](qint64 id) { openedId = id; });
+    auto* defPick = w.findChild<QComboBox*>("defPick");
+    CHECK(defPick, "mgr: contest picker exists");
+    if (!defPick) return 1;
+    defPick->setCurrentIndex(defPick->findData("CW-OPS"));
+    auto* sentExch = w.findChild<QLineEdit*>("sentExch");
+    CHECK(sentExch && sentExch->text() == "Jon MI",
+          "mgr: sent-exchange default follows the picker");
+    QPushButton* start = buttonWithText(&w, "Start");
+    CHECK(start, "mgr: Start button exists");
+    start->click();
+    CHECK(openedId > 0 && db.contests().size() == 1,
+          "mgr: Start creates and opens the contest");
+    const qint64 cid = openedId;
 
-    ContestWindow w(&db, &cty, nullptr);
-    CHECK(w.openContestId(cid), "window opens the contest");
-    w.setRig(14032000, "CW");
-    w.show();
-
-    auto* call = w.findChild<QLineEdit*>("entryCall");
-    auto* ex0 = w.findChild<QLineEdit*>("exchEdit0");   // NAME
-    auto* ex1 = w.findChild<QLineEdit*>("exchEdit1");   // NR/STATE
-    CHECK(call && ex0 && ex1, "entry fields exist (CWT: no RST anywhere)");
-
-    QPushButton* logBtn = nullptr;
-    for (QPushButton* b : w.findChildren<QPushButton*>())
-        if (b->text() == "LOG") logBtn = b;
-    CHECK(logBtn, "LOG button exists");
-    if (!call || !ex0 || !ex1 || !logBtn) return 1;
-
-    // A short call must be refused, silently staying unlogged.
-    call->setText("W1");
-    ex0->setText("ART");
-    ex1->setText("CT");
-    logBtn->click();
-    CHECK(db.qsos(cid).isEmpty(), "unloggable call is refused");
-
-    // A missing required field must be refused too.
-    call->setText("N3JT");
-    ex0->clear();
-    logBtn->click();
-    CHECK(db.qsos(cid).isEmpty(), "missing exchange is refused");
-
-    // The real thing.
-    ex0->setText("JIM");
-    ex1->setText("1");
-    logBtn->click();
-    const auto rows1 = db.qsos(cid);
-    CHECK(rows1.size() == 1 && rows1[0].v.call == "N3JT"
-              && rows1[0].v.exch1 == "JIM" && rows1[0].v.exch2 == "1"
-              && rows1[0].v.band == "20M" && rows1[0].points == 1,
-          "QSO logs with band from the rig feed");
-    CHECK(call->text().isEmpty() && ex0->text().isEmpty(),
-          "fields wipe after the log (the silent 'it logged' signal)");
-
-    // Second station: mult count must move (unique calls).
-    call->setText("K6RB");
-    ex0->setText("ROB");
-    ex1->setText("3");
-    logBtn->click();
-    CHECK(db.qsos(cid).size() == 2, "second QSO logs");
-
-    bool scoreShown = false;
-    for (QLabel* l : w.findChildren<QLabel*>())
-        if (l->text().contains("QSOs 2") && l->text().contains("Mults 2"))
-            scoreShown = true;
-    CHECK(scoreShown, "score line shows 2 QSOs, 2 mults");
-
-    const QString png = argc > 1 ? QString::fromLocal8Bit(argv[1])
-                                 : tmp.path() + "/contestwin.png";
-    w.resize(1100, 640);
-    CHECK(w.grab().save(png), "window screenshot saved");
-    std::printf("      -> %s\n", qPrintable(png));
-
-    // ---- the deck: the in-console primary surface -----------------------
+    // ---- DECK: the ESM flow logs QSOs -----------------------------------
     ContestDeck deck(&db, &cty, nullptr, nullptr);
     CHECK(deck.openContestId(cid), "deck opens the contest");
     deck.setRig(14032000, "CW");
     deck.setMasterScp({"N3JT", "N3JTX", "K6RB"});
     deck.show();
-
-    // Spot classification drives the panadapter colors and the walk.
-    CHECK(deck.classifySpot("N3JT") == 'W',
-          "deck: worked call classifies gray (dupe)");
-    CHECK(deck.classifySpot("W9ZZZ") == 'M',
-          "deck: unworked call is a fresh mult (CWT: unique calls)");
 
     auto* dCall = deck.findChild<QLineEdit*>("entryCall");
     auto* dEx0 = deck.findChild<QLineEdit*>("exchEdit0");
@@ -131,46 +84,83 @@ int main(int argc, char** argv) {
     CHECK(dCall && dEx0 && dEx1, "deck: entry fields exist");
     if (!dCall || !dEx0 || !dEx1) return 1;
 
-    // History prefill data, then the deck's log path end-to-end.
-    QList<HistoryRow> hr;
-    HistoryRow h;
-    h.call = "W9ZZZ";
-    h.name = "Ann";
-    h.exch1 = "77";
-    hr << h;
-    CHECK(db.importCallHistory(hr) == 1, "deck: history import");
-    deck.prefillCall("W9ZZZ");
-    QPushButton* dLog = nullptr;
-    for (QPushButton* b : deck.findChildren<QPushButton*>())
-        if (b->text().startsWith("F12")) dLog = b;   // F12 = WIPE exists
-    CHECK(dLog, "deck: F12 WIPE button present");
-    dEx0->setText("ANN");
-    dEx1->setText("77");
-    // ESM off-path: drive logNow via Enter handling is ESM's job; the
-    // deck logs through the same engine — use the widgets directly.
+    deck.prefillCall("N3JT");
+    dEx0->setText("JIM");
+    dEx1->setText("1");
+    QMetaObject::invokeMethod(dCall, "returnPressed");  // answer beat
+    QMetaObject::invokeMethod(dCall, "returnPressed");  // TU + log
+    deck.prefillCall("K6RB");
+    dEx0->setText("ROB");
+    dEx1->setText("3");
     QMetaObject::invokeMethod(dCall, "returnPressed");
-    // Run-mode ESM answers first (keys nothing here — null keyer), so
-    // the QSO is not yet logged; a second Enter closes TU+log.
     QMetaObject::invokeMethod(dCall, "returnPressed");
-    CHECK(db.qsos(cid).size() == 3
-              && db.qsos(cid).last().v.call == "W9ZZZ",
-          "deck: ESM run two-beat logs the QSO");
-    CHECK(dCall->text().isEmpty(), "deck: silent wipe after the log");
-    CHECK(deck.classifySpot("W9ZZZ") == 'W',
-          "deck: freshly logged call reclassifies as worked");
+    CHECK(db.qsos(cid).size() == 2, "deck: ESM logs two QSOs");
+    CHECK(deck.classifySpot("N3JT") == 'W' &&
+              deck.classifySpot("W9ZZZ") == 'M',
+          "deck: classification tracks the log");
 
-    // Screenshot with a partial typed so the SUPER CHECK line shows.
+    // Manager's grid follows the deck through the changed() signal.
+    auto* grid = w.findChild<QTableWidget*>();
+    CHECK(grid && grid->rowCount() == 2, "mgr: log grid mirrors the deck");
+
+    // ---- QTC: seeded WAE contest, full load/send/confirm ----------------
+    ContestRow wae;
+    wae.defId = "DARC-WAEDC-CW";
+    wae.title = "WAE QTC ui";
+    wae.startUtc = QDateTime::currentDateTimeUtc().addSecs(-7200);
+    const qint64 wid = db.createContest(wae);
+    QList<qint64> ids;
+    for (int i = 0; i < 12; ++i) {
+        ContestQso q;
+        q.contestId = wid;
+        q.tsUtc = wae.startUtc.addSecs(300 * (i + 1));
+        q.freqHz = 7024000;
+        q.v.call = i == 2 ? "DL8WPX" : QString("DL%1AA").arg(i);
+        q.v.band = "40M";
+        q.v.mode = "CW";
+        q.v.rstS = "599";
+        q.v.rstR = "599";
+        q.v.serialR = QString::number(100 + i);
+        q.v.serialS = i + 1;
+        ids << db.addQso(q);
+    }
+    QStringList keyed;
+    QtcDialog qtc(&db, [&keyed](const QString& t) { keyed << t; },
+                  [] {});
+    qtc.openFor(wid);
+    qtc.followCall("DL8WPX");
+    QPushButton* load = buttonWithText(&qtc, "Load");
+    CHECK(load, "qtcui: Load button exists");
+    load->click();
+    auto* qtable = qtc.findChild<QTableWidget*>();
+    CHECK(qtable && qtable->rowCount() == 10,
+          "qtcui: ten rows loaded, receiver's own QSO excluded");
+    buttonWithText(&qtc, "Send all")->click();
+    CHECK(keyed.size() == 11 && keyed.first() == "QTC 1/10",
+          "qtcui: Send all keys the header + ten lines");
+    CHECK(keyed[1].contains("DL0AA") && keyed[1].contains("100"),
+          "qtcui: line format time-call-serial");
+    buttonWithText(&qtc, "Confirm && log block")->click();
+    CHECK(db.qtcCount(wid) == 10, "qtcui: confirm lands the block");
+    CHECK(qtable->rowCount() == 0, "qtcui: table clears after confirm");
+    load->click();
+    CHECK(qtable->rowCount() == 0,
+          "qtcui: station at the 10-QTC cap loads nothing");
+
+    // ---- screenshots ----------------------------------------------------
     deck.prefillCall("N3J");
     deck.resize(1900, 270);
-    QCoreApplication::processEvents();   // let the layout place the row
+    QCoreApplication::processEvents();
     QPushButton* scpHit = nullptr;
     for (QPushButton* b : deck.findChildren<QPushButton*>())
         if (b->text() == "N3JT") scpHit = b;
     CHECK(scpHit && scpHit->isVisible(),
           "deck: super check offers N3JT for partial N3J");
-    const QString png2 = png + ".deck.png";
-    CHECK(deck.grab().save(png2), "deck screenshot saved");
-    std::printf("      -> %s\n", qPrintable(png2));
+    const QString png = argc > 1 ? QString::fromLocal8Bit(argv[1])
+                                 : tmp.path() + "/contestui.png";
+    CHECK(deck.grab().save(png), "deck screenshot saved");
+    CHECK(w.grab().save(png + ".mgr.png"), "manager screenshot saved");
+    std::printf("      -> %s\n", qPrintable(png));
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

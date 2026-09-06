@@ -215,7 +215,7 @@ static void testCabrillo(const CtyLookup& cty) {
     ctx.myCall = "N8EM";
     ctx.myCont = "NA";
 
-    const QString text = Cabrillo::build(*d, c, qsos, st, &cty, ctx);
+    const QString text = Cabrillo::build(*d, c, qsos, {}, st, &cty, ctx);
     CHECK(text.startsWith("START-OF-LOG: 3.0\r\n"), "cab: header + CRLF");
     CHECK(text.contains("CONTEST: CW-OPEN"), "cab: contest tag");
     CHECK(text.contains("END-OF-LOG:"), "cab: end tag");
@@ -231,7 +231,7 @@ static void testCabrillo(const CtyLookup& cty) {
           "cab: serial-name order on BOTH sides (the CW Open bug)");
 
     QString err;
-    const bool selfOk = Cabrillo::selfCheck(text, *d, c, qsos, &err);
+    const bool selfOk = Cabrillo::selfCheck(text, *d, c, qsos, {}, &err);
     if (!selfOk) std::printf("      self-check said: %s\n", qPrintable(err));
     CHECK(selfOk, "cab: self-check passes");
 
@@ -239,7 +239,7 @@ static void testCabrillo(const CtyLookup& cty) {
     // to name-then-serial — and the self-check must refuse it.
     QString bad = text;
     bad.replace("052 STEVE", "STEVE 052");
-    CHECK(!Cabrillo::selfCheck(bad, *d, c, qsos, &err),
+    CHECK(!Cabrillo::selfCheck(bad, *d, c, qsos, {}, &err),
           "cab: reversed exchange is caught");
 
     // Cut-number copy normalizes on export: TT1 in the box, 001 on file.
@@ -247,10 +247,124 @@ static void testCabrillo(const CtyLookup& cty) {
     q2.v.call = "K6RB";
     q2.v.serialR = "TT7";
     QList<ContestQso> qsos2{q, q2};
-    const QString t2 = Cabrillo::build(*d, c, qsos2, st, &cty, ctx);
+    const QString t2 = Cabrillo::build(*d, c, qsos2, {}, st, &cty, ctx);
     CHECK(t2.contains("K6RB          007"), "cab: cut numbers uncut on file");
-    CHECK(Cabrillo::selfCheck(t2, *d, c, qsos2, nullptr),
+    CHECK(Cabrillo::selfCheck(t2, *d, c, qsos2, {}, nullptr),
           "cab: self-check with uncut serials");
+}
+
+static void testQtc(const QString& dir, const CtyLookup& cty) {
+    ContestDb db;
+    CHECK(db.open(dir + "/qtc.sqlite"), "qtc: db opens");
+    ContestRow c;
+    c.defId = "DARC-WAEDC-CW";
+    c.title = "WAE QTC test";
+    c.startUtc = QDateTime::fromString("2026-08-08 00:00:00",
+                                       "yyyy-MM-dd HH:mm:ss");
+    c.startUtc.setTimeZone(QTimeZone::utc());
+    const qint64 cid = db.createContest(c);
+
+    // Twelve EU QSOs, oldest first; DL8WPX is the receiving station.
+    QList<qint64> ids;
+    for (int i = 0; i < 12; ++i) {
+        ContestQso q;
+        q.contestId = cid;
+        q.tsUtc = c.startUtc.addSecs(300 * (i + 1));
+        q.freqHz = 7024000;
+        q.v = mkq(i == 2 ? "DL8WPX" : QString("DL%1AA").arg(i), "40M", "",
+                  QString::number(100 + i));
+        q.v.serialS = i + 1;
+        ids << db.addQso(q);
+    }
+    const QList<ContestQso> qsos = db.qsos(cid);
+
+    // Allocation: 10 oldest, never the receiving station itself.
+    QList<qint64> alloc = allocateQtc(qsos, db.qtcReportedQsoIds(cid),
+                                      "DL8WPX", 0);
+    CHECK(alloc.size() == 10, "qtc: block caps at 10");
+    CHECK(!alloc.contains(ids[2]),
+          "qtc: never reports a QSO back to the station it was made with");
+    CHECK(alloc.first() == ids[0], "qtc: oldest first");
+
+    // Cumulative per-station limit: 7 already sent leaves room for 3.
+    CHECK(allocateQtc(qsos, {}, "DL8WPX", 7).size() == 3,
+          "qtc: per-station limit is cumulative");
+    CHECK(allocateQtc(qsos, {}, "DL8WPX", 10).isEmpty(),
+          "qtc: station at 10 gets nothing");
+
+    // Confirm the block; those QSOs are spent forever.
+    CHECK(db.addQtcBlock(cid, "DL8WPX", db.nextQtcBlock(cid), alloc,
+                         7028000, "CW"),
+          "qtc: block confirms");
+    CHECK(db.qtcCount(cid) == 10 && db.qtcSentTo(cid, "DL8WPX") == 10,
+          "qtc: counters track");
+    const QList<qint64> again = allocateQtc(
+        qsos, db.qtcReportedQsoIds(cid), "G4XYZ", 0);
+    CHECK(again.size() == 2,
+          "qtc: reported QSOs never allocate again (2 left of 12)");
+
+    // The frozen-QSO rules, enforced by the database and the API.
+    CHECK(!db.deleteQso(alloc.first()),
+          "qtc: reported QSO cannot be deleted (FK RESTRICT)");
+    ContestQso ed = qsos[0];
+    ed.v.serialR = "999";
+    CHECK(!db.updateQso(ed), "qtc: reported QSO cannot be edited");
+    CHECK(db.nextQtcBlock(cid) == 2, "qtc: block numbering advances");
+
+    // Cabrillo: interleaved, receiver first, verified by parse-back.
+    CabrilloStation st;
+    st.call = "N8EM";
+    st.gridLocator = "EN83AL";
+    st.location = "MI";
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    CtyInfo me;
+    cty.info("N8EM", me);
+    ctx.myCountry = me.country;
+    const ContestDef* d = contestDef("DARC-WAEDC-CW");
+    const ContestRow row = db.contest(cid);
+    const QList<ContestDb::QtcRow> qtcs = db.qtcRows(cid);
+    const QString text =
+        Cabrillo::build(*d, row, qsos, qtcs, st, &cty, ctx);
+    CHECK(text.count("QTC: ") == 10, "qtc cab: ten QTC lines");
+    CHECK(text.contains("DL8WPX        1/10"),
+          "qtc cab: receiver first, then series block/count");
+    QString err;
+    const bool ok = Cabrillo::selfCheck(text, *d, row, qsos, qtcs, &err);
+    if (!ok) std::printf("      qtc self-check said: %s\n", qPrintable(err));
+    CHECK(ok, "qtc cab: parse-back verifies");
+    QString bad = text;
+    // Swap receiver and sender on one QTC line — the classic drift.
+    bad.replace("DL8WPX        1/10      N8EM",
+                "N8EM          1/10      DL8WPX");
+    CHECK(!Cabrillo::selfCheck(bad, *d, row, qsos, qtcs, &err),
+          "qtc cab: swapped receiver/sender is caught");
+    // Score: (12 QSO pts + 10 QTC) × weighted mults.
+    QList<CQsoValues> vals;
+    for (const ContestQso& q : qsos) vals << q.v;
+    const ScoreBreakdown sb =
+        computeScore(*d, vals, &cty, ctx, db.qtcCount(cid));
+    CHECK(sb.qtcPoints == 10 && sb.total == (sb.points + 10)
+              * sb.weightedMults,
+          "qtc: score adds QTC points before the multiplier");
+}
+
+static void testOpTime() {
+    QList<QDateTime> ev;
+    QDateTime t = QDateTime::fromString("2026-08-08 00:00:00",
+                                        "yyyy-MM-dd HH:mm:ss");
+    t.setTimeZone(QTimeZone::utc());
+    // 30 min of QSOs, a 59-minute lull (still operating), 10 more
+    // minutes, then a 2-hour break, then 5 minutes.
+    ev << t << t.addSecs(1800) << t.addSecs(1800 + 3540)
+       << t.addSecs(1800 + 3540 + 600)
+       << t.addSecs(1800 + 3540 + 600 + 7200)
+       << t.addSecs(1800 + 3540 + 600 + 7200 + 300);
+    CHECK(opTimeSecs(ev) == 1800 + 3540 + 600 + 300,
+          "optime: sub-hour lulls count, a 2-hour break does not");
+    CHECK(opTimeSecs({}) == 0 && opTimeSecs({t}) == 0,
+          "optime: empty and single-event logs are zero");
 }
 
 static bool plansAre(const QList<EsmAct>& got,
@@ -433,6 +547,8 @@ int main(int argc, char** argv) {
     testDb(tmp.path());
     testHistoryDb(tmp.path());
     testCabrillo(cty);
+    testQtc(tmp.path(), cty);
+    testOpTime();
 
     std::printf(fails ? "\n%d FAILURES\n" : "\nall ok\n", fails);
     return fails ? 1 : 0;

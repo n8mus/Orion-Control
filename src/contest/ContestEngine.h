@@ -5,7 +5,10 @@
 #include <QSet>
 #include <QString>
 
+#include "contest/ContestDb.h"
 #include "contest/ContestDef.h"
+
+#include <QDateTime>
 
 namespace ttc {
 
@@ -36,9 +39,10 @@ struct BandCount {
 struct ScoreBreakdown {
     int qsos = 0;                       // rows in the log
     int points = 0;                     // sum of per-QSO points
+    int qtcPoints = 0;                  // WAE: one per QTC line sent
     int mults = 0;                      // distinct mult keys
     int weightedMults = 0;              // with the def's per-key weight
-    qint64 total = 0;                   // points × weightedMults (min 1×)
+    qint64 total = 0;                   // (pts+qtc) × wtMults (min 1×)
     QHash<QString, BandCount> perBand;  // "40M" -> counts
     QSet<QString> multKeys;             // for "is this spot a new mult?"
 };
@@ -49,7 +53,21 @@ struct ScoreBreakdown {
 ScoreBreakdown computeScore(const ContestDef& def,
                             const QList<CQsoValues>& qsos,
                             const CtyLookup* cty,
-                            const ContestContext& ctx);
+                            const ContestContext& ctx,
+                            int qtcPoints = 0);
+
+// ---- WAE QTC allocation --------------------------------------------------
+// The oldest unreported QSOs, never one made with the receiving station,
+// capped at min(10, 10 − alreadySentTo, eligible). Cumulative per
+// station across the whole contest; each QSO is reportable once, ever.
+QList<qint64> allocateQtc(const QList<ContestQso>& qsos,
+                          const QSet<qint64>& reportedIds,
+                          const QString& toCall, int alreadySentTo);
+
+// On-air seconds under the WAE rest rule: a gap of >= 60 minutes with
+// no QSO and no QTC is a break; everything else counts as operating.
+// events = QSO + QTC-confirm timestamps, any order.
+int opTimeSecs(QList<QDateTime> events);
 
 // Would this call be a dupe against the worked list, under the def's
 // scope? band/mode are the CURRENT rig state.

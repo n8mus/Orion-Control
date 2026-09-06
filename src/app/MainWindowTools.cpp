@@ -400,36 +400,27 @@ void MainWindow::openDigiWindow() {
 
 void MainWindow::openContestWindow() {
     if (!contestWin_) {
-        contestDb_ = new ContestDb(this);
-        if (!contestDb_->open()) {
-            statusBar()->showMessage(
-                "contest.db failed to open — contest logger unavailable",
-                8000);
-            delete contestDb_;
-            contestDb_ = nullptr;
-            return;
+        // The deck may have opened contest.db first — ONE instance, or
+        // the two surfaces stop hearing each other's changed() signals.
+        if (!contestDb_) {
+            contestDb_ = new ContestDb(this);
+            if (!contestDb_->open()) {
+                statusBar()->showMessage(
+                    "contest.db failed to open — contest logger "
+                    "unavailable", 8000);
+                delete contestDb_;
+                contestDb_ = nullptr;
+                return;
+            }
         }
-        // The full CW plumbing, window closed: contest F-keys must key
-        // whether or not the operator ever opens the CW window.
-        ensureCwWindow();
-        contestWin_ = new ContestWindow(contestDb_, &cty_, cwWin_,
+        contestWin_ = new ContestWindow(contestDb_, &cty_,
                                         toolWinParent(this));
         adoptToolWindow(contestWin_);
         connect(contestWin_, &ContestWindow::contestOpened, this,
                 [this](qint64 id) {
                     if (contestDeck_) contestDeck_->openContestId(id);
                 });
-        // Dial and mode ride in once a second, same as the LOG window.
-        auto* feed = new QTimer(contestWin_);
-        feed->setInterval(1000);
-        connect(feed, &QTimer::timeout, contestWin_, [this] {
-            if (contestWin_->isVisible())
-                contestWin_->setRig(qint64(centerHz_),
-                                    adifModeText(rigMode_));
-        });
-        feed->start();
     }
-    contestWin_->setRig(qint64(centerHz_), adifModeText(rigMode_));
     contestWin_->show();
     contestWin_->raise();
     contestWin_->activateWindow();

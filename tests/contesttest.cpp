@@ -429,7 +429,7 @@ static void testSs(const CtyLookup& cty) {
 }
 
 static void testRoster(const CtyLookup& cty) {
-    CHECK(contestDefs().size() == 21, "roster: 21 definitions registered");
+    CHECK(contestDefs().size() == 23, "roster: 23 definitions registered");
     ContestContext ctx;
     ctx.myCall = "N8EM";
     ctx.myCont = "NA";
@@ -494,6 +494,30 @@ static void testRoster(const CtyLookup& cty) {
         const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
         CHECK(sb.points == 2 + 5 + 10, "cq160: point ladder");
         CHECK(sb.mults == 3, "cq160: state + two countries");
+    }
+    // All Asian from the NA side: Asia only, age exchange, hard-band
+    // bonus points, Asian WPX prefixes per band.
+    {
+        const ContestDef* d = contestDef("AADX-SSB");
+        QList<CQsoValues> log;
+        CQsoValues ja = mkq("JA1ABC", "20M", "48");
+        ja.mode = "SSB";
+        CQsoValues ja10 = mkq("JA1XYZ", "10M", "22");
+        ja10.mode = "SSB";
+        CQsoValues hl80 = mkq("HL4CJG", "80M", "31");
+        hl80.mode = "SSB";
+        CQsoValues dl = mkq("DL2CC", "20M", "50");   // not Asia: zero
+        dl.mode = "SSB";
+        log << ja << ja10 << hl80 << dl;
+        const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+        CHECK(sb.points == 1 + 2 + 2 + 0,
+              "aadx: Asia-only with the hard-band bonus (10m/80m pay 2)");
+        CHECK(sb.mults == 3, "aadx: JA1/JA1/HL4 prefixes per band = 3");
+        CQsoValues ja15 = mkq("JA1DEF", "15M", "60");
+        ja15.mode = "SSB";
+        log << ja15;
+        CHECK(computeScore(*d, log, &cty, ctx).mults == 4,
+              "aadx: same prefix on another band is a fresh mult");
     }
     // ARRL 10: CW pays double, dupes are per band+mode.
     {

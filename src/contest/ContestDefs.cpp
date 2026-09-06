@@ -558,6 +558,56 @@ ContestDef makeMiqp() {
     return d;
 }
 
+// ------------------------------------------------------------- All Asian
+// JARL's age contest: RST + operator's age, non-Asian side works Asia
+// only, mults are Asian WPX prefixes per band. Points encode the
+// NON-Asian table (160=3, 80=2, 10=2, middle bands 1 — JARL's
+// hard-band bonus); an Asian entrant would need the mirror table.
+ContestDef makeAllAsian(bool cw) {
+    ContestDef d;
+    d.id = cw ? "AADX-CW" : "AADX-SSB";
+    d.title = cw ? "All Asian DX CW" : "All Asian DX Phone";
+    d.cabrilloName = d.id;
+    d.modeCategory = cw ? "CW" : "SSB";
+    d.dupe = DupeScope::PerBand;
+    d.hasRst = true;
+    d.sentSerial = false;
+    d.sentExchDefault = "";         // your AGE — JARL wants the digits
+    d.fields = {
+        {ExchCol::RstR, "RCV", 4, cw ? "599" : "59", true, ""},
+        {ExchCol::Exch1, "AGE", 3, "", true, ""},
+    };
+    const auto valid = [](const CtyInfo& ci, bool ok,
+                          const ContestContext& ctx) {
+        if (!ok) return false;
+        const bool theirsAs = ci.cont == QLatin1String("AS");
+        const bool mineAs = ctx.myCont == QLatin1String("AS");
+        return theirsAs != mineAs;
+    };
+    d.points = [valid](const CQsoValues& q, const CtyInfo& ci, bool ok,
+                       const ContestContext& ctx) {
+        if (!valid(ci, ok, ctx)) return 0;
+        if (q.band == QLatin1String("160M")) return 3;
+        if (q.band == QLatin1String("80M")) return 2;
+        if (q.band == QLatin1String("10M")) return 2;
+        return 1;
+    };
+    d.mults = [valid](const CQsoValues& q, const CtyInfo& ci, bool ok,
+                      const ContestContext& ctx) {
+        if (!valid(ci, ok, ctx)) return QStringList{};
+        const QString p = wpxPrefix(q.call);
+        return p.isEmpty()
+                   ? QStringList{}
+                   : QStringList{"P:" + p + "|" + q.band};
+    };
+    d.cabExch = {"rst", "exch"};
+    d.fkeyRun = cw ? withOverrides(kBaseRun, {
+                         {1, "CQ|cq aa {MYCALL} {MYCALL}"},
+                     })
+                   : withOverrides(kBaseRun, kVoiceRun);
+    return d;
+}
+
 // -------------------------------------------------------------- WAE DX CW
 ContestDef makeWaeCw() {
     ContestDef d;
@@ -658,6 +708,8 @@ const QList<const ContestDef*>& contestDefs() {
     static const ContestDef naqpSsb = makeNaqp(false);
     static const ContestDef sprint = makeSprint();
     static const ContestDef iaru = makeIaru();
+    static const ContestDef aaCw = makeAllAsian(true);
+    static const ContestDef aaSsb = makeAllAsian(false);
     static const ContestDef wae = makeWaeCw();
     static const ContestDef miqp = makeMiqp();
     static const ContestDef cwOpen = makeCwOpen();
@@ -667,7 +719,8 @@ const QList<const ContestDef*>& contestDefs() {
     static const QList<const ContestDef*> all = {
         &cqwwCw, &cqwwSsb, &wpxCw, &wpxSsb, &dxCw, &dxSsb,
         &ssCw, &ssPh, &a160, &a10, &c160, &naqpCw, &naqpSsb,
-        &sprint, &iaru, &wae, &miqp, &cwOpen, &cwt, &mst, &generic,
+        &sprint, &iaru, &aaCw, &aaSsb, &wae, &miqp, &cwOpen, &cwt, &mst,
+        &generic,
     };
     return all;
 }

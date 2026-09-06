@@ -87,6 +87,13 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
     // Come back up in whatever contest was live last session.
     const qint64 last = QSettings().value("contest/currentId", -1).toLongLong();
     if (last > 0) openContest(last);
+    // Floated panes come back floated, where they were parked.
+    for (const QString& key : {QStringLiteral("read"),
+                               QStringLiteral("type"),
+                               QStringLiteral("log")})
+        if (QSettings().value("contest/float/" + key + "/on", false)
+                .toBool())
+            QTimer::singleShot(0, this, [this, key] { floatPane(key); });
 }
 
 void ContestDeck::buildUi() {
@@ -148,6 +155,11 @@ void ContestDeck::buildUi() {
         read_->viewport()->installEventFilter(this);
         box->addWidget(read_, 1);
         lay->addWidget(readPane_, 11);
+        addPopout("read", "CW READ", readPane_, trow,
+                  [this](QWidget* w) {
+                      static_cast<QHBoxLayout*>(layout())
+                          ->insertWidget(0, w, 11);
+                  });
     }
 
     // ---- center: SCP + entry -------------------------------------------
@@ -390,8 +402,12 @@ void ContestDeck::buildUi() {
         typeTop_ = new QWidget(this);
         auto* tt = new QVBoxLayout(typeTop_);
         tt->setContentsMargins(0, 0, 0, 0);
+        auto* thdr = new QHBoxLayout;
         auto* t = new QLabel("CW TYPE — Enter sends", this);
         t->setStyleSheet("color:#8798a8; font-size:10px;");
+        thdr->addWidget(t);
+        thdr->addStretch(1);
+        tt->addLayout(thdr);
         type_ = new QLineEdit(this);
         QFont mf("DejaVu Sans Mono");
         type_->setFont(mf);
@@ -404,13 +420,23 @@ void ContestDeck::buildUi() {
         });
         sent_ = new QLabel(this);
         sent_->setStyleSheet("color:#8798a8; font-size:10px;");
-        tt->addWidget(t);
         tt->addWidget(type_);
         tt->addWidget(sent_);
         box->addWidget(typeTop_);
+        addPopout("type", "CW TYPE", typeTop_, thdr,
+                  [box](QWidget* w) { box->insertWidget(0, w); });
         // LAST QSOs, always in view — logging must be VISIBLE (six
         // Enters once "logged" into an empty database with nobody the
         // wiser). Newest on top; the full grid stays in the manager.
+        logPane_ = new QWidget(this);
+        auto* lv = new QVBoxLayout(logPane_);
+        lv->setContentsMargins(0, 0, 0, 0);
+        auto* lhdr = new QHBoxLayout;
+        auto* llbl = new QLabel("LAST QSOs", this);
+        llbl->setStyleSheet("color:#8798a8; font-size:10px;");
+        lhdr->addWidget(llbl);
+        lhdr->addStretch(1);
+        lv->addLayout(lhdr);
         lastLog_ = new QTableWidget(this);
         lastLog_->setObjectName("lastLog");
         lastLog_->setColumnCount(4);
@@ -428,7 +454,10 @@ void ContestDeck::buildUi() {
             lf.setPointSize(lf.pointSize() - 1);
             lastLog_->setFont(lf);
         }
-        box->addWidget(lastLog_, 1);
+        lv->addWidget(lastLog_, 1);
+        box->addWidget(logPane_, 1);
+        addPopout("log", "Last QSOs", logPane_, lhdr,
+                  [box](QWidget* w) { box->insertWidget(1, w, 1); });
         auto* br = new QHBoxLayout;
         qtcBtn_ = new QPushButton("QTC", this);
         qtcBtn_->setFocusPolicy(Qt::NoFocus);
@@ -487,12 +516,90 @@ void ContestDeck::buildUi() {
 void ContestDeck::showEvent(QShowEvent* e) {
     QWidget::showEvent(e);
     for (QShortcut* s : shortcuts_) s->setEnabled(true);
+    for (auto it = panes_.begin(); it != panes_.end(); ++it)
+        if (it->fly) it->fly->setVisible(it->allowed);
     if (contestId_ >= 0) call_->setFocus();
 }
 
 void ContestDeck::hideEvent(QHideEvent* e) {
     QWidget::hideEvent(e);
     for (QShortcut* s : shortcuts_) s->setEnabled(false);
+    for (auto it = panes_.begin(); it != panes_.end(); ++it)
+        if (it->fly) it->fly->hide();   // contest mode off = floats too
+}
+
+// ---- pop-out panes -------------------------------------------------------
+
+void ContestDeck::addPopout(const QString& key, const QString& title,
+                            QWidget* pane, QHBoxLayout* headerRow,
+                            std::function<void(QWidget*)> reinsert) {
+    PaneSlot s;
+    s.pane = pane;
+    s.title = title;
+    s.reinsert = std::move(reinsert);
+    panes_.insert(key, s);
+    auto* pop = new QPushButton("⧉", pane);
+    pop->setFlat(true);
+    pop->setFocusPolicy(Qt::NoFocus);
+    pop->setCursor(Qt::PointingHandCursor);
+    pop->setStyleSheet("color:#8798a8; font-size:11px; border:0;");
+    pop->setToolTip("Pop out as its own window — size it and park it "
+                    "anywhere; closing it returns it to the deck");
+    connect(pop, &QPushButton::clicked, this,
+            [this, key] { floatPane(key); });
+    headerRow->addWidget(pop);
+}
+
+void ContestDeck::floatPane(const QString& key) {
+    PaneSlot& s = panes_[key];
+    if (!s.pane || !s.allowed) return;
+    if (s.fly) {
+        s.fly->show();
+        s.fly->raise();
+        return;
+    }
+    auto* d = new QDialog(window());
+    d->setWindowTitle(s.title + " — contest");
+    auto* v = new QVBoxLayout(d);
+    v->setContentsMargins(6, 6, 6, 6);
+    v->addWidget(s.pane);            // reparents out of the deck
+    const QByteArray g =
+        QSettings().value("contest/float/" + key + "/geom").toByteArray();
+    if (!g.isEmpty()) d->restoreGeometry(g);
+    else d->resize(430, 300);
+    d->installEventFilter(this);     // Close = come home
+    s.fly = d;
+    QSettings().setValue("contest/float/" + key + "/on", true);
+    d->show();
+}
+
+void ContestDeck::unfloatPane(const QString& key, bool saveGeom) {
+    PaneSlot& s = panes_[key];
+    if (!s.fly) return;
+    if (saveGeom)
+        QSettings().setValue("contest/float/" + key + "/geom",
+                             s.fly->saveGeometry());
+    QSettings().setValue("contest/float/" + key + "/on", false);
+    s.reinsert(s.pane);              // back into its deck slot
+    s.pane->setVisible(s.allowed);
+    s.fly->deleteLater();
+    s.fly = nullptr;
+}
+
+void ContestDeck::applyPaneVisibility() {
+    // A phone contest has no use for CW panes — the entry gets the room.
+    const bool phone =
+        def_ && def_->modeCategory == QLatin1String("SSB");
+    const auto vis = [this](const QString& key, bool on) {
+        if (!panes_.contains(key)) return;
+        PaneSlot& s = panes_[key];
+        s.allowed = on;
+        s.pane->setVisible(on);
+        if (s.fly) s.fly->setVisible(on && isVisible());
+    };
+    vis("read", !phone);
+    vis("type", !phone);
+    vis("log", true);
 }
 
 bool ContestDeck::openContestId(qint64 id) {
@@ -527,10 +634,7 @@ void ContestDeck::openContest(qint64 id) {
     setEnabled(true);
     myCallSent_ = exchSent_ = false;
     if (qtcBtn_) qtcBtn_->setVisible(def_->hasQtc);
-    // A phone contest has no use for CW panes — the entry gets the room.
-    const bool phone = def_->modeCategory == QLatin1String("SSB");
-    if (readPane_) readPane_->setVisible(!phone);
-    if (typeTop_) typeTop_->setVisible(!phone);
+    applyPaneVisibility();   // phone drops the CW panes, floats included
     rebuildEntryFields();
     applyFkeyLabels();
     refreshAll();
@@ -1297,6 +1401,16 @@ void ContestDeck::refreshAll() {
 // ---- key routing ---------------------------------------------------------
 
 bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
+    if (ev->type() == QEvent::Close) {
+        // A closing float returns its pane to the deck.
+        for (auto it = panes_.begin(); it != panes_.end(); ++it)
+            if (it->fly == obj) {
+                QSettings().setValue("contest/float/" + it.key() + "/geom",
+                                     it->fly->saveGeometry());
+                unfloatPane(it.key(), false);
+                return true;
+            }
+    }
     if (ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         // ↑/↓ = keying speed from ANY entry field — the hands never

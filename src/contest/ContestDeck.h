@@ -11,6 +11,8 @@
 #include "contest/ContestDb.h"
 #include "contest/ContestEngine.h"
 
+class QDialog;
+class QHBoxLayout;
 class QKeyEvent;
 class QLabel;
 class QLineEdit;
@@ -155,9 +157,29 @@ private:
     qint64 rigHz_ = 0;
     QString rigMode_ = "CW";
 
+    // Pop-out panes: CW READ, CW TYPE and LAST QSOs each carry a ⧉
+    // button — the pane floats as its own window to size and park
+    // anywhere; closing it returns it to the deck. State + geometry
+    // persist (contest/float/*).
+    struct PaneSlot {
+        QWidget* pane = nullptr;
+        QString title;
+        QDialog* fly = nullptr;
+        std::function<void(QWidget*)> reinsert;
+        bool allowed = true;         // phone hides the CW panes
+    };
+    QHash<QString, PaneSlot> panes_;
+    void addPopout(const QString& key, const QString& title,
+                   QWidget* pane, QHBoxLayout* headerRow,
+                   std::function<void(QWidget*)> reinsert);
+    void floatPane(const QString& key);
+    void unfloatPane(const QString& key, bool saveGeom);
+    void applyPaneVisibility();
+
     // widgets
     QWidget* readPane_ = nullptr;    // CW READ column (hidden on phone)
     QWidget* typeTop_ = nullptr;     // CW TYPE box (hidden on phone)
+    QWidget* logPane_ = nullptr;     // LAST QSOs wrapper
     QPlainTextEdit* read_ = nullptr;
     QWidget* scpRow_ = nullptr;
     QLabel* title_ = nullptr;

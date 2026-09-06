@@ -272,13 +272,17 @@ void MainWindow::openLogbookWindow() {
     logbookWin_->activateWindow();
 }
 
-// The tuned reader now serves two customers: the CW window's RX pane and
-// the contest deck's CW READ. Either one keeps it running; the radio-
-// audio twin stays the CW window's own affair.
+// The tuned reader serves two customers — the CW window's RX pane and
+// the contest deck's CW READ — and it has two possible ears: the SDR at
+// the dial or the RADIO's audio via the SignaLink (cw/rxRadio, the
+// operator's weak-signal choice). Whichever customer is awake powers
+// the OPERATOR'S chosen ear; wiring the deck to the IQ side only left
+// its pane blank at a station that decodes the radio audio (live-found
+// on the first contest-mode drive).
 void MainWindow::applyCwRxRouting() {
     const bool want = rxWanted_ || contestRx_;
     if (cwDec_) cwDec_->setEnabled(want && !rxRadio_);
-    if (audioDec_) audioDec_->setEnabled(rxWanted_ && rxRadio_);
+    if (audioDec_) audioDec_->setEnabled(want && rxRadio_);
     if (audioSrc_) {
         // Capture runs whenever decode is on, regardless of source: the
         // pitch readout measures the radio's audio even while the SDR
@@ -322,8 +326,13 @@ void MainWindow::toggleContestMode(bool on) {
                     this, [this] { openContestWindow(); });
             connect(contestDeck_, &ContestDeck::walkSpots, this,
                     [this](int d) { walkContestSpot(d); });
+            // BOTH ears feed the deck; applyCwRxRouting keeps exactly
+            // one enabled, following the operator's source choice.
             if (cwDec_)
                 connect(cwDec_, &CwDecoder::textDecoded, contestDeck_,
+                        &ContestDeck::appendRead, Qt::QueuedConnection);
+            if (audioDec_)
+                connect(audioDec_, &CwDecoder::textDecoded, contestDeck_,
                         &ContestDeck::appendRead, Qt::QueuedConnection);
             auto* feed = new QTimer(contestDeck_);
             feed->setInterval(1000);

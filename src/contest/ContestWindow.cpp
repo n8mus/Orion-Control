@@ -65,6 +65,10 @@ void ContestWindow::buildUi() {
         h->addWidget(new QLabel("New:", this));
         defPick_ = new QComboBox(this);
         defPick_->setObjectName("defPick");
+        // A blank first entry so nothing is armed until the operator
+        // chooses — Start on a preselected top-of-list is exactly what
+        // minted the seven practice contests.
+        defPick_->addItem("— choose a contest —", QString());
         for (const ContestDef* d : contestDefs())
             defPick_->addItem(d->title, d->id);
         h->addWidget(defPick_);
@@ -73,8 +77,9 @@ void ContestWindow::buildUi() {
         sentExchEdit_->setObjectName("sentExch");
         sentExchEdit_->setFixedWidth(110);
         sentExchEdit_->setToolTip(
-            "What you send besides RST/serial — CWT \"Jon MI\", CQ WW "
-            "your zone. Serial contests can leave it empty.");
+            "What you send besides RST/serial — All Asian your age, "
+            "CQ WW your zone, Sweepstakes prec/check/section.\n"
+            "REQUIRED for those; serial contests can leave it empty.");
         h->addWidget(sentExchEdit_);
         h->addWidget(new QLabel("location:", this));
         locationEdit_ = new QLineEdit(
@@ -107,14 +112,18 @@ void ContestWindow::buildUi() {
                 [this] { deleteContestRow(); });
         h->addWidget(delBtn);
         h->addStretch(1);
+        // Picking a contest seeds its default exchange and flags the
+        // field REQUIRED when that contest sends a fixed token.
         connect(defPick_, &QComboBox::currentIndexChanged, this, [this] {
-            if (const ContestDef* d =
-                    contestDef(defPick_->currentData().toString()))
-                sentExchEdit_->setText(d->sentExchDefault);
+            const ContestDef* d =
+                contestDef(defPick_->currentData().toString());
+            sentExchEdit_->setText(d ? d->sentExchDefault : QString());
+            const bool needs =
+                d && d->cabExch.contains(QStringLiteral("exch"));
+            sentExchEdit_->setPlaceholderText(
+                needs ? QStringLiteral("REQUIRED") : QString());
         });
-        if (const ContestDef* d0 =
-                contestDef(defPick_->currentData().toString()))
-            sentExchEdit_->setText(d0->sentExchDefault);
+        defPick_->setCurrentIndex(0);    // the blank entry
         lay->addLayout(h);
     }
 
@@ -224,7 +233,23 @@ bool ContestWindow::openContestId(qint64 id) {
 
 void ContestWindow::newContest() {
     const ContestDef* d = contestDef(defPick_->currentData().toString());
-    if (!d) return;
+    if (!d) {
+        status_->setText("choose a contest first");
+        return;
+    }
+    // A fixed-exchange contest may not START blank — that is the All
+    // Asian empty-age failure, caught before a single QSO is logged.
+    if (d->cabExch.contains(QStringLiteral("exch"))
+        && sentExchEdit_->text().trimmed().isEmpty()) {
+        QMessageBox::warning(
+            this, "Sent exchange required",
+            QString("%1 sends a fixed exchange every QSO — your age for "
+                    "All Asian, zone for CQ WW, prec/check/section for "
+                    "Sweepstakes.\n\nFill \"sent exch\" before Start.")
+                .arg(d->title));
+        sentExchEdit_->setFocus();
+        return;
+    }
     ContestRow c;
     c.defId = d->id;
     c.title = d->title + " — "

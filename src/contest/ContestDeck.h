@@ -18,6 +18,7 @@ class QPlainTextEdit;
 class QPushButton;
 class QShortcut;
 class QSpinBox;
+class QTableWidget;
 
 namespace ttc {
 
@@ -189,6 +190,7 @@ private:
     QPushButton* fk_[12] = {};
     QLineEdit* type_ = nullptr;
     QLabel* sent_ = nullptr;
+    QTableWidget* lastLog_ = nullptr;    // the last few QSOs, always on
     QLabel* status_ = nullptr;
     QPushButton* qtcBtn_ = nullptr;      // WAE only
     QtcDialog* qtc_ = nullptr;           // lazy

@@ -19,6 +19,8 @@
 #include <QSettings>
 #include <QShortcut>
 #include <QSpinBox>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QStandardPaths>
 #include <QTextCursor>
 #include <QVBoxLayout>
@@ -406,7 +408,27 @@ void ContestDeck::buildUi() {
         tt->addWidget(type_);
         tt->addWidget(sent_);
         box->addWidget(typeTop_);
-        box->addStretch(1);
+        // LAST QSOs, always in view — logging must be VISIBLE (six
+        // Enters once "logged" into an empty database with nobody the
+        // wiser). Newest on top; the full grid stays in the manager.
+        lastLog_ = new QTableWidget(this);
+        lastLog_->setObjectName("lastLog");
+        lastLog_->setColumnCount(4);
+        lastLog_->setHorizontalHeaderLabels({"UTC", "CALL", "EXCH", "P"});
+        lastLog_->verticalHeader()->setVisible(false);
+        lastLog_->horizontalHeader()->setStretchLastSection(true);
+        lastLog_->setColumnWidth(0, 44);
+        lastLog_->setColumnWidth(1, 84);
+        lastLog_->setColumnWidth(2, 70);
+        lastLog_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        lastLog_->setFocusPolicy(Qt::NoFocus);
+        lastLog_->setSelectionMode(QAbstractItemView::NoSelection);
+        {
+            QFont lf = lastLog_->font();
+            lf.setPointSize(lf.pointSize() - 1);
+            lastLog_->setFont(lf);
+        }
+        box->addWidget(lastLog_, 1);
         auto* br = new QHBoxLayout;
         qtcBtn_ = new QPushButton("QTC", this);
         qtcBtn_->setFocusPolicy(Qt::NoFocus);
@@ -1235,6 +1257,27 @@ void ContestDeck::refreshAll() {
             .arg(last10)
             .arg(in10 * 6)
             .arg(pts60);
+    // LAST QSOs strip: newest first, enough rows to trust the log.
+    if (lastLog_) {
+        const int n = qMin(qsizetype(12), qsos_.size());
+        lastLog_->setRowCount(n);
+        for (int i = 0; i < n; ++i) {
+            const ContestQso& q = qsos_[qsos_.size() - 1 - i];
+            QStringList ex;
+            if (q.v.serialR.isEmpty() == false) ex << q.v.serialR;
+            for (const QString& e : {q.v.exch1, q.v.exch2, q.v.exch3})
+                if (!e.isEmpty()) ex << e;
+            const auto put = [&](int col, const QString& t) {
+                auto* it = new QTableWidgetItem(t);
+                it->setFlags(Qt::ItemIsEnabled);
+                lastLog_->setItem(i, col, it);
+            };
+            put(0, q.tsUtc.toString("HHmm"));
+            put(1, q.v.call);
+            put(2, ex.join(' '));
+            put(3, QString::number(q.points));
+        }
+    }
     if (def_->hasQtc) {
         // WAE's rest rule: a break only counts after 60 min with no QSO
         // AND no QTC — the clock shows which side of the line you're on.

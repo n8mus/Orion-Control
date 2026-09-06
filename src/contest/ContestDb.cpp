@@ -253,6 +253,22 @@ ContestRow ContestDb::contest(qint64 id) const {
     return {};
 }
 
+bool ContestDb::deleteContest(qint64 id) {
+    QSqlDatabase db = QSqlDatabase::database(conn_);
+    QSqlQuery chk(db);
+    chk.prepare("SELECT (SELECT COUNT(*) FROM cqso WHERE contest_id=:c)"
+                " + (SELECT COUNT(*) FROM qtc_sent WHERE contest_id=:c)");
+    chk.bindValue(":c", id);
+    if (!chk.exec() || !chk.next() || chk.value(0).toInt() != 0)
+        return false;                    // holds data — never wholesale
+    QSqlQuery q(db);
+    q.prepare("DELETE FROM contest WHERE id=:id");
+    q.bindValue(":id", id);
+    const bool ok = q.exec();
+    if (ok) emit changed();
+    return ok;
+}
+
 bool ContestDb::setNextSerial(qint64 contestId, int serial) {
     QSqlQuery q(QSqlDatabase::database(conn_));
     q.prepare("UPDATE contest SET next_serial=:s WHERE id=:id");

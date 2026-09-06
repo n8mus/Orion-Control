@@ -65,6 +65,8 @@ public:
     bool scpHas(const QString& call) const { return scp_.contains(call); }
     bool openContestId(qint64 id);
     bool contestActive() const { return contestId_ >= 0; }
+    qint64 currentContestId() const { return contestId_; }
+    void closeContest();             // the open contest was deleted
 
     // Contest coloring for a spot: 'M' new mult, 'N' new, 'W' worked/
     // dupe, 'Z' zero points. 0 = leave the normal colors. hz picks the

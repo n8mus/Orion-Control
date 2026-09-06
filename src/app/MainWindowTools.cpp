@@ -536,6 +536,13 @@ void MainWindow::openContestWindow() {
                 [this](qint64 id) {
                     if (contestDeck_) contestDeck_->openContestId(id);
                 });
+        connect(contestWin_, &ContestWindow::contestDeleted, this,
+                [this](qint64 id) {
+                    // Deck was showing the deleted contest? Drop it.
+                    if (contestDeck_ && contestDeck_->contestActive()
+                        && contestDeck_->currentContestId() == id)
+                        contestDeck_->closeContest();
+                });
         // Pushed contest QSOs ride to LoTW & the online logs on the
         // uploader's catch-up sweep — one batch, one tqsl run.
         connect(contestWin_, &ContestWindow::pushedToLogbook, this,

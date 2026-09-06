@@ -99,6 +99,13 @@ void ContestWindow::buildUi() {
             if (id > 0) openContest(id);
         });
         h->addWidget(openBtn);
+        auto* delBtn = new QPushButton("Delete", this);
+        delBtn->setToolTip("Remove the selected contest — only if it has "
+                           "no QSOs.\nA logged contest is cleared "
+                           "QSO-by-QSO, never wholesale.");
+        connect(delBtn, &QPushButton::clicked, this,
+                [this] { deleteContestRow(); });
+        h->addWidget(delBtn);
         h->addStretch(1);
         connect(defPick_, &QComboBox::currentIndexChanged, this, [this] {
             if (const ContestDef* d =
@@ -215,6 +222,45 @@ void ContestWindow::newContest() {
                          locationEdit_->text().trimmed());
     trace(QString("NEW %1 \"%2\"").arg(d->id, c.title));
     openContest(id);
+}
+
+void ContestWindow::deleteContestRow() {
+    const qint64 id = resumePick_->currentData().toLongLong();
+    if (id <= 0) return;
+    const ContestRow c = db_->contest(id);
+    const int n = db_->qsos(id).size();
+    if (n > 0) {
+        QMessageBox::warning(
+            this, "Contest not empty",
+            QString("\"%1\" holds %2 QSO%3 — a logged contest is cleared "
+                    "QSO-by-QSO (open it, delete rows), never wholesale.")
+                .arg(c.title)
+                .arg(n)
+                .arg(n == 1 ? "" : "s"));
+        return;
+    }
+    if (QMessageBox::question(
+            this, "Delete contest",
+            QString("Remove \"%1\"? It has no QSOs.").arg(c.title))
+        != QMessageBox::Yes)
+        return;
+    if (!db_->deleteContest(id)) {
+        status_->setText("delete refused (contest not empty, or "
+                         "database error)");
+        return;
+    }
+    trace(QString("MGR DELETE contest id=%1 \"%2\"").arg(id).arg(c.title));
+    emit contestDeleted(id);
+    if (contestId_ == id) {          // the manager was showing it
+        contestId_ = -1;
+        def_ = nullptr;
+        title_->setText("no contest open");
+        score_->clear();
+        table_->setRowCount(0);
+        QSettings().remove("contest/currentId");
+    }
+    refreshResumeList();
+    status_->setText(QString("deleted \"%1\"").arg(c.title));
 }
 
 void ContestWindow::openContest(qint64 id) {

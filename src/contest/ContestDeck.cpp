@@ -627,6 +627,17 @@ bool ContestDeck::openContestId(qint64 id) {
     return contestId_ == id;
 }
 
+void ContestDeck::closeContest() {
+    contestId_ = -1;
+    def_ = nullptr;
+    QSettings().remove("contest/currentId");
+    title_->setText("no contest open");
+    score_->clear();
+    call_->clear();
+    if (lastLog_) lastLog_->setRowCount(0);
+    setEnabled(false);
+}
+
 void ContestDeck::openContest(qint64 id) {
     if (id == contestId_ && def_) {    // already live — just refresh
         refreshAll();

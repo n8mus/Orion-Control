@@ -38,6 +38,8 @@ signals:
     // N fresh QSOs just landed in the everyday log — the owner should
     // wake the online-log sweep so they ride to LoTW & friends.
     void pushedToLogbook(int count);
+    // A contest was removed — if the deck is showing it, close it.
+    void contestDeleted(qint64 id);
 
 protected:
     void closeEvent(QCloseEvent* e) override;
@@ -47,6 +49,7 @@ private:
     void refreshResumeList();
     void newContest();
     void openContest(qint64 id);
+    void deleteContestRow();         // the Delete button on the resume row
     void refreshAll();
     void editSelected();
     void deleteSelected();

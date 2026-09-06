@@ -107,6 +107,21 @@ int main(int argc, char** argv) {
     auto* grid = w.findChild<QTableWidget*>();
     CHECK(grid && grid->rowCount() == 2, "mgr: log grid mirrors the deck");
 
+    // Delete-contest guard: an empty instance goes, a logged one stays.
+    {
+        ContestRow empty;
+        empty.defId = "CW-OPS";
+        empty.title = "empty practice";
+        empty.startUtc = QDateTime::currentDateTimeUtc();
+        const qint64 eid = db.createContest(empty);
+        CHECK(db.deleteContest(eid),
+              "delete: an empty contest is removed");
+        CHECK(db.contest(eid).id < 0, "delete: it's gone");
+        CHECK(!db.deleteContest(cid),
+              "delete: a contest with QSOs is refused");
+        CHECK(db.contest(cid).id == cid, "delete: the logged one stays");
+    }
+
     // Push to the everyday logbook: rows land once; a second press
     // skips every one of them (near-dupe guard).
     {

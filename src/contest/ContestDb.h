@@ -54,6 +54,10 @@ public:
     bool   updateContest(const ContestRow& c);
     QList<ContestRow> contests() const;             // newest first
     ContestRow contest(qint64 id) const;
+    // Remove a contest ROW. Refuses (returns false) if it still holds
+    // any QSO or QTC — a logged contest is deleted QSO-by-QSO on
+    // purpose, never wholesale.
+    bool deleteContest(qint64 id);
 
     // Serial numbering: nextSerial is what the NEXT QSO sends. Persisted
     // on every change — a crash must not replay a serial on the air.

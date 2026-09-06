@@ -94,13 +94,6 @@ void ContestDeck::buildUi() {
         auto* mid = new QVBoxLayout;
         mid->setSpacing(3);
 
-        scpRow_ = new QWidget(this);
-        auto* sl = new QHBoxLayout(scpRow_);
-        sl->setContentsMargins(2, 0, 2, 0);
-        sl->setSpacing(10);
-        scpRow_->setFixedHeight(24);
-        mid->addWidget(scpRow_);
-
         // header: title · score · clock · run/s&p · wpm
         auto* hdr = new QHBoxLayout;
         title_ = new QLabel("no contest open", this);
@@ -147,6 +140,15 @@ void ContestDeck::buildUi() {
         });
         hdr->addWidget(wpm_);
         mid->addLayout(hdr);
+
+        // SUPER CHECK: one match line, DIRECTLY above the call box (the
+        // sketch's placement) — populates as the partial grows.
+        scpRow_ = new QWidget(this);
+        auto* sl = new QHBoxLayout(scpRow_);
+        sl->setContentsMargins(2, 0, 2, 0);
+        sl->setSpacing(10);
+        scpRow_->setFixedHeight(24);
+        mid->addWidget(scpRow_);
 
         // entry row
         auto* row = new QHBoxLayout;

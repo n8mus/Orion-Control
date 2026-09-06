@@ -127,22 +127,14 @@ void MainWindow::setupLogUi() {
         // station just worked (operator had to clear it by hand).
         if (cwWin_) cwWin_->setHisCall(QString());
     });
-    // Right-click fans out to the logbook browser and the contest logger
-    // — a menu, not new buttons, because the top strip has ~2 px of slack
-    // against the width budget (same reason the WinKeyer panel hangs off
-    // the CW button).
+    // Right-click = the logbook, directly — the operator's standing
+    // gesture, not a menu. The contest manager has its own doors (the
+    // CNTST toggle auto-opens it when no contest is loaded, and the
+    // deck's "Contest log…" button), and the fldigi window lives at the
+    // bottom of SDR ▾.
     logBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(logBtn, &QToolButton::customContextMenuRequested, this,
-            [this, logBtn](const QPoint& p) {
-                QMenu m(logBtn);
-                m.addAction("Logbook", this,
-                            [this] { openLogbookWindow(); });
-                m.addAction("Contest log…", this,
-                            [this] { openContestWindow(); });
-                m.addAction("Digi (fldigi)…", this,
-                            [this] { openDigiWindow(); });
-                m.exec(logBtn->mapToGlobal(p));
-            });
+            [this](const QPoint&) { openLogbookWindow(); });
     // Spot click -> send the call (and POTA park/grid) to cqrlog's New QSO,
     // and pre-fill the console's own entry window when it's open.
     connect(pan_, &PanadapterWidget::spotClicked, this,

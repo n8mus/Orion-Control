@@ -159,8 +159,16 @@ int main(int argc, char** argv) {
     CHECK(deck.classifySpot("W9ZZZ") == 'W',
           "deck: freshly logged call reclassifies as worked");
 
-    const QString png2 = png + ".deck.png";
+    // Screenshot with a partial typed so the SUPER CHECK line shows.
+    deck.prefillCall("N3J");
     deck.resize(1900, 270);
+    QCoreApplication::processEvents();   // let the layout place the row
+    QPushButton* scpHit = nullptr;
+    for (QPushButton* b : deck.findChildren<QPushButton*>())
+        if (b->text() == "N3JT") scpHit = b;
+    CHECK(scpHit && scpHit->isVisible(),
+          "deck: super check offers N3JT for partial N3J");
+    const QString png2 = png + ".deck.png";
     CHECK(deck.grab().save(png2), "deck screenshot saved");
     std::printf("      -> %s\n", qPrintable(png2));
 

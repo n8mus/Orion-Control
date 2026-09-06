@@ -1730,6 +1730,12 @@ MainWindow::MainWindow(QWidget* parent)
     }
     if (!hangGrp->checkedAction())         // stale setting: default 1 s
         hangGrp->actions().first()->setChecked(true);
+    // The fldigi companion window, parked here since its old button
+    // became CNTST. The operator never opens it; public-alpha users who
+    // had a DIGI button still have a door.
+    sdrMenu->addSeparator();
+    connect(sdrMenu->addAction("Digi (fldigi) window…"), &QAction::triggered,
+            this, [this] { openDigiWindow(); });
     auto* txTick = new QTimer(this);
     txTick->setInterval(100);
     connect(txTick, &QTimer::timeout, this, [this, ifGain, lna] {

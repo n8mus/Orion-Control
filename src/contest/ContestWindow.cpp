@@ -88,6 +88,21 @@ void ContestWindow::buildUi() {
         locationEdit_->setToolTip(
             "Cabrillo LOCATION: (ARRL section / state)");
         h->addWidget(locationEdit_);
+        h->addWidget(new QLabel("email:", this));
+        emailEdit_ = new QLineEdit(
+            QSettings().value("station/email",
+                              QSettings().value("club/email").toString())
+                .toString(),
+            this);
+        emailEdit_->setObjectName("email");
+        emailEdit_->setFixedWidth(170);
+        emailEdit_->setToolTip("Cabrillo EMAIL: — the log robots require "
+                               "it. Saved with your station.");
+        connect(emailEdit_, &QLineEdit::editingFinished, this, [this] {
+            QSettings().setValue("station/email",
+                                 emailEdit_->text().trimmed());
+        });
+        h->addWidget(emailEdit_);
         auto* startBtn = new QPushButton("Start", this);
         connect(startBtn, &QPushButton::clicked, this,
                 [this] { newContest(); });
@@ -524,6 +539,11 @@ void ContestWindow::exportCabrillo() {
     st.location = s.value("contest/location", "MI").toString();
     st.name = s.value("contest/opname").toString();
     st.address = s.value("contest/address").toString();
+    // Sponsors' log robots require an EMAIL: header (All Asian rejects
+    // without it). station/email is the home; club/email is the old
+    // ClubLog address as a fallback so this is never blank again.
+    st.email = s.value("station/email",
+                       s.value("club/email").toString()).toString();
     st.club = row_.club;
     const QList<ContestDb::QtcRow> qtcs = db_->qtcRows(contestId_);
     const QString text =

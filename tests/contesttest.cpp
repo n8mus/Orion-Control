@@ -283,6 +283,11 @@ static void testSentExchInCab(const CtyLookup& cty) {
     const int rcvd = qline.indexOf("59 45");    // his RST + his age
     CHECK(sent > 0 && call > sent && rcvd > call,
           "aadx cab: sent RST+age, then call, then rcvd RST+age");
+    // The EMAIL: header the sponsors require.
+    st.email = "jon@example.com";
+    const QString t2 = Cabrillo::build(*d, c, qsos, {}, st, &cty, ctx);
+    CHECK(t2.contains("EMAIL: jon@example.com"),
+          "aadx cab: EMAIL header present when the station has one");
 }
 
 static void testQtc(const QString& dir, const CtyLookup& cty) {

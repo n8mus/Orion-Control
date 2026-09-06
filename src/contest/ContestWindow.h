@@ -78,6 +78,7 @@ private:
     QLineEdit* sentExchEdit_ = nullptr;   // New-contest row
     QLineEdit* openExchEdit_ = nullptr;   // open contest, editable
     QLineEdit* locationEdit_ = nullptr;
+    QLineEdit* emailEdit_ = nullptr;      // Cabrillo EMAIL:
     QLabel* title_ = nullptr;
     QLabel* score_ = nullptr;
     QTableWidget* table_ = nullptr;

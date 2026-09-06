@@ -416,6 +416,7 @@ void ContestDeck::rebuildEntryFields() {
         auto* e = new QLineEdit(preset, fieldsBox_);
         e->setMaxLength(qMax(widthCh + 4, 6));
         e->setFixedWidth(22 + widthCh * 10);
+        e->installEventFilter(this);     // ↑/↓ speed from here too
         connect(e, &QLineEdit::returnPressed, this,
                 [this] { enterPressed(); });
         connect(e, &QLineEdit::textEdited, this,
@@ -677,6 +678,13 @@ void ContestDeck::setVoiceKeyer(std::function<void(int)> play,
                                 std::function<void()> stop) {
     playVk_ = std::move(play);
     stopVoice_ = std::move(stop);
+}
+
+void ContestDeck::nudgeSpeed(int delta) {
+    // Up = faster, down = slower — CW only; a phone contest has no
+    // keying speed and a surprise wpm change would outlive the weekend.
+    if (modeNow() != QLatin1String("CW")) return;
+    wpm_->setValue(wpm_->value() + delta);   // handler drives the keyer
 }
 
 void ContestDeck::keyFkey(int idx0) {
@@ -972,6 +980,15 @@ void ContestDeck::refreshAll() {
 // ---- key routing ---------------------------------------------------------
 
 bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
+    if (ev->type() == QEvent::KeyPress) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        // ↑/↓ = keying speed from ANY entry field — the hands never
+        // leave the keyboard mid-run (up faster, down slower).
+        if (ke->key() == Qt::Key_Up || ke->key() == Qt::Key_Down) {
+            nudgeSpeed(ke->key() == Qt::Key_Up ? +1 : -1);
+            return true;
+        }
+    }
     if (obj == call_ && ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (ke->key() == Qt::Key_Space) {

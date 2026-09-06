@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QTemporaryDir>
 #include <cstdio>
@@ -170,6 +171,17 @@ int main(int argc, char** argv) {
         QKeyEvent left(QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier);
         QCoreApplication::sendEvent(wCall, &left);
         CHECK(walked == 2, "walk: typing reclaims the arrows for editing");
+        // ↑/↓ = keying speed, even with text in the box (CW contest).
+        auto* wpmSpin = deck.findChild<QSpinBox*>();
+        const int wpm0 = wpmSpin->value();
+        QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+        QCoreApplication::sendEvent(wCall, &up);
+        QKeyEvent up2(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+        QCoreApplication::sendEvent(wCall, &up2);
+        QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+        QCoreApplication::sendEvent(wCall, &down);
+        CHECK(wpmSpin->value() == wpm0 + 1,
+              "speed: ↑↑↓ from the call box nets +1 wpm");
         wCall->clear();
     }
 

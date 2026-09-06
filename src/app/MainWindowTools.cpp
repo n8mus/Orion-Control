@@ -387,6 +387,10 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
             walkContestSpot(ke->key() == Qt::Key_Right ? +1 : -1);
             return true;
         }
+        if (ke->key() == Qt::Key_Up || ke->key() == Qt::Key_Down) {
+            contestDeck_->nudgeSpeed(ke->key() == Qt::Key_Up ? +1 : -1);
+            return true;
+        }
     }
     return QMainWindow::eventFilter(obj, ev);
 }

@@ -51,6 +51,8 @@ public:
     // Phone contests: {VK1}..{VK4} macros play DVR slots through these.
     void setVoiceKeyer(std::function<void(int)> play,
                        std::function<void()> stop);
+    // ↑/↓ anywhere in contest mode: keying speed (CW contests only).
+    void nudgeSpeed(int delta);
     bool openContestId(qint64 id);
     bool contestActive() const { return contestId_ >= 0; }
 

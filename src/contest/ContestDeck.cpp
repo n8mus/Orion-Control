@@ -290,20 +290,6 @@ void ContestDeck::buildUi() {
             if (cw_) cw_->setSpeedWpm(v);
         });
         hdr->addWidget(wpm_);
-        // STOP rides the header (Esc also stops) so the two F-key rows
-        // stay an even six-and-six.
-        auto* stop = new QPushButton("STOP", this);
-        stop->setFocusPolicy(Qt::NoFocus);
-        stop->setToolTip("Stop keying immediately (Esc does the same)");
-        stop->setStyleSheet("QPushButton { color:#f0a0a0;"
-                            " border-color:#b45050; }");
-        connect(stop, &QPushButton::clicked, this, [this] {
-            if (cw_) cw_->stopKeying();
-            if (stopVoice_) stopVoice_();
-            if (autoBtn_ && autoBtn_->isChecked())
-                autoBtn_->setChecked(false);
-        });
-        hdr->addWidget(stop);
         mid->addLayout(hdr);
 
         // Score / rate on its own line under the contest name.
@@ -550,13 +536,7 @@ void ContestDeck::buildUi() {
     };
     for (int i = 0; i < 12; ++i)
         sc(QKeySequence(Qt::Key_F1 + i), [this, i] { keyFkey(i); });
-    sc(QKeySequence(Qt::Key_Escape), [this] {
-        if (cw_) cw_->stopKeying();
-        if (stopVoice_) stopVoice_();
-        if (autoBtn_ && autoBtn_->isChecked())
-            autoBtn_->setChecked(false);   // Esc kills the robot too
-        status_->setText("keying stopped");
-    });
+    sc(QKeySequence(Qt::Key_Escape), [this] { stopEverything(); });
     sc(QKeySequence(Qt::Key_PageUp),
        [this] { wpm_->setValue(wpm_->value() + 1); });
     sc(QKeySequence(Qt::Key_PageDown),
@@ -1504,6 +1484,14 @@ void ContestDeck::refreshAll() {
 
 // ---- key routing ---------------------------------------------------------
 
+void ContestDeck::stopEverything() {
+    if (cw_) cw_->stopKeying();      // dump the WinKeyer buffer NOW
+    if (stopVoice_) stopVoice_();
+    if (autoBtn_ && autoBtn_->isChecked())
+        autoBtn_->setChecked(false); // Esc also kills the auto-CQ robot
+    status_->setText("stopped");
+}
+
 bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
     if (ev->type() == QEvent::Close) {
         // A closing float returns its pane to the deck.
@@ -1517,6 +1505,13 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
     }
     if (ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
+        // Esc stops keying from ANY entry field — a QLineEdit doesn't
+        // consume it, but the window shortcut lost to focus, so catch
+        // it here where it can't be missed (the auto-CQ-won't-quit bug).
+        if (ke->key() == Qt::Key_Escape) {
+            stopEverything();
+            return true;
+        }
         // ↑/↓ = keying speed from ANY entry field — the hands never
         // leave the keyboard mid-run (up faster, down slower).
         if (ke->key() == Qt::Key_Up || ke->key() == Qt::Key_Down) {

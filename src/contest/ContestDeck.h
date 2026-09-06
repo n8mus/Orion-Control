@@ -124,6 +124,7 @@ private:
     void historyPrefill();                  // space in the call box
     void refreshScp();
     void keyText(const QString& text);
+    void stopEverything();           // Esc: dump keyer/voice, kill auto-CQ
     // True heading: QRZ grid > call-history grid > entity centre, and
     // the label SAYS which one is on screen (the "rose stuck at 228°"
     // evening was an unlabeled centroid, not a bug).

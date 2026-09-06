@@ -196,9 +196,10 @@ void ContestDeck::buildUi() {
         esmOn_ = QSettings().value("contest/esm", true).toBool();
         esmBtn_->setChecked(esmOn_);
         esmBtn_->setToolTip(
-            "Enter sends the next message (CW keys it, phone plays the "
-            "VK slot).\nOFF: Enter only logs when the exchange is "
-            "complete — nothing transmits by itself.");
+            "CW contests only: Enter keys the next CW message for you "
+            "(answer, TU+log).\nOFF: Enter only logs.\nOn PHONE, Enter "
+            "NEVER transmits regardless — voice plays only from an "
+            "F-key you push.");
         connect(esmBtn_, &QPushButton::toggled, this, [this](bool on) {
             esmOn_ = on;
             QSettings().setValue("contest/esm", on);
@@ -697,7 +698,10 @@ char ContestDeck::classifySpot(const QString& call, qint64 hz) const {
 void ContestDeck::enterPressed() {
     if (contestId_ < 0 || !def_) return;
     EsmInput in;
-    in.esmOn = esmOn_;
+    // THE PHONE RULE (operator's, absolute): on voice, the transmitter
+    // moves only when an F-key is deliberately pushed — Enter never
+    // speaks. Enter-sends-message automation is a CW concept.
+    in.esmOn = esmOn_ && modeNow() == QLatin1String("CW");
     in.run = runMode_;
     const QString c = call_->text().trimmed();
     in.callEmpty = c.isEmpty();
@@ -772,7 +776,7 @@ void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
 void ContestDeck::updateEsmHint() {
     if (contestId_ < 0 || !def_) return;
     EsmInput in;
-    in.esmOn = esmOn_;
+    in.esmOn = esmOn_ && modeNow() == QLatin1String("CW");
     in.run = runMode_;
     const QString c = call_->text().trimmed();
     in.callEmpty = c.isEmpty();

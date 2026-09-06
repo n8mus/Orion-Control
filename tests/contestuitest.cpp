@@ -212,11 +212,12 @@ int main(int argc, char** argv) {
         f1->click();
         CHECK(played == QList<int>{0},
               "voiceui: F1 plays VK1 (slot 0) instead of keying CW");
-        // ESM on an empty call box: Enter = CQ = the same voice slot.
+        // THE PHONE RULE: Enter on an empty call box plays NOTHING —
+        // only a pushed F-key speaks.
         auto* vCall = vdeck.findChild<QLineEdit*>("entryCall");
         QMetaObject::invokeMethod(vCall, "returnPressed");
-        CHECK(played.size() == 2 && played.last() == 0,
-              "voiceui: ESM Enter plays the CQ message");
+        CHECK(played.size() == 1,
+              "voiceui: phone Enter on an empty box stays silent");
         QPushButton* f2 = nullptr;
         for (QPushButton* b : vdeck.findChildren<QPushButton*>())
             if (b->text().startsWith("F2\n")) f2 = b;
@@ -228,30 +229,26 @@ int main(int argc, char** argv) {
         CHECK(snt && snt->text() == "59" && rcv && rcv->text() == "59",
               "voiceui: SSB contest presets 59, not 599");
 
-        // Unrecorded slot: nothing plays and the ESM beat stands still
-        // (the JI2MED live-find — a silent failure once marched the
-        // state machine and Enter stopped meaning anything).
-        vdeck.setVoiceKeyer([](int) { return false; }, [] {});
+        // THE PHONE RULE: Enter NEVER transmits on voice — even with
+        // ESM on and slots recorded. It logs when complete, or names
+        // the missing field. Voice moves only on a pushed F-key.
         const int before = played.size();
         auto* vCall2 = vdeck.findChild<QLineEdit*>("entryCall");
         vdeck.prefillCall("JI2MED");
-        QMetaObject::invokeMethod(vCall2, "returnPressed");  // exch refused
+        QMetaObject::invokeMethod(vCall2, "returnPressed");  // AGE empty
+        CHECK(played.size() == before && !vCall2->text().isEmpty(),
+              "voiceui: phone Enter with missing field plays NOTHING");
         rcv->setText("59");
         vdeck.findChild<QLineEdit*>("exchEdit1")->setText("45");
-        QMetaObject::invokeMethod(vCall2, "returnPressed");  // still answer
-        CHECK(played.size() == before && !vCall2->text().isEmpty(),
-              "voiceui: dead slots never advance the beats");
-
-        // ESM off: Enter is a plain log — no keying, box wipes.
-        QPushButton* esm = buttonWithText(&vdeck, "ESM");
-        CHECK(esm && esm->isChecked(), "voiceui: ESM button exists, on");
-        esm->click();
         QMetaObject::invokeMethod(vCall2, "returnPressed");
-        CHECK(db.qsos(sid).size() == 1
+        CHECK(played.size() == before && db.qsos(sid).size() == 1
                   && db.qsos(sid).last().v.call == "JI2MED"
                   && vCall2->text().isEmpty(),
-              "voiceui: ESM off, Enter just logs and wipes");
-        esm->click();                    // back on for anyone after us
+              "voiceui: phone Enter logs and wipes, still silent");
+        // F-keys remain the only voice trigger.
+        f1->click();
+        CHECK(played.size() == before + 1,
+              "voiceui: a pushed F-key still speaks");
     }
 
     // ---- abandon-on-QSY: grabbed calls clear, typed calls park ----------

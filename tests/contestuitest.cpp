@@ -82,6 +82,22 @@ int main(int argc, char** argv) {
     deck.setMasterScp({"N3JT", "N3JTX", "K6RB"});
     deck.show();
 
+    // The deck must never force the main window past the width budget
+    // (losing the maximize button is the symptom). Its minimum stays
+    // well under the toolbar's 1848 floor, and a long score can't drag
+    // it — the score is on its own line and the labels are shrinkable.
+    deck.ensurePolished();
+    const int deckEmpty = deck.minimumSizeHint().width();
+    for (QLabel* l : deck.findChildren<QLabel*>())
+        if (l->text().startsWith("· ")) {
+            l->setText("· 843 Q · 2107 pts · 187 mult · 394,009 · "
+                       "10q 156/h · 10m 132/h · 892 pt/h");
+            break;
+        }
+    deck.ensurePolished();
+    CHECK(deck.minimumSizeHint().width() <= deckEmpty
+              && deckEmpty < 1848,
+          "deck: width under budget and immune to score length");
     auto* dCall = deck.findChild<QLineEdit*>("entryCall");
     auto* dEx0 = deck.findChild<QLineEdit*>("exchEdit0");
     auto* dEx1 = deck.findChild<QLineEdit*>("exchEdit1");

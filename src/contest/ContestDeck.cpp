@@ -101,6 +101,14 @@ void ContestDeck::buildUi() {
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
     lay->setSpacing(6);
+    // The deck lives where the waterfall was and must never make the
+    // main window wider than the toolbar already does — losing the
+    // maximize button is the width-budget failure. A plain QLabel
+    // forces its full text width into the layout minimum, so the long
+    // pane titles and the verbose score were dragging the deck's floor
+    // up on the operator's font. Every label here is marked shrinkable
+    // at the end of buildUi(); the hard floor is then just the F-key
+    // row, which fits.
 
     // ---- CW READ (left; phone contests hide it) -------------------------
     {
@@ -167,15 +175,15 @@ void ContestDeck::buildUi() {
         auto* mid = new QVBoxLayout;
         mid->setSpacing(3);
 
-        // header: title · score · clock · run/s&p · wpm
+        // Top line: contest name (bold) + the mode buttons. The score
+        // lives on its OWN line below (operator's layout: the stats
+        // never belong between the name and RUN, crowding the width).
         auto* hdr = new QHBoxLayout;
         title_ = new QLabel("no contest open", this);
         QFont bf = title_->font();
         bf.setBold(true);
         title_->setFont(bf);
         hdr->addWidget(title_);
-        score_ = new QLabel(this);
-        hdr->addWidget(score_);
         hdr->addStretch(1);
         clock_ = new QLabel("--:--:--z", this);
         hdr->addWidget(clock_);
@@ -284,6 +292,11 @@ void ContestDeck::buildUi() {
         hdr->addWidget(wpm_);
         mid->addLayout(hdr);
 
+        // Score / rate on its own line under the contest name.
+        score_ = new QLabel(this);
+        score_->setStyleSheet("color:#8798a8;");
+        mid->addWidget(score_);
+
         // SUPER CHECK: one match line, DIRECTLY above the call box (the
         // sketch's placement) — populates as the partial grows.
         scpRow_ = new QWidget(this);
@@ -313,7 +326,8 @@ void ContestDeck::buildUi() {
         cf.setPointSize(cf.pointSize() + 5);
         call_->setFont(cf);
         call_->setMaxLength(14);
-        call_->setMinimumWidth(160);
+        call_->setMinimumWidth(120);
+        call_->setMaximumWidth(150);
         call_->installEventFilter(this);
         connect(call_, &QLineEdit::textEdited, this, [this] {
             callFromSpot_ = false;   // typing reclaims ←/→ for the cursor
@@ -377,30 +391,36 @@ void ContestDeck::buildUi() {
         st->addWidget(hint_);
         mid->addLayout(st);
 
-        // F keys
-        auto* fr = new QHBoxLayout;
-        fr->setSpacing(3);
+        // F keys — STACKED two rows of six (F1-F6 / F7-F12), so the
+        // deck's minimum width is ~half a 13-button row. STOP caps the
+        // second row.
+        auto* fr1 = new QHBoxLayout;
+        auto* fr2 = new QHBoxLayout;
+        fr1->setSpacing(3);
+        fr2->setSpacing(3);
         for (int i = 0; i < 12; ++i) {
             fk_[i] = new QPushButton(this);
             fk_[i]->setFocusPolicy(Qt::NoFocus);
-            fk_[i]->setMinimumWidth(46);
-            fk_[i]->setFixedHeight(34);
+            fk_[i]->setMinimumWidth(40);
+            fk_[i]->setFixedHeight(32);
             connect(fk_[i], &QPushButton::clicked, this,
                     [this, i] { keyFkey(i); });
             fk_[i]->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(fk_[i], &QPushButton::customContextMenuRequested,
                     this, [this, i](const QPoint&) { editFkey(i); });
-            fr->addWidget(fk_[i], 1);
+            (i < 6 ? fr1 : fr2)->addWidget(fk_[i], 1);
         }
         auto* stop = new QPushButton("STOP\nEsc", this);
         stop->setFocusPolicy(Qt::NoFocus);
-        stop->setFixedHeight(34);
+        stop->setFixedHeight(32);
+        stop->setMinimumWidth(40);
         connect(stop, &QPushButton::clicked, this, [this] {
             if (cw_) cw_->stopKeying();
             if (stopVoice_) stopVoice_();
         });
-        fr->addWidget(stop);
-        mid->addLayout(fr);
+        fr2->addWidget(stop, 1);
+        mid->addLayout(fr1);
+        mid->addLayout(fr2);
         lay->addLayout(mid, 22);
     }
 
@@ -530,6 +550,20 @@ void ContestDeck::buildUi() {
     sc(QKeySequence(Qt::Key_PageDown),
        [this] { wpm_->setValue(wpm_->value() - 1); });
     for (QShortcut* s : shortcuts_) s->setEnabled(false);
+
+    // Make every descriptive label width-shrinkable: a QLabel otherwise
+    // forces its full text width into the layout minimum. The entry
+    // boxes, F-keys and spinboxes keep their real minimums (those are
+    // the legitimate floor); only the prose labels stop dragging width.
+    // Maximum: the text width is a CEILING (won't grab extra space and
+    // misalign the row) and minimumWidth 0 drops the layout floor, so a
+    // long label clips instead of forcing the deck wider.
+    for (QLabel* l : findChildren<QLabel*>()) {
+        auto sp = l->sizePolicy();
+        sp.setHorizontalPolicy(QSizePolicy::Maximum);
+        l->setSizePolicy(sp);
+        l->setMinimumWidth(0);
+    }
     setEnabled(false);
 }
 

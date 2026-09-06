@@ -97,7 +97,7 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
 }
 
 void ContestDeck::buildUi() {
-    setFixedHeight(270);
+    setFixedHeight(288);   // room for the F-key block's symmetric gaps
     auto* lay = new QHBoxLayout(this);
     lay->setContentsMargins(4, 4, 4, 4);
     lay->setSpacing(6);
@@ -290,6 +290,20 @@ void ContestDeck::buildUi() {
             if (cw_) cw_->setSpeedWpm(v);
         });
         hdr->addWidget(wpm_);
+        // STOP rides the header (Esc also stops) so the two F-key rows
+        // stay an even six-and-six.
+        auto* stop = new QPushButton("STOP", this);
+        stop->setFocusPolicy(Qt::NoFocus);
+        stop->setToolTip("Stop keying immediately (Esc does the same)");
+        stop->setStyleSheet("QPushButton { color:#f0a0a0;"
+                            " border-color:#b45050; }");
+        connect(stop, &QPushButton::clicked, this, [this] {
+            if (cw_) cw_->stopKeying();
+            if (stopVoice_) stopVoice_();
+            if (autoBtn_ && autoBtn_->isChecked())
+                autoBtn_->setChecked(false);
+        });
+        hdr->addWidget(stop);
         mid->addLayout(hdr);
 
         // Score / rate on its own line under the contest name.
@@ -303,7 +317,7 @@ void ContestDeck::buildUi() {
         auto* sl = new QHBoxLayout(scpRow_);
         sl->setContentsMargins(2, 0, 2, 0);
         sl->setSpacing(10);
-        scpRow_->setFixedHeight(24);
+        scpRow_->setFixedHeight(20);
         mid->addWidget(scpRow_);
 
         // entry row
@@ -323,7 +337,7 @@ void ContestDeck::buildUi() {
         call_ = new QLineEdit(this);
         call_->setObjectName("entryCall");
         QFont cf = call_->font();
-        cf.setPointSize(cf.pointSize() + 5);
+        cf.setPointSize(cf.pointSize() + 3);   // big but condensed
         call_->setFont(cf);
         call_->setMaxLength(14);
         call_->setMinimumWidth(120);
@@ -391,36 +405,34 @@ void ContestDeck::buildUi() {
         st->addWidget(hint_);
         mid->addLayout(st);
 
-        // F keys — STACKED two rows of six (F1-F6 / F7-F12), so the
-        // deck's minimum width is ~half a 13-button row. STOP caps the
-        // second row.
+        // F keys — two even rows of six (F1-F6 / F7-F12), each button
+        // sized like the mode buttons (not stretched), CENTERED, with
+        // equal breathing space above / between / below so the block is
+        // symmetric within the deck.
         auto* fr1 = new QHBoxLayout;
         auto* fr2 = new QHBoxLayout;
-        fr1->setSpacing(3);
-        fr2->setSpacing(3);
+        fr1->setSpacing(6);
+        fr2->setSpacing(6);
+        fr1->addStretch(1);
+        fr2->addStretch(1);
         for (int i = 0; i < 12; ++i) {
             fk_[i] = new QPushButton(this);
             fk_[i]->setFocusPolicy(Qt::NoFocus);
-            fk_[i]->setMinimumWidth(40);
-            fk_[i]->setFixedHeight(32);
+            fk_[i]->setFixedSize(58, 34);
             connect(fk_[i], &QPushButton::clicked, this,
                     [this, i] { keyFkey(i); });
             fk_[i]->setContextMenuPolicy(Qt::CustomContextMenu);
             connect(fk_[i], &QPushButton::customContextMenuRequested,
                     this, [this, i](const QPoint&) { editFkey(i); });
-            (i < 6 ? fr1 : fr2)->addWidget(fk_[i], 1);
+            (i < 6 ? fr1 : fr2)->addWidget(fk_[i]);
         }
-        auto* stop = new QPushButton("STOP\nEsc", this);
-        stop->setFocusPolicy(Qt::NoFocus);
-        stop->setFixedHeight(32);
-        stop->setMinimumWidth(40);
-        connect(stop, &QPushButton::clicked, this, [this] {
-            if (cw_) cw_->stopKeying();
-            if (stopVoice_) stopVoice_();
-        });
-        fr2->addWidget(stop, 1);
-        mid->addLayout(fr1);
+        fr1->addStretch(1);
+        fr2->addStretch(1);
+        mid->addStretch(1);      // three equal gaps: above, between,
+        mid->addLayout(fr1);     // and below the two F-key rows
+        mid->addStretch(1);
         mid->addLayout(fr2);
+        mid->addStretch(1);
         lay->addLayout(mid, 22);
     }
 

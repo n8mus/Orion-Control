@@ -536,7 +536,9 @@ void ContestDeck::buildUi() {
     };
     for (int i = 0; i < 12; ++i)
         sc(QKeySequence(Qt::Key_F1 + i), [this, i] { keyFkey(i); });
-    sc(QKeySequence(Qt::Key_Escape), [this] { stopEverything(); });
+    // (No Esc QShortcut here — it competed with an app-level Escape and
+    // the ambiguity swallowed plain Esc. The entry event filter claims
+    // Esc via ShortcutOverride instead, so it always reaches us.)
     sc(QKeySequence(Qt::Key_PageUp),
        [this] { wpm_->setValue(wpm_->value() + 1); });
     sc(QKeySequence(Qt::Key_PageDown),
@@ -1503,11 +1505,19 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
                 return true;
             }
     }
+    // Claim Esc at the ShortcutOverride stage so a PLAIN Escape reaches
+    // the entry field as a normal key instead of being eaten by some
+    // app-level Escape shortcut (which is why only Shift+Esc worked).
+    if (ev->type() == QEvent::ShortcutOverride) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Escape) {
+            ev->accept();
+            return true;
+        }
+    }
     if (ev->type() == QEvent::KeyPress) {
         auto* ke = static_cast<QKeyEvent*>(ev);
-        // Esc stops keying from ANY entry field — a QLineEdit doesn't
-        // consume it, but the window shortcut lost to focus, so catch
-        // it here where it can't be missed (the auto-CQ-won't-quit bug).
+        // Esc stops keying from ANY entry field.
         if (ke->key() == Qt::Key_Escape) {
             stopEverything();
             return true;

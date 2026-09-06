@@ -90,6 +90,8 @@ signals:
     // a local spot at the frequency it was heard on (N1MM's "QSYing
     // wipes the call and spots it in the bandmap").
     void callParked(const QString& call, qint64 hz);
+    // Spot button: send the entered call up to the cluster.
+    void spotDxRequested(const QString& call, qint64 hz);
 
 protected:
     void showEvent(QShowEvent* e) override;

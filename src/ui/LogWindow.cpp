@@ -108,6 +108,16 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
     callRow->addWidget(globeBtn, 0);
     connect(globeBtn, &QPushButton::clicked, this,
             [this] { openBrowserGlobe(); });
+    auto* spotBtn = new QPushButton("Spot", this);
+    spotBtn->setToolTip("Send this call as a DX spot to the connected "
+                        "cluster node,\nat the radio's current frequency");
+    spotBtn->setFocusPolicy(Qt::NoFocus);
+    spotBtn->setMaximumWidth(56);
+    callRow->addWidget(spotBtn, 0);
+    connect(spotBtn, &QPushButton::clicked, this, [this] {
+        const QString c = call_->text().trimmed().toUpper();
+        if (!c.isEmpty()) emit spotRequested(c);
+    });
     country_ = new QLabel(this);
     country_->setTextFormat(Qt::PlainText);
     country_->setWordWrap(true);

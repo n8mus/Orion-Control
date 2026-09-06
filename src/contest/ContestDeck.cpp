@@ -476,6 +476,18 @@ void ContestDeck::buildUi() {
             qtc_->followCall(call_->text());
         });
         br->addWidget(qtcBtn_);
+        auto* spotBtn = new QPushButton("Spot", this);
+        spotBtn->setFocusPolicy(Qt::NoFocus);
+        spotBtn->setToolTip("Send the entered call as a DX spot to the "
+                            "cluster, at the dial frequency");
+        connect(spotBtn, &QPushButton::clicked, this, [this] {
+            const QString c = call_->text().trimmed().toUpper();
+            if (loggableCall(c))
+                emit spotDxRequested(c, rigHz_);
+            else
+                status_->setText("type the call before spotting it");
+        });
+        br->addWidget(spotBtn);
         auto* mgr = new QPushButton("Contest log…", this);
         mgr->setFocusPolicy(Qt::NoFocus);
         connect(mgr, &QPushButton::clicked, this,

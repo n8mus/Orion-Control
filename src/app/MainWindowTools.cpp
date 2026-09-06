@@ -194,6 +194,19 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                     "CQRCLEAR", QHostAddress::LocalHost,
                     quint16(QSettings().value("log/port", 2334).toInt()));
         });
+        // Spot: hand the call up to the cluster at the dial frequency.
+        connect(logWin_, &LogWindow::spotRequested, this,
+                [this](const QString& call) {
+                    statusBar()->showMessage(
+                        spotClient_.spotDx(call, qint64(centerHz_))
+                            ? QString("spotted %1 at %2 kHz")
+                                  .arg(call)
+                                  .arg(centerHz_ / 1000.0, 0, 'f', 1)
+                            : QStringLiteral(
+                                  "spot NOT sent — no logged-in cluster "
+                                  "connection (SPOTS ▾)"),
+                        6000);
+                });
         connect(logWin_, &LogWindow::qsoLogged, this,
                 [this](qint64 id, const QString& c) {
                     statusBar()->showMessage("logged " + c, 3000);
@@ -330,6 +343,18 @@ void MainWindow::toggleContestMode(bool on) {
             leftLay_->insertWidget(2, contestDeck_);   // under the pan
             connect(contestDeck_, &ContestDeck::openManagerRequested,
                     this, [this] { openContestWindow(); });
+            connect(contestDeck_, &ContestDeck::spotDxRequested, this,
+                    [this](const QString& call, qint64 hz) {
+                        statusBar()->showMessage(
+                            spotClient_.spotDx(call, hz)
+                                ? QString("spotted %1 at %2 kHz")
+                                      .arg(call)
+                                      .arg(hz / 1000.0, 0, 'f', 1)
+                                : QStringLiteral(
+                                      "spot NOT sent — no logged-in "
+                                      "cluster connection (SPOTS ▾)"),
+                            6000);
+                    });
             connect(contestDeck_, &ContestDeck::walkSpots, this,
                     [this](int d) { walkContestSpot(d); });
             // BOTH ears feed the deck; applyCwRxRouting keeps exactly

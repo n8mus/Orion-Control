@@ -119,6 +119,24 @@ void SpotClient::clear() {
     emit spotsChanged();
 }
 
+bool SpotClient::spotDx(const QString& call, qint64 hz,
+                        const QString& comment) {
+    if (!enabled_ || sock_.state() != QAbstractSocket::ConnectedState
+        || !loginSent_)
+        return false;
+    const QString c = call.trimmed().toUpper();
+    if (c.isEmpty() || hz <= 0) return false;
+    QString line =
+        QString("DX %1 %2").arg(hz / 1000.0, 0, 'f', 1).arg(c);
+    const QString cm = comment.trimmed();
+    if (!cm.isEmpty()) line += ' ' + cm;
+    sock_.write(line.toLatin1() + "\r\n");
+    emit statusChanged(QString("spotted %1 at %2 kHz")
+                           .arg(c)
+                           .arg(hz / 1000.0, 0, 'f', 1));
+    return true;
+}
+
 static qint64 ttlFor(const Spot& s) {
     return s.kind == 'F' ? kFt8TtlSecs : kSpotTtlSecs;
 }

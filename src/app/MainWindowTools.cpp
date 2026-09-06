@@ -397,6 +397,11 @@ bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
 
 // ←/→ with an empty call box: jump the dial along the spots on screen,
 // skipping everything the contest says is worthless (worked, zero-pt).
+// Fenced to the band under the dial: the cluster aggregate spans every
+// band, and an unfenced walk once QSY'd the operator to 20 m mid-40 m
+// run — at this station a band change means antennas and amp retuning,
+// never a side effect of an arrow key. Band moves stay on the band
+// buttons.
 void MainWindow::walkContestSpot(int dir) {
     if (shownSpots_.isEmpty()) return;
     QVector<const SpotLabel*> ord;
@@ -406,7 +411,9 @@ void MainWindow::walkContestSpot(int dir) {
                   return a->hz < b->hz;
               });
     const qint64 cur = qint64(centerHz_);
-    const auto worthy = [](const SpotLabel* s) {
+    const QString band = LogbookIndex::bandForHz(cur);
+    const auto worthy = [&band](const SpotLabel* s) {
+        if (LogbookIndex::bandForHz(s->hz) != band) return false;
         return s->contest == 0 || s->contest == 'M' || s->contest == 'N';
     };
     const SpotLabel* pick = nullptr;

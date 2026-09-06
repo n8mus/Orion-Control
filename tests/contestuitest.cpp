@@ -6,6 +6,7 @@
 //   QT_QPA_PLATFORM=offscreen ./contestuitest [out.png]
 #include <QApplication>
 #include <QComboBox>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -146,6 +147,31 @@ int main(int argc, char** argv) {
     load->click();
     CHECK(qtable->rowCount() == 0,
           "qtcui: station at the 10-QTC cap loads nothing");
+
+    // ---- the arrow walk: empty box, spot landing, typing ----------------
+    {
+        int walked = 0;
+        QObject::connect(&deck, &ContestDeck::walkSpots,
+                         [&walked](int) { ++walked; });
+        auto* wCall = deck.findChild<QLineEdit*>("entryCall");
+        wCall->clear();
+        wCall->setFocus();
+        QKeyEvent right(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QCoreApplication::sendEvent(wCall, &right);
+        CHECK(walked == 1, "walk: empty call box, → walks");
+        // A landing fills the box — the arrows must KEEP walking.
+        deck.prefillCall("DL8WPX");
+        QKeyEvent right2(QEvent::KeyPress, Qt::Key_Right, Qt::NoModifier);
+        QCoreApplication::sendEvent(wCall, &right2);
+        CHECK(walked == 2, "walk: rolls onward from an untouched landing");
+        // The first typed character hands the arrows back to the cursor.
+        QKeyEvent typeD(QEvent::KeyPress, Qt::Key_D, Qt::NoModifier, "D");
+        QCoreApplication::sendEvent(wCall, &typeD);
+        QKeyEvent left(QEvent::KeyPress, Qt::Key_Left, Qt::NoModifier);
+        QCoreApplication::sendEvent(wCall, &left);
+        CHECK(walked == 2, "walk: typing reclaims the arrows for editing");
+        wCall->clear();
+    }
 
     // ---- phone contest: F-keys play voice slots -------------------------
     {

@@ -118,6 +118,7 @@ private:
     bool runMode_ = true;
     bool esmOn_ = true;
     bool myCallSent_ = false, exchSent_ = false;
+    bool callFromSpot_ = false;      // box filled by walk/click, untouched
     double myLat_ = 0, myLon_ = 0;
     int hdg_ = -1;
 

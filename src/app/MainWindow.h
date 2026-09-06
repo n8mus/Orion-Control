@@ -94,6 +94,7 @@ private:
     void openContestWindow();          // contest manager window (lazy)
     void toggleContestMode(bool on);   // CONTEST button: deck <-> waterfall
     void walkContestSpot(int dir);     // ←/→ from the deck's empty call box
+    bool eventFilter(QObject* obj, QEvent* ev) override;  // pan arrows
     void applyCwRxRouting();           // decode enables incl. contest feed
     bool contestDeckVisible() const;
     char contestClassify(const QString& call) const;

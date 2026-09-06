@@ -985,11 +985,22 @@ MainWindow::MainWindow(QWidget* parent)
                 if (watchBeep->isChecked()) QApplication::beep();
             }
         }
-        // Contest mode: overlay what each spot is WORTH right now (mult /
-        // new / worked / zero) — and keep the list for the ←/→ walk.
-        if (contestDeck_ && contestDeckVisible())
+        // Contest mode: the map carries contest traffic ONLY — POTA and
+        // FT8 spots sit out (their calls would classify as juicy mults
+        // they aren't), and what remains is colored by what it is WORTH
+        // right now (mult / new / worked / zero), judged against THIS
+        // contest's log alone. The SPOTS ▾ checkboxes come back
+        // untouched when contest mode ends.
+        if (contestDeck_ && contestDeckVisible()) {
+            labels.erase(std::remove_if(labels.begin(), labels.end(),
+                                        [](const SpotLabel& l) {
+                                            return l.kind == 'P'
+                                                || l.kind == 'F';
+                                        }),
+                         labels.end());
             for (SpotLabel& l : labels)
                 l.contest = contestClassify(l.call);
+        }
         shownSpots_ = labels;
         pan_->setSpots(labels);
         if (spotTable_) spotTable_->setSpots(labels);

@@ -360,9 +360,11 @@ void MainWindow::toggleContestMode(bool on) {
         contestDeck_->setVisible(true);
         contestRx_ = true;
         applyCwRxRouting();
+        pan_->installEventFilter(this);      // arrows walk from the pan too
         if (!contestDeck_->contestActive()) openContestWindow();
     } else {
         if (contestDeck_) contestDeck_->setVisible(false);
+        pan_->removeEventFilter(this);
         DisplaySettings ds = pan_->displaySettings();
         ds.split = savedSplit_ > 0.0f && savedSplit_ < 1.0f ? savedSplit_
                                                             : 0.42f;
@@ -371,6 +373,22 @@ void MainWindow::toggleContestMode(bool on) {
         applyCwRxRouting();
     }
     if (pushSpots_) pushSpots_();      // recolor the labels immediately
+}
+
+// Contest mode: the arrows must work wherever focus landed — a mouse
+// click parks focus on the panadapter, and the operator's hands live on
+// the keyboard. The deck's call box has its own filter; this one covers
+// the pan.
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
+    if (obj == pan_ && ev->type() == QEvent::KeyPress
+        && contestDeckVisible()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right) {
+            walkContestSpot(ke->key() == Qt::Key_Right ? +1 : -1);
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
 }
 
 // ←/→ with an empty call box: jump the dial along the spots on screen,

@@ -185,8 +185,10 @@ void ContestDeck::buildUi() {
         call_->setMaxLength(14);
         call_->setMinimumWidth(160);
         call_->installEventFilter(this);
-        connect(call_, &QLineEdit::textEdited, this,
-                [this] { onCallEdited(); });
+        connect(call_, &QLineEdit::textEdited, this, [this] {
+            callFromSpot_ = false;   // typing reclaims ←/→ for the cursor
+            onCallEdited();
+        });
         connect(call_, &QLineEdit::returnPressed, this,
                 [this] { enterPressed(); });
         cbox->addWidget(clbl);
@@ -468,6 +470,7 @@ void ContestDeck::prefillCall(const QString& call) {
     call_->setText(call.trimmed().toUpper());
     myCallSent_ = exchSent_ = false;
     onCallEdited();
+    callFromSpot_ = true;            // ←/→ keep walking from here
     requestQrz(call_->text().trimmed());  // a spot call is complete: ask now
     call_->setFocus();
 }
@@ -979,9 +982,11 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
             return true;
         }
         if ((ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right)
-            && call_->text().isEmpty()) {
-            // Empty call box: the arrows walk the panadapter spots.
-            // With text present they stay text-cursor keys.
+            && (call_->text().isEmpty() || callFromSpot_)) {
+            // The arrows walk the spots while the box is empty OR still
+            // holding an untouched walk/click landing — that's what
+            // lets ←/→ ROLL through the band. The first typed character
+            // hands the arrows back to the text cursor.
             emit walkSpots(ke->key() == Qt::Key_Right ? +1 : -1);
             return true;
         }

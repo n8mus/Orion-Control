@@ -19,6 +19,10 @@
 #include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
+#include "contest/ContestDb.h"
+#include "contest/ContestDeck.h"
+#include "contest/ContestWindow.h"
+#include <algorithm>
 #include "ui/LogWindow.h"
 #include "ui/LogbookWindow.h"
 #include "ui/SpotTableWindow.h"
@@ -123,6 +127,11 @@ void MainWindow::setupLogUi() {
         // station just worked (operator had to clear it by hand).
         if (cwWin_) cwWin_->setHisCall(QString());
     });
+    // Right-click = the logbook, directly — the operator's standing
+    // gesture, not a menu. The contest manager has its own doors (the
+    // CNTST toggle auto-opens it when no contest is loaded, and the
+    // deck's "Contest log…" button), and the fldigi window lives at the
+    // bottom of SDR ▾.
     logBtn->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(logBtn, &QToolButton::customContextMenuRequested, this,
             [this](const QPoint&) { openLogbookWindow(); });
@@ -131,6 +140,13 @@ void MainWindow::setupLogUi() {
     connect(pan_, &PanadapterWidget::spotClicked, this,
             [this](const QString& call, QChar kind, const QString& tg) {
                 if (cwWin_) cwWin_->setHisCall(call);
+                if (contestDeckVisible()) {
+                    // The clicked spot's frequency anchors the call.
+                    qint64 spotHz = 0;
+                    for (const SpotLabel& s : shownSpots_)
+                        if (s.call == call) { spotHz = s.hz; break; }
+                    contestDeck_->prefillCall(call, spotHz);
+                }
                 QString park, grid;
                 if (kind == QChar('P')) {
                     park = tg;
@@ -178,6 +194,19 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                     "CQRCLEAR", QHostAddress::LocalHost,
                     quint16(QSettings().value("log/port", 2334).toInt()));
         });
+        // Spot: hand the call up to the cluster at the dial frequency.
+        connect(logWin_, &LogWindow::spotRequested, this,
+                [this](const QString& call) {
+                    statusBar()->showMessage(
+                        spotClient_.spotDx(call, qint64(centerHz_))
+                            ? QString("spotted %1 at %2 kHz")
+                                  .arg(call)
+                                  .arg(centerHz_ / 1000.0, 0, 'f', 1)
+                            : QStringLiteral(
+                                  "spot NOT sent — no logged-in cluster "
+                                  "connection (SPOTS ▾)"),
+                        6000);
+                });
         connect(logWin_, &LogWindow::qsoLogged, this,
                 [this](qint64 id, const QString& c) {
                     statusBar()->showMessage("logged " + c, 3000);
@@ -262,6 +291,267 @@ void MainWindow::openLogbookWindow() {
     logbookWin_->activateWindow();
 }
 
+// The tuned reader serves two customers — the CW window's RX pane and
+// the contest deck's CW READ — and it has two possible ears: the SDR at
+// the dial or the RADIO's audio via the SignaLink (cw/rxRadio, the
+// operator's weak-signal choice). Whichever customer is awake powers
+// the OPERATOR'S chosen ear; wiring the deck to the IQ side only left
+// its pane blank at a station that decodes the radio audio (live-found
+// on the first contest-mode drive).
+void MainWindow::applyCwRxRouting() {
+    const bool want = rxWanted_ || contestRx_;
+    if (cwDec_) cwDec_->setEnabled(want && !rxRadio_);
+    if (audioDec_) audioDec_->setEnabled(want && rxRadio_);
+    if (audioSrc_) {
+        // Capture runs whenever decode is on, regardless of source: the
+        // pitch readout measures the radio's audio even while the SDR
+        // does the decoding.
+        if (want) audioSrc_->start();
+        else audioSrc_->stop();
+    }
+}
+
+bool MainWindow::contestDeckVisible() const {
+    return contestDeck_ && contestDeck_->isVisible();
+}
+
+char MainWindow::contestClassify(const QString& call, qint64 hz) const {
+    return contestDeck_ ? contestDeck_->classifySpot(call, hz) : 0;
+}
+
+// CONTEST button: swap the waterfall for the contest deck and back. The
+// spectrum above stays live — it IS the band map (operator's sketch).
+void MainWindow::toggleContestMode(bool on) {
+    if (on) {
+        if (!contestDeck_) {
+            if (!contestDb_) {
+                contestDb_ = new ContestDb(this);
+                if (!contestDb_->open()) {
+                    statusBar()->showMessage(
+                        "contest.db failed to open — contest mode "
+                        "unavailable", 8000);
+                    delete contestDb_;
+                    contestDb_ = nullptr;
+                    return;
+                }
+            }
+            // Full CW plumbing, window closed: deck F-keys must key
+            // whether or not the CW window is ever opened.
+            ensureCwWindow();
+            contestDeck_ = new ContestDeck(contestDb_, &cty_, cwWin_,
+                                           &rotor_, qrz_, this);
+            leftLay_->insertWidget(2, contestDeck_);   // under the pan
+            connect(contestDeck_, &ContestDeck::openManagerRequested,
+                    this, [this] { openContestWindow(); });
+            connect(contestDeck_, &ContestDeck::spotDxRequested, this,
+                    [this](const QString& call, qint64 hz) {
+                        statusBar()->showMessage(
+                            spotClient_.spotDx(call, hz)
+                                ? QString("spotted %1 at %2 kHz")
+                                      .arg(call)
+                                      .arg(hz / 1000.0, 0, 'f', 1)
+                                : QStringLiteral(
+                                      "spot NOT sent — no logged-in "
+                                      "cluster connection (SPOTS ▾)"),
+                            6000);
+                    });
+            connect(contestDeck_, &ContestDeck::walkSpots, this,
+                    [this](int d) { walkContestSpot(d); });
+            // BOTH ears feed the deck; applyCwRxRouting keeps exactly
+            // one enabled, following the operator's source choice.
+            if (cwDec_)
+                connect(cwDec_, &CwDecoder::textDecoded, contestDeck_,
+                        &ContestDeck::appendRead, Qt::QueuedConnection);
+            if (audioDec_)
+                connect(audioDec_, &CwDecoder::textDecoded, contestDeck_,
+                        &ContestDeck::appendRead, Qt::QueuedConnection);
+            auto* feed = new QTimer(contestDeck_);
+            feed->setInterval(1000);
+            connect(feed, &QTimer::timeout, contestDeck_, [this] {
+                if (!contestDeck_->isVisible()) return;
+                contestDeck_->setRig(qint64(centerHz_),
+                                     adifModeText(rigMode_));
+                // The call frame: nearest spot within 500 Hz of the
+                // dial — knob-tune onto someone and their call offers
+                // itself; Space grabs it.
+                const qint64 cur = qint64(centerHz_);
+                const SpotLabel* best = nullptr;
+                qint64 bestD = 501;
+                for (const SpotLabel& s : shownSpots_) {
+                    const qint64 d = qAbs(s.hz - cur);
+                    if (d < bestD) {
+                        bestD = d;
+                        best = &s;
+                    }
+                }
+                contestDeck_->setNearbySpot(
+                    best ? best->call : QString(),
+                    best ? best->contest : 0, best ? best->hz : 0);
+            });
+            feed->start();
+            connect(contestDeck_, &ContestDeck::callParked, this,
+                    [this](const QString& call, qint64 hz) {
+                        Spot s;
+                        s.call = call;
+                        s.hz = hz;
+                        s.atSecs = QDateTime::currentSecsSinceEpoch();
+                        for (int i = parkedSpots_.size() - 1; i >= 0; --i)
+                            if (parkedSpots_[i].call == call)
+                                parkedSpots_.removeAt(i);
+                        parkedSpots_.push_back(s);
+                        if (pushSpots_) pushSpots_();
+                        statusBar()->showMessage(
+                            QString("parked %1 at %2 kHz — it's on the "
+                                    "map for 20 min")
+                                .arg(call)
+                                .arg(hz / 1000.0, 0, 'f', 1),
+                            5000);
+                    });
+            contestDeck_->setMasterScp(loadMasterScp());
+            // Phone contests: {VKn} F-keys play DVR slots on the same
+            // rails as the TX-bar buttons; a press during playback
+            // aborts rather than stacking clips.
+            contestDeck_->setVoiceKeyer(
+                [this](int slot) -> bool {
+                    // A press during playback aborts (handled, beats
+                    // stand); otherwise report whether audio went out.
+                    if (stopVoicePlayback()) return true;
+                    return playVoiceSlot(slot);
+                },
+                [this] { stopVoicePlayback(); });
+        }
+        contestDeck_->setRig(qint64(centerHz_), adifModeText(rigMode_));
+        savedSplit_ = pan_->displaySettings().split;
+        DisplaySettings ds = pan_->displaySettings();
+        ds.split = 1.0f;                // spectrum takes the whole widget
+        pan_->setDisplaySettings(ds);
+        contestDeck_->setVisible(true);
+        contestRx_ = true;
+        applyCwRxRouting();
+        pan_->installEventFilter(this);      // arrows walk from the pan too
+        if (spotTable_) spotTable_->setContestMode(true);
+        if (!contestDeck_->contestActive()) openContestWindow();
+    } else {
+        if (contestDeck_) contestDeck_->setVisible(false);
+        pan_->removeEventFilter(this);
+        if (spotTable_) spotTable_->setContestMode(false);
+        DisplaySettings ds = pan_->displaySettings();
+        ds.split = savedSplit_ > 0.0f && savedSplit_ < 1.0f ? savedSplit_
+                                                            : 0.42f;
+        pan_->setDisplaySettings(ds);
+        contestRx_ = false;
+        applyCwRxRouting();
+    }
+    if (pushSpots_) pushSpots_();      // recolor the labels immediately
+}
+
+// Contest mode: the arrows must work wherever focus landed — a mouse
+// click parks focus on the panadapter, and the operator's hands live on
+// the keyboard. The deck's call box has its own filter; this one covers
+// the pan.
+bool MainWindow::eventFilter(QObject* obj, QEvent* ev) {
+    if (obj == pan_ && ev->type() == QEvent::KeyPress
+        && contestDeckVisible()) {
+        auto* ke = static_cast<QKeyEvent*>(ev);
+        if (ke->key() == Qt::Key_Left || ke->key() == Qt::Key_Right) {
+            walkContestSpot(ke->key() == Qt::Key_Right ? +1 : -1);
+            return true;
+        }
+        if (ke->key() == Qt::Key_Up || ke->key() == Qt::Key_Down) {
+            contestDeck_->nudgeSpeed(ke->key() == Qt::Key_Up ? +1 : -1);
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
+// ←/→ with an empty call box: jump the dial along the spots on screen,
+// skipping everything the contest says is worthless (worked, zero-pt).
+// Fenced to the band under the dial: the cluster aggregate spans every
+// band, and an unfenced walk once QSY'd the operator to 20 m mid-40 m
+// run — at this station a band change means antennas and amp retuning,
+// never a side effect of an arrow key. Band moves stay on the band
+// buttons.
+void MainWindow::walkContestSpot(int dir) {
+    if (shownSpots_.isEmpty()) return;
+    QVector<const SpotLabel*> ord;
+    for (const SpotLabel& s : shownSpots_) ord << &s;
+    std::sort(ord.begin(), ord.end(),
+              [](const SpotLabel* a, const SpotLabel* b) {
+                  return a->hz < b->hz;
+              });
+    const qint64 cur = qint64(centerHz_);
+    const QString band = LogbookIndex::bandForHz(cur);
+    const auto worthy = [&band](const SpotLabel* s) {
+        if (LogbookIndex::bandForHz(s->hz) != band) return false;
+        return s->contest == 0 || s->contest == 'M' || s->contest == 'N';
+    };
+    const SpotLabel* pick = nullptr;
+    if (dir > 0) {
+        for (const SpotLabel* s : ord)
+            if (s->hz > cur + 20 && worthy(s)) { pick = s; break; }
+    } else {
+        for (auto it = ord.rbegin(); it != ord.rend(); ++it)
+            if ((*it)->hz < cur - 20 && worthy(*it)) { pick = *it; break; }
+    }
+    if (!pick) return;                 // nothing worth tuning that way
+    onTuneRequested(int(pick->hz - cur), true);
+    if (contestDeck_) contestDeck_->prefillCall(pick->call, pick->hz);
+    if (cwWin_) cwWin_->setHisCall(pick->call);
+}
+
+void MainWindow::openDigiWindow() {
+    if (!digiWin_) {
+        fldigi_ = new FldigiClient(this);
+        fldigi_->setEndpoint(
+            QSettings().value("digi/host", "127.0.0.1").toString(),
+            quint16(QSettings().value("digi/port", 7362).toUInt()));
+        digiWin_ = new DigiWindow(fldigi_, toolWinParent(this));
+        adoptToolWindow(digiWin_);
+    }
+    digiWin_->show();
+    digiWin_->raise();
+    digiWin_->activateWindow();
+}
+
+void MainWindow::openContestWindow() {
+    if (!contestWin_) {
+        // The deck may have opened contest.db first — ONE instance, or
+        // the two surfaces stop hearing each other's changed() signals.
+        if (!contestDb_) {
+            contestDb_ = new ContestDb(this);
+            if (!contestDb_->open()) {
+                statusBar()->showMessage(
+                    "contest.db failed to open — contest logger "
+                    "unavailable", 8000);
+                delete contestDb_;
+                contestDb_ = nullptr;
+                return;
+            }
+        }
+        contestWin_ = new ContestWindow(contestDb_, &cty_, logDb_,
+                                        toolWinParent(this));
+        adoptToolWindow(contestWin_);
+        connect(contestWin_, &ContestWindow::contestOpened, this,
+                [this](qint64 id) {
+                    if (contestDeck_) contestDeck_->openContestId(id);
+                });
+        // Pushed contest QSOs ride to LoTW & the online logs on the
+        // uploader's catch-up sweep — one batch, one tqsl run.
+        connect(contestWin_, &ContestWindow::pushedToLogbook, this,
+                [this](int n) {
+                    if (!uploader_) return;
+                    uploader_->sweepSoon(500);
+                    statusBar()->showMessage(
+                        QString("%1 contest QSOs queued for the online "
+                                "logs").arg(n), 6000);
+                });
+    }
+    contestWin_->show();
+    contestWin_->raise();
+    contestWin_->activateWindow();
+}
+
 void MainWindow::enrichQso(qint64 id, const QString& call) {
     if (!qrz_ || id < 0) return;
     if (QSettings().value("up/qrzweb/user").toString().trimmed().isEmpty())
@@ -282,6 +572,11 @@ void MainWindow::openSpotTable() {
                        const QString& tag) {
                     if (hz > 0) radio_->setFrequencyHz(Rx::Main, hz);
                     if (cwWin_) cwWin_->setHisCall(call);
+                    // A table row is the deliberate cross-band gesture
+                    // (antennas and tuner follow the operator) — the
+                    // deck rides along like any spot click.
+                    if (contestDeckVisible())
+                        contestDeck_->prefillCall(call, hz);
                     QString park, grid;
                     if (kind == QChar('P')) {
                         park = tag;
@@ -291,6 +586,8 @@ void MainWindow::openSpotTable() {
                     sendCqrLookup(call, park, grid);
                 });
     }
+    // Opened mid-contest: come up already wearing the contest view.
+    spotTable_->setContestMode(contestDeckVisible());
     spotTable_->show();
     spotTable_->raise();
     spotTable_->activateWindow();
@@ -313,6 +610,123 @@ void MainWindow::sendCqrLookup(const QString& call, const QString& park,
         quint16(QSettings().value("log/port", 2334).toInt()));
 }
 
+// Build — but do not show — the CW window with its full plumbing:
+// keyer backend, decode feeds, cqrlog rails. Split out of the CW
+// button so the contest window can key through the console while the
+// CW window stays closed. The external-logger era silently no-op'd
+// every F-key whenever this window wasn't up; that trap ends here.
+void MainWindow::ensureCwWindow() {
+    if (cwWin_) return;
+    cwWin_ = new CwWindow(radio_, toolWinParent(this));
+    adoptToolWindow(cwWin_);
+    cwWin_->setMyCall(QSettings()
+        .value("station/callsign", "N8EM").toString());
+    cwWin_->setHisCall(QString());
+    // Double-clicked call in the decode pane rides the same rails
+    // as a spot click: send it to cqrlog's New QSO, arm the %c macro.
+    connect(cwWin_, &CwWindow::callDoubleClicked, this,
+            [this](const QString& call) {
+                cwWin_->setHisCall(call);
+                sendCqrLookup(call);
+                statusBar()->showMessage(
+                    QString("cqrlog ← %1 (from CW copy)")
+                        .arg(call), 5000);
+            });
+    // Same rails for a call typed by hand in the DX box: the
+    // console is the master of the callsign, cqrlog follows.
+    // (There is no path the other way — cqrlog's bridge is
+    // receive-only, so typing it THERE reaches nothing here.)
+    connect(cwWin_, &CwWindow::hisCallEntered, this,
+            [this](const QString& call) {
+                sendCqrLookup(call);
+                statusBar()->showMessage(
+                    QString("cqrlog ← %1 (typed)").arg(call), 5000);
+            });
+    if (cwDec_) {                  // SDR-fed CW reader plumbing
+        connect(cwDec_, &CwDecoder::textDecoded,
+                cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
+        connect(cwDec_, &CwDecoder::wpmEstimated,
+                cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+        // Two selectable ears for the same reader: the SDR at
+        // the dial (default; AF can be zero) or the RADIO's audio
+        // via the SignaLink — the input real fldigi gets, and the
+        // weak-signal winner while the SDR rides the passive tap.
+        // One decoder instance per source; exactly one enabled.
+        const int pitch =
+            QSettings().value("cw/pitchHz", 550).toInt();
+        audioDec_ = new CwDecoder(48000.0, double(pitch), this);
+        audioSrc_ = new AudioCwSource(audioDec_, this);
+        audioSrc_->setTargetPitch(pitch);   // never notch the target
+        connect(audioDec_, &CwDecoder::textDecoded,
+                cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
+        connect(audioDec_, &CwDecoder::wpmEstimated,
+                cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
+        connect(audioSrc_, &AudioCwSource::pitchMeasured,
+                cwWin_, &CwWindow::setRxPitch);
+        connect(audioSrc_, &AudioCwSource::pitchMeasured, this,
+                [this](double hz) {
+                    lastPitchHz_ = hz;
+                    lastPitchMs_ =
+                        QDateTime::currentMSecsSinceEpoch();
+                    pitchTrimFeed(hz);
+                });
+        connect(audioSrc_, &AudioCwSource::statusChanged, this,
+                [this](const QString& t) {
+                    statusBar()->showMessage(t, 6000);
+                });
+        rxRadio_ = QSettings().value("cw/rxRadio", false).toBool();
+        const auto applyRouting = [this] { applyCwRxRouting(); };
+        connect(cwWin_, &CwWindow::rxDecodeWanted, this,
+                [this, applyRouting](bool on) {
+                    rxWanted_ = on;
+                    applyRouting();
+                });
+        audioSrc_->setNr(QSettings().value("cw/nr", false).toBool());
+        connect(cwWin_, &CwWindow::rxNrChanged, this,
+                [this](bool on) { audioSrc_->setNr(on); });
+        connect(cwWin_, &CwWindow::zeroBeatRequested, this,
+                [this] { zeroBeat(); });
+        connect(cwWin_, &CwWindow::txImminent, this, [this] {
+            txPredictMs_ = QDateTime::currentMSecsSinceEpoch();
+        });
+        connect(cwWin_, &CwWindow::rxSourceChanged, this,
+                [this, applyRouting](bool radio) {
+                    rxRadio_ = radio;
+                    applyRouting();
+                });
+        // Decode-engine adjustments: apply the persisted state now,
+        // then live-follow the window's controls. These knobs steer
+        // the tuned reader (and its audio twin) only — the skimmer's
+        // channels run the engine at its defaults (SOM off; see
+        // SkimmerEngine's constructor for why).
+        const auto applyCfg = [this](bool eng, bool som, bool deep,
+                                     int atk, int dcy) {
+            for (CwDecoder* d : {cwDec_, audioDec_}) {
+                d->setEngineMode(eng);
+                d->setSom(som);
+                d->setDeep(deep);
+                d->setAttack(atk);
+                d->setDecay(dcy);
+            }
+        };
+        const auto applySql = [this](int sql) {
+            for (CwDecoder* d : {cwDec_, audioDec_})
+                d->setSquelch(double(sql));
+        };
+        QSettings cs;
+        applyCfg(cs.value("cw/engine", true).toBool(),
+                 cs.value("cw/som", true).toBool(),
+                 cs.value("cw/deep", false).toBool(),
+                 cs.value("cw/attack", 1).toInt(),
+                 cs.value("cw/decay", 1).toInt());
+        applySql(cs.value("cw/squelch", 12).toInt());
+        connect(cwWin_, &CwWindow::rxDecodeConfigChanged, this,
+                applyCfg);
+        connect(cwWin_, &CwWindow::rxSquelchChanged, this, applySql);
+    }
+    wireRigCwPanel();
+}
+
 void MainWindow::setupCwUi() {
     // "CW" button: the WinKeyer sending window (type-ahead + memories).
     // The keyer hardware keeps the paddle in charge; this is the keyboard.
@@ -327,124 +741,7 @@ void MainWindow::setupCwUi() {
     topLay2_->addSpacing(8);
     topLay2_->addWidget(cwBtn);
     connect(cwBtn, &QToolButton::clicked, this, [this] {
-        if (!cwWin_) {
-            cwWin_ = new CwWindow(radio_, toolWinParent(this));
-            adoptToolWindow(cwWin_);
-            cwWin_->setMyCall(QSettings()
-                .value("station/callsign", "N8EM").toString());
-            cwWin_->setHisCall(QString());
-            // Double-clicked call in the decode pane rides the same rails
-            // as a spot click: send it to cqrlog's New QSO, arm the %c macro.
-            connect(cwWin_, &CwWindow::callDoubleClicked, this,
-                    [this](const QString& call) {
-                        cwWin_->setHisCall(call);
-                        sendCqrLookup(call);
-                        statusBar()->showMessage(
-                            QString("cqrlog ← %1 (from CW copy)")
-                                .arg(call), 5000);
-                    });
-            // Same rails for a call typed by hand in the DX box: the
-            // console is the master of the callsign, cqrlog follows.
-            // (There is no path the other way — cqrlog's bridge is
-            // receive-only, so typing it THERE reaches nothing here.)
-            connect(cwWin_, &CwWindow::hisCallEntered, this,
-                    [this](const QString& call) {
-                        sendCqrLookup(call);
-                        statusBar()->showMessage(
-                            QString("cqrlog ← %1 (typed)").arg(call), 5000);
-                    });
-            if (cwDec_) {                  // SDR-fed CW reader plumbing
-                connect(cwDec_, &CwDecoder::textDecoded,
-                        cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
-                connect(cwDec_, &CwDecoder::wpmEstimated,
-                        cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
-                // Two selectable ears for the same reader: the SDR at
-                // the dial (default; AF can be zero) or the RADIO's audio
-                // via the SignaLink — the input real fldigi gets, and the
-                // weak-signal winner while the SDR rides the passive tap.
-                // One decoder instance per source; exactly one enabled.
-                const int pitch =
-                    QSettings().value("cw/pitchHz", 550).toInt();
-                audioDec_ = new CwDecoder(48000.0, double(pitch), this);
-                audioSrc_ = new AudioCwSource(audioDec_, this);
-                audioSrc_->setTargetPitch(pitch);   // never notch the target
-                connect(audioDec_, &CwDecoder::textDecoded,
-                        cwWin_, &CwWindow::appendRx, Qt::QueuedConnection);
-                connect(audioDec_, &CwDecoder::wpmEstimated,
-                        cwWin_, &CwWindow::setRxWpm, Qt::QueuedConnection);
-                connect(audioSrc_, &AudioCwSource::pitchMeasured,
-                        cwWin_, &CwWindow::setRxPitch);
-                connect(audioSrc_, &AudioCwSource::pitchMeasured, this,
-                        [this](double hz) {
-                            lastPitchHz_ = hz;
-                            lastPitchMs_ =
-                                QDateTime::currentMSecsSinceEpoch();
-                            pitchTrimFeed(hz);
-                        });
-                connect(audioSrc_, &AudioCwSource::statusChanged, this,
-                        [this](const QString& t) {
-                            statusBar()->showMessage(t, 6000);
-                        });
-                rxRadio_ = QSettings().value("cw/rxRadio", false).toBool();
-                const auto applyRouting = [this] {
-                    cwDec_->setEnabled(rxWanted_ && !rxRadio_);
-                    audioDec_->setEnabled(rxWanted_ && rxRadio_);
-                    // Capture runs whenever decode is on, regardless of
-                    // source: the pitch readout measures the radio's audio
-                    // even while the SDR does the decoding.
-                    if (rxWanted_) audioSrc_->start();
-                    else audioSrc_->stop();
-                };
-                connect(cwWin_, &CwWindow::rxDecodeWanted, this,
-                        [this, applyRouting](bool on) {
-                            rxWanted_ = on;
-                            applyRouting();
-                        });
-                audioSrc_->setNr(QSettings().value("cw/nr", false).toBool());
-                connect(cwWin_, &CwWindow::rxNrChanged, this,
-                        [this](bool on) { audioSrc_->setNr(on); });
-                connect(cwWin_, &CwWindow::zeroBeatRequested, this,
-                        [this] { zeroBeat(); });
-                connect(cwWin_, &CwWindow::txImminent, this, [this] {
-                    txPredictMs_ = QDateTime::currentMSecsSinceEpoch();
-                });
-                connect(cwWin_, &CwWindow::rxSourceChanged, this,
-                        [this, applyRouting](bool radio) {
-                            rxRadio_ = radio;
-                            applyRouting();
-                        });
-                // Decode-engine adjustments: apply the persisted state now,
-                // then live-follow the window's controls. These knobs steer
-                // the tuned reader (and its audio twin) only — the skimmer's
-                // channels run the engine at its defaults (SOM off; see
-                // SkimmerEngine's constructor for why).
-                const auto applyCfg = [this](bool eng, bool som, bool deep,
-                                             int atk, int dcy) {
-                    for (CwDecoder* d : {cwDec_, audioDec_}) {
-                        d->setEngineMode(eng);
-                        d->setSom(som);
-                        d->setDeep(deep);
-                        d->setAttack(atk);
-                        d->setDecay(dcy);
-                    }
-                };
-                const auto applySql = [this](int sql) {
-                    for (CwDecoder* d : {cwDec_, audioDec_})
-                        d->setSquelch(double(sql));
-                };
-                QSettings cs;
-                applyCfg(cs.value("cw/engine", true).toBool(),
-                         cs.value("cw/som", true).toBool(),
-                         cs.value("cw/deep", false).toBool(),
-                         cs.value("cw/attack", 1).toInt(),
-                         cs.value("cw/decay", 1).toInt());
-                applySql(cs.value("cw/squelch", 12).toInt());
-                connect(cwWin_, &CwWindow::rxDecodeConfigChanged, this,
-                        applyCfg);
-                connect(cwWin_, &CwWindow::rxSquelchChanged, this, applySql);
-            }
-            wireRigCwPanel();
-        }
+        ensureCwWindow();
         cwWin_->show();
         cwWin_->raise();
         cwWin_->activateWindow();
@@ -727,32 +1024,26 @@ void MainWindow::openSkimView() {
 }
 
 void MainWindow::setupDigiUi() {
-    // "DIGI" button: the fldigi companion window (modem/carrier readout,
-    // decoded text, click-to-carrier). fldigi already follows the dial
-    // through rigctld; this is the audio-domain half of the link.
-    auto* digiBtn = new QToolButton(topStrip_);
-    digiBtn->setText("DIGI");
-    digiBtn->setFocusPolicy(Qt::NoFocus);
-    digiBtn->setStyleSheet(QString(kToolBtnStyle));
-    digiBtn->setToolTip("fldigi link: decoded text + click a passband trace "
-                        "to set fldigi's carrier\n(fldigi must have XML-RPC "
-                        "on, its default)");
+    // "CNTST" button (the old DIGI slot — the operator never used the
+    // fldigi window from here, and it now lives on the LOG right-click):
+    // toggles contest mode. The label is deliberately short — the top
+    // strip has ~2 px of slack against the width budget.
+    auto* btn = new QToolButton(topStrip_);
+    btn->setText("CNTST");
+    btn->setCheckable(true);
+    btn->setFocusPolicy(Qt::NoFocus);
+    btn->setStyleSheet(QString(kToolBtnStyle));
+    btn->setToolTip("Contest mode: the waterfall hands its space to the "
+                    "contest deck\n(entry, F-keys, super check, CW "
+                    "read/type) and the spectrum's spot labels recolor\n"
+                    "to contest value — red mult, blue workable, gray "
+                    "worked, dim zero-points.\nPress again to get the "
+                    "waterfall back. Normal LOG keeps working either way.");
     topLay2_->addSpacing(8);
-    topLay2_->addWidget(digiBtn);
-    connect(digiBtn, &QToolButton::clicked, this, [this] {
-        if (!digiWin_) {
-            fldigi_ = new FldigiClient(this);
-            fldigi_->setEndpoint(
-                QSettings().value("digi/host", "127.0.0.1").toString(),
-                quint16(QSettings().value("digi/port", 7362).toUInt()));
-            digiWin_ = new DigiWindow(fldigi_, toolWinParent(this));
-            adoptToolWindow(digiWin_);
-        }
-        digiWin_->show();
-        digiWin_->raise();
-        digiWin_->activateWindow();
-    });
-
+    topLay2_->addWidget(btn);
+    connect(btn, &QToolButton::toggled, this,
+            [this](bool on) { toggleContestMode(on); });
+    contestBtn_ = btn;
 }
 
 void MainWindow::setupRotorUi() {

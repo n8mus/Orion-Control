@@ -17,6 +17,7 @@ class QUdpSocket;
 class QAction;
 class QDialog;
 class QHBoxLayout;
+class QVBoxLayout;
 #include "radio/TenTecOrion.h"
 #include "radio/LpMeter.h"
 #include "net/RigctldServer.h"
@@ -57,6 +58,9 @@ class QThread;
 
 namespace ttc {
 
+class ContestDb;
+class ContestDeck;
+class ContestWindow;
 class LogDb;
 class LogWindow;
 class LogbookWindow;
@@ -87,6 +91,17 @@ private:
     void openLogWindow(const QString& call = {}, const QString& park = {},
                        const QString& grid = {});
     void openLogbookWindow();
+    void openContestWindow();          // contest manager window (lazy)
+    void toggleContestMode(bool on);   // CONTEST button: deck <-> waterfall
+    void walkContestSpot(int dir);     // ←/→ from the deck's empty call box
+    bool eventFilter(QObject* obj, QEvent* ev) override;  // pan arrows
+    void applyCwRxRouting();           // decode enables incl. contest feed
+    bool contestDeckVisible() const;
+    char contestClassify(const QString& call, qint64 hz) const;
+    void openDigiWindow();             // fldigi link (now on LOG right-click)
+    void ensureCwWindow();             // build (not show) the CW window —
+                                       // contest keying needs the keyer
+                                       // path with the window closed
     void openSpotTable();
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
@@ -144,6 +159,8 @@ private:
     void dvrPlayOverAir(const QString& wav, int slot); // line-in + PTT + play
     QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
     QString vkPath(int slot) const;    // voice keyer message file for a slot
+    bool playVoiceSlot(int slot);      // VK play path; false = nothing out
+    bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers
     void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
     RadioController* radio_;                  // owned (QObject child); see makeRadio
@@ -408,6 +425,16 @@ private:
     void enrichQso(qint64 id, const QString& call);
     LogWindow* logWin_ = nullptr;              // New QSO entry (lazy)
     LogbookWindow* logbookWin_ = nullptr;      // logbook browser (lazy)
+    ContestDb* contestDb_ = nullptr;           // contest.db (lazy, own file)
+    ContestWindow* contestWin_ = nullptr;      // contest manager (lazy)
+    ContestDeck* contestDeck_ = nullptr;       // in-console deck (lazy)
+    QToolButton* contestBtn_ = nullptr;        // CNTST toggle (old DIGI slot)
+    QVBoxLayout* leftLay_ = nullptr;           // pan column; deck slots in
+    QVector<SpotLabel> shownSpots_;            // last push, for the walk
+    QVector<Spot> parkedSpots_;                // knob-QSY memories (local)
+    std::function<void()> pushSpots_;          // re-push (contest recolor)
+    float savedSplit_ = 0.42f;                 // waterfall split to restore
+    bool contestRx_ = false;                   // deck wants the CW decoder
     SpotTableWindow* spotTable_ = nullptr;     // cluster feed as a table (lazy)
     CwDecoder* cwDec_ = nullptr;               // SDR-fed CW reader
     CwDecoder* audioDec_ = nullptr;            // radio-audio CW reader (lazy)

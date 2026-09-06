@@ -138,6 +138,50 @@ QString MainWindow::vkPath(int slot) const {
     return dvrDir() + QString("/vk%1.wav").arg(slot + 1);
 }
 
+// The VK buttons' play path, callable — the contest deck's phone F-keys
+// ride the exact same rails (PTT, audio-route checks, drain-on-stop).
+// Returns whether anything actually went out, so the deck's ESM beats
+// only advance on real transmissions.
+bool MainWindow::playVoiceSlot(int slot) {
+    const QString f = vkPath(slot);
+    if (!QFileInfo::exists(f)) {
+        statusBar()->showMessage(QString(
+            "VK%1 is empty — right-click it on the TX bar to record a "
+            "message").arg(slot + 1));
+        return false;
+    }
+    if (radioDevUsed_.startsWith("udp:")) {
+        if (!QSettings().value("radio/tripAudio", false).toBool()) {
+            statusBar()->showMessage(
+                "VK: turn on TX audio first (SDR ▸ TX audio ▸ Mic or "
+                "Digital) — the keyed radio takes the Ethernet stream");
+            return false;
+        }
+    } else if (radioSink_.isEmpty()) {
+        statusBar()->showMessage(
+            "DVR: radio sound device (SignaLink) not found");
+        return false;
+    }
+    dvrPlayOverAir(f, slot);
+    statusBar()->showMessage(QString(
+        "VK%1 on the air — Esc or another press aborts").arg(slot + 1));
+    return true;
+}
+
+// True when something was playing/recording and got stopped — the
+// callers' "a press during playback only aborts" contract.
+bool MainWindow::stopVoicePlayback() {
+    if (dvr_->state() != ClipDeck::State::Idle) {
+        dvr_->stop();
+        return true;
+    }
+    if (dvrTxPlayback_) {
+        dvrStopped();
+        return true;
+    }
+    return false;
+}
+
 void MainWindow::stopManualTune() {
     if (!tuning_) return;
     tuning_ = false;

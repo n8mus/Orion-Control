@@ -84,6 +84,10 @@ struct SpotLabel {
     // Country/band/mode needed-status ('C' confirmed, 'W' worked, 'N'
     // needed, '?' unknown) — drawn as a dot triplet beside the call.
     char needC = '?', needB = '?', needM = '?';
+    // Contest-mode classification: 'M' new mult (red), 'N' workable
+    // (blue), 'W' worked/dupe (gray), 'Z' zero points (dim). 0 = no
+    // contest open; the normal colors above apply.
+    char contest = 0;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

@@ -100,6 +100,15 @@ add_executable(tentec-console
   src/net/RotorServer.cpp       src/net/RotorServer.h
   src/net/RotorLink.cpp         src/net/RotorLink.h
   src/ui/DigiWindow.cpp         src/ui/DigiWindow.h
+  src/contest/ContestDef.h
+  src/contest/ContestDefs.cpp
+  src/contest/ContestEngine.cpp src/contest/ContestEngine.h
+  src/contest/ContestDb.cpp     src/contest/ContestDb.h
+  src/contest/Cabrillo.cpp      src/contest/Cabrillo.h
+  src/contest/CallHistory.cpp   src/contest/CallHistory.h
+  src/contest/ContestWindow.cpp src/contest/ContestWindow.h
+  src/contest/ContestDeck.cpp   src/contest/ContestDeck.h
+  src/contest/QtcDialog.cpp     src/contest/QtcDialog.h
   src/log/Adif.cpp              src/log/Adif.h
   src/log/LogDb.cpp             src/log/LogDb.h
   src/log/QslUploader.cpp       src/log/QslUploader.h
@@ -239,6 +248,36 @@ add_executable(logtest EXCLUDE_FROM_ALL
   src/util/LogbookIndex.cpp src/util/CtyLookup.cpp)
 target_include_directories(logtest PRIVATE src)
 target_link_libraries(logtest PRIVATE Qt6::Core Qt6::Sql)
+
+# Contest engine: normalization, serials, dupe scopes, per-contest scoring,
+# ContestDb round-trip, and the Cabrillo build + parse-back self-check.
+add_executable(contesttest EXCLUDE_FROM_ALL
+  tests/contesttest.cpp
+  src/contest/ContestDefs.cpp src/contest/ContestEngine.cpp
+  src/contest/ContestDb.cpp src/contest/Cabrillo.cpp
+  src/contest/CallHistory.cpp
+  src/util/CtyLookup.cpp)
+target_include_directories(contesttest PRIVATE src)
+target_link_libraries(contesttest PRIVATE Qt6::Core Qt6::Sql)
+
+# Contest-window smoke harness: drives the real window offscreen (logs
+# QSOs through the widgets, checks db + score), saves a PNG to eyeball.
+add_executable(contestuitest EXCLUDE_FROM_ALL
+  tests/contestuitest.cpp
+  src/contest/ContestWindow.cpp src/contest/ContestDefs.cpp
+  src/contest/ContestEngine.cpp src/contest/ContestDb.cpp
+  src/contest/Cabrillo.cpp src/contest/CallHistory.cpp
+  src/contest/ContestDeck.cpp src/contest/QtcDialog.cpp
+  src/net/RotorLink.cpp src/net/RotorClient.cpp src/net/RotorServer.cpp
+  src/radio/DcuRotor.cpp src/radio/SerialPort.cpp
+  src/cw/CwWindow.cpp src/cw/WinKeyer.cpp src/cw/OrionKeyer.cpp
+  src/cw/CwKeyer.h
+  src/util/CtyLookup.cpp src/util/LogbookIndex.cpp
+  src/log/LogDb.cpp src/log/Adif.cpp src/log/QrzLookup.cpp
+  src/ui/SpotTableWindow.cpp src/ui/SpotTableWindow.h)
+target_include_directories(contestuitest PRIVATE src)
+target_link_libraries(contestuitest PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets
+  Qt6::Network Qt6::SerialPort Qt6::Sql)
 
 # Smith-chart render harness: draws a band's stored sweep runs to a PNG
 # (offscreen), for eyeballing the chart against real captured data.

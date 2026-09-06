@@ -29,6 +29,13 @@ public:
 
     void setSpots(const QVector<SpotLabel>& spots);   // from pushSpots
 
+    // Contest mode: the rows arrive contest-classified (SpotLabel::
+    // contest) and cross-band — THIS window is where "do I need to go
+    // to another band for a mult" gets answered. Calls color by contest
+    // value, the C column carries the verdict, NEED ONLY means "new
+    // mults only", and the lifetime-logbook dots stand down.
+    void setContestMode(bool on);
+
 signals:
     // Double-clicked row: tune the radio and run the spot-click feed.
     void spotActivated(const QString& call, qint64 hz, QChar kind,
@@ -46,6 +53,7 @@ private:
     QVector<SpotLabel> spots_;
     QTableWidget* table_ = nullptr;
     QLabel* count_ = nullptr;
+    QLabel* bands_ = nullptr;        // contest: per-band Qs/mults line
     QPushButton* fDx_ = nullptr;
     QPushButton* fPota_ = nullptr;
     QPushButton* fFt8_ = nullptr;
@@ -53,6 +61,7 @@ private:
     QPushButton* fNeed_ = nullptr;
     QTimer* refresh_ = nullptr;
     bool dirty_ = false;
+    bool contestMode_ = false;
 };
 
 } // namespace ttc

@@ -82,6 +82,15 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
     v->setContentsMargins(10, 8, 10, 8);
     v->setSpacing(7);
 
+    // Contest mode: N1MM's Available-window summary — per band, how
+    // many workable Qs and fresh mults the spot pool holds right now,
+    // best band marked. THE band-change answer, one line.
+    bands_ = new QLabel(this);
+    bands_->setStyleSheet(
+        "font-family: 'DejaVu Sans Mono'; font-size: 12px;");
+    bands_->setVisible(false);
+    v->addWidget(bands_);
+
     auto* chips = new QHBoxLayout;
     chips->setSpacing(6);
     const auto chip = [this, chips](QPushButton** b, const char* text,
@@ -172,6 +181,15 @@ void SpotTableWindow::setSpots(const QVector<SpotLabel>& spots) {
     dirty_ = true;
 }
 
+void SpotTableWindow::setContestMode(bool on) {
+    contestMode_ = on;
+    fNeed_->setToolTip(on ? "Only NEW MULTIPLIERS for the running contest"
+                          : "Only rows where the country, this band, or "
+                            "this mode is still needed");
+    dirty_ = true;
+    if (isVisible()) rebuild();
+}
+
 void SpotTableWindow::showEvent(QShowEvent* e) {
     QDialog::showEvent(e);
     dirty_ = true;
@@ -205,11 +223,17 @@ void SpotTableWindow::rebuild() {
         if (l.kind == 'S' && !fSkim_->isChecked()) continue;
         const QString band = LogbookIndex::bandForHz(l.hz);
         const QString mode = modeGuess(l);
+        const bool cRow = contestMode_ && l.contest != 0;
         const LogbookIndex::Need nd =
             idx_ ? idx_->need(l.call, band, mode) : LogbookIndex::Need{};
-        if (fNeed_->isChecked()
-            && nd.country != 'N' && nd.band != 'N' && nd.mode != 'N')
-            continue;
+        if (fNeed_->isChecked()) {
+            // Contest: NEED ONLY = new multipliers, judged per the
+            // spot's own band against the CONTEST log alone.
+            if (cRow ? l.contest != 'M'
+                     : (nd.country != 'N' && nd.band != 'N'
+                        && nd.mode != 'N'))
+                continue;
+        }
 
         const int r = table_->rowCount();
         table_->insertRow(r);
@@ -228,7 +252,14 @@ void SpotTableWindow::rebuild() {
         table_->setItem(r, ColKhz, khz);
 
         auto* call = new QTableWidgetItem(l.call);
-        call->setForeground(QColor(QLatin1String(statusColor(l.status))));
+        const QColor contestColor =
+            l.contest == 'M' ? QColor(255, 82, 82)      // new mult
+            : l.contest == 'N' ? QColor(93, 178, 240)   // workable
+            : l.contest == 'Z' ? QColor(74, 74, 74)     // zero points
+                               : QColor(108, 122, 136); // worked/dupe
+        call->setForeground(
+            cRow ? contestColor
+                 : QColor(QLatin1String(statusColor(l.status))));
         QFont cf = call->font();
         cf.setBold(true);
         call->setFont(cf);
@@ -237,9 +268,25 @@ void SpotTableWindow::rebuild() {
         call->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         table_->setItem(r, ColCall, call);
 
-        needCell(table_, r, ColC, nd.country);
-        needCell(table_, r, ColB, nd.band);
-        needCell(table_, r, ColM, nd.mode);
+        if (cRow) {
+            // One verdict column; the lifetime-logbook dots would only
+            // argue with the contest's answer.
+            auto* v = new QTableWidgetItem(
+                l.contest == 'M' ? QStringLiteral("✕")
+                : l.contest == 'W' ? QStringLiteral("○")
+                : l.contest == 'Z' ? QStringLiteral("·")
+                                   : QString());
+            v->setTextAlignment(Qt::AlignCenter);
+            v->setForeground(contestColor);
+            v->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            table_->setItem(r, ColC, v);
+            needCell(table_, r, ColB, '?');
+            needCell(table_, r, ColM, '?');
+        } else {
+            needCell(table_, r, ColC, nd.country);
+            needCell(table_, r, ColB, nd.band);
+            needCell(table_, r, ColM, nd.mode);
+        }
 
         auto* az = new QTableWidgetItem;
         az->setTextAlignment(Qt::AlignCenter);
@@ -265,7 +312,46 @@ void SpotTableWindow::rebuild() {
         ++shown;
     }
     table_->setUpdatesEnabled(true);
-    count_->setText(QString("%1 of %2 spots").arg(shown).arg(spots_.size()));
+    if (contestMode_) {
+        int mults = 0;
+        for (const SpotLabel& l : spots_)
+            if (l.contest == 'M') ++mults;
+        count_->setText(QString("%1 of %2 spots · contest: %3 new mults")
+                            .arg(shown)
+                            .arg(spots_.size())
+                            .arg(mults));
+        // Per-band availability, best band (mults first, then Qs) marked.
+        struct BQ { int q = 0, m = 0; };
+        QHash<QString, BQ> per;
+        for (const SpotLabel& l : spots_) {
+            if (l.contest != 'M' && l.contest != 'N') continue;
+            BQ& b = per[LogbookIndex::bandForHz(l.hz)];
+            ++b.q;
+            if (l.contest == 'M') ++b.m;
+        }
+        QString best;
+        for (auto it = per.constBegin(); it != per.constEnd(); ++it)
+            if (best.isEmpty() || it->m > per[best].m
+                || (it->m == per[best].m && it->q > per[best].q))
+                best = it.key();
+        QStringList parts;
+        for (const char* b : {"160M", "80M", "40M", "20M", "15M", "10M"}) {
+            const auto it = per.constFind(QLatin1String(b));
+            if (it == per.constEnd()) continue;
+            parts << QString("%1 %2Q %3M%4")
+                         .arg(QString(b).toLower())
+                         .arg(it->q)
+                         .arg(it->m)
+                         .arg(QLatin1String(b) == best ? " ◀" : "");
+        }
+        bands_->setText(parts.isEmpty() ? QStringLiteral("no workable spots")
+                                        : parts.join("   ·   "));
+        bands_->setVisible(true);
+    } else {
+        bands_->setVisible(false);
+        count_->setText(
+            QString("%1 of %2 spots").arg(shown).arg(spots_.size()));
+    }
 }
 
 } // namespace ttc

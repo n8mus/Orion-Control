@@ -43,6 +43,8 @@ signals:
     void dxLocated(double lat, double lon, const QString& call);
     // Form wiped (Clear button or post-log) — cqrlog's New QSO mirrors it.
     void cleared();
+    // Spot button: send this call up to the cluster at the dial freq.
+    void spotRequested(const QString& call);
 
 private:
     void onCallEdited();

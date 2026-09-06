@@ -2,6 +2,9 @@
 #include "app/MainWindow.h"
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
+#include "contest/ContestDeck.h"
+#include "contest/ContestEngine.h"
+#include <numeric>
 #include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
@@ -164,6 +167,7 @@ MainWindow::MainWindow(QWidget* parent)
     lay->setContentsMargins(0, 0, 0, 0);
     lay->setSpacing(0);
     auto* left = new QVBoxLayout;
+    leftLay_ = left;                   // the contest deck slots in here
     left->setContentsMargins(0, 0, 0, 0);
     left->setSpacing(0);
     // The meter is compact and fixed-size; park it left in a dark strip so the
@@ -962,6 +966,24 @@ MainWindow::MainWindow(QWidget* parent)
                 needFill(l);
                 labels.push_back(l);
             }
+        // Parked calls — knob-QSY memories from the contest deck — ride
+        // like local cluster spots and age out on a 20-minute clock.
+        if (!parkedSpots_.isEmpty()) {
+            const qint64 nowSecs = QDateTime::currentSecsSinceEpoch();
+            for (int i = parkedSpots_.size() - 1; i >= 0; --i)
+                if (nowSecs - parkedSpots_[i].atSecs > 1200)
+                    parkedSpots_.removeAt(i);
+            for (const Spot& s : parkedSpots_) {
+                SpotLabel l{s.call, s.hz, s.atSecs, 'D', QString(),
+                            s.lat, s.lon};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                l.spotter = QStringLiteral("parked");
+                l.comment = QStringLiteral("parked here");
+                needFill(l);
+                labels.push_back(l);
+            }
+        }
         // DX watch: flag hits, call out fresh ones (once per call per
         // half hour so a busy feed doesn't nag).
         if (!watch_.empty()) {
@@ -984,9 +1006,79 @@ MainWindow::MainWindow(QWidget* parent)
                 if (watchBeep->isChecked()) QApplication::beep();
             }
         }
+        // Contest mode: the map carries contest traffic ONLY. POTA and
+        // FT8 spots sit out, and — N1MM's "Contest" mode filter, same
+        // mechanism — every remaining spot's mode is judged (source
+        // kind, then comment tags, then the band plan's phone edge) and
+        // only the running contest's mode(s) pass. During a CW contest
+        // the SSB-segment chatter vanishes, and what survives the fence
+        // is, in practice, the contesters. What remains is colored by
+        // what it is WORTH (mult / new / worked / zero) against THIS
+        // contest's log alone. The SPOTS ▾ checkboxes come back
+        // untouched when contest mode ends.
+        if (contestDeck_ && contestDeckVisible()) {
+            const QString cat = contestDeck_->contestModeCategory();
+            labels.erase(
+                std::remove_if(
+                    labels.begin(), labels.end(),
+                    [&cat](const SpotLabel& l) {
+                        if (l.kind == 'P' || l.kind == 'F') return true;
+                        const QString m =
+                            guessSpotMode(l.kind, l.comment, l.hz);
+                        if (cat == QLatin1String("MIXED"))
+                            return m != QLatin1String("CW")
+                                && m != QLatin1String("SSB");
+                        return !cat.isEmpty() && m != cat;
+                    }),
+                labels.end());
+            // Busted-spot removal, N1MM's idea with a strict referee:
+            // two calls one edit apart within 300 Hz are one station
+            // skimmed twice; when master.scp vouches for exactly one,
+            // the other is the busted copy. No referee, keep both.
+            {
+                QVector<int> idx(labels.size());
+                std::iota(idx.begin(), idx.end(), 0);
+                std::sort(idx.begin(), idx.end(),
+                          [&labels](int a, int b) {
+                              return labels[a].hz < labels[b].hz;
+                          });
+                QSet<int> drop;
+                for (int a = 0; a + 1 < idx.size(); ++a)
+                    for (int b = a + 1;
+                         b < idx.size()
+                         && labels[idx[b]].hz - labels[idx[a]].hz <= 300;
+                         ++b) {
+                        const SpotLabel& A = labels[idx[a]];
+                        const SpotLabel& B = labels[idx[b]];
+                        if (!nearMissCall(A.call, B.call)) continue;
+                        // Referees, in order: master.scp, then whether
+                        // the call resolves to a COUNTRY at all —
+                        // J12MED points nowhere, JI2MED points to
+                        // Japan, and only one of them was ever real.
+                        bool aOk = contestDeck_->scpHas(A.call);
+                        bool bOk = contestDeck_->scpHas(B.call);
+                        if (aOk == bOk) {
+                            CtyInfo ci;
+                            aOk = cty_.info(normalizeForCty(A.call), ci);
+                            bOk = cty_.info(normalizeForCty(B.call), ci);
+                        }
+                        if (aOk == bOk) continue;
+                        drop.insert(aOk ? idx[b] : idx[a]);
+                    }
+                if (!drop.isEmpty()) {
+                    QList<int> dl = drop.values();
+                    std::sort(dl.begin(), dl.end(), std::greater<int>());
+                    for (int i : dl) labels.removeAt(i);
+                }
+            }
+            for (SpotLabel& l : labels)
+                l.contest = contestClassify(l.call, l.hz);
+        }
+        shownSpots_ = labels;
         pan_->setSpots(labels);
         if (spotTable_) spotTable_->setSpots(labels);
     };
+    pushSpots_ = pushSpots;            // contest toggle re-pushes for color
     connect(skim_, &SkimmerEngine::spotsChanged, this, pushSpots);
     connect(watchEdit, &QAction::triggered, this,
             [this, watchEdit, pushSpots] {
@@ -1722,6 +1814,12 @@ MainWindow::MainWindow(QWidget* parent)
     }
     if (!hangGrp->checkedAction())         // stale setting: default 1 s
         hangGrp->actions().first()->setChecked(true);
+    // The fldigi companion window, parked here since its old button
+    // became CNTST. The operator never opens it; public-alpha users who
+    // had a DIGI button still have a door.
+    sdrMenu->addSeparator();
+    connect(sdrMenu->addAction("Digi (fldigi) window…"), &QAction::triggered,
+            this, [this] { openDigiWindow(); });
     auto* txTick = new QTimer(this);
     txTick->setInterval(100);
     connect(txTick, &QTimer::timeout, this, [this, ifGain, lna] {
@@ -2242,17 +2340,7 @@ MainWindow::MainWindow(QWidget* parent)
     // handler clears the lights and drops PTT, so just stop and swallow. A
     // keyed-but-not-yet-playing state is the arming window (line-in switch
     // settling): unwind it directly, the deck has nothing to stop yet.
-    const auto dvrBusy = [this] {
-        if (dvr_->state() != ClipDeck::State::Idle) {
-            dvr_->stop();
-            return true;
-        }
-        if (dvrTxPlayback_) {
-            dvrStopped();
-            return true;
-        }
-        return false;
-    };
+    const auto dvrBusy = [this] { return stopVoicePlayback(); };
     connect(txBar_, &TxBar::dvrRecordClicked, this, [this, dvrBusy] {
         if (dvrBusy()) return;
         if (radioSource_.isEmpty()) {
@@ -2305,26 +2393,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(txBar_, &TxBar::vkClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
-        const QString f = vkPath(slot);
-        if (!QFileInfo::exists(f)) {
-            statusBar()->showMessage(QString(
-                "VK%1 is empty — right-click it to record a message").arg(slot + 1));
-            return;
-        }
-        if (radioDevUsed_.startsWith("udp:")) {
-            if (!QSettings().value("radio/tripAudio", false).toBool()) {
-                statusBar()->showMessage(
-                    "VK: turn on TX audio first (SDR ▸ TX audio ▸ Mic or "
-                    "Digital) — the keyed radio takes the Ethernet stream");
-                return;
-            }
-        } else if (radioSink_.isEmpty()) {
-            statusBar()->showMessage("DVR: radio sound device (SignaLink) not found");
-            return;
-        }
-        dvrPlayOverAir(f, slot);
-        statusBar()->showMessage(QString(
-            "VK%1 on the air — click it again to abort").arg(slot + 1));
+        playVoiceSlot(slot);
     });
     connect(txBar_, &TxBar::vkRecordClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
@@ -2336,6 +2405,9 @@ MainWindow::MainWindow(QWidget* parent)
         }
     });
     connect(dvr_, &ClipDeck::finished, this, &MainWindow::dvrStopped);
+    // (playVoiceSlot / stopVoicePlayback are the same paths the VK
+    // buttons use, split out so the contest deck's phone F-keys and Esc
+    // ride them too.)
     connect(dvr_, &ClipDeck::failed, this, [this](const QString& why) {
         statusBar()->showMessage("DVR: " + why);
     });
@@ -3228,6 +3300,13 @@ MainWindow::MainWindow(QWidget* parent)
             });
         }
     }
+    // TTC_CONTEST=1: flip contest mode on at startup (pairs with
+    // TTC_SCREENSHOT to review the deck headless; a pre-seeded
+    // contest.db + contest/currentId make it open on a real contest).
+    if (std::getenv("TTC_CONTEST"))
+        QTimer::singleShot(0, this, [this] {
+            if (contestBtn_) contestBtn_->setChecked(true);  // real path
+        });
 #endif
 
     // Open the radio so click-to-tune / drag-to-filter actually reach it, and

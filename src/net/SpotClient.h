@@ -53,6 +53,12 @@ public:
 
     QVector<Spot> spots() const;                 // unexpired, unsorted
 
+    // Send OUR spot up to the node ("DX <kHz> <CALL> <comment>") — the
+    // operator giving back to the cluster he reads. False when no
+    // logged-in connection exists to carry it.
+    bool spotDx(const QString& call, qint64 hz,
+                const QString& comment = QString());
+
 signals:
     void spotsChanged();
     void statusChanged(const QString& s);        // for the status bar

@@ -9,6 +9,7 @@ namespace ttc {
 // What cty.dat knows about a callsign's country.
 struct CtyInfo {
     QString country;
+    QString cont;                   // "EU", "NA", "AS", "AF", "OC", "SA", "AN"
     int cq = 0, itu = 0;
     double lat = 0.0, lon = 0.0;    // east-positive
 };
@@ -29,7 +30,7 @@ public:
 
 private:
     int find(const QString& call) const;           // country index, -1 none
-    struct Country { QString name; int cq, itu; float lat, lon; };
+    struct Country { QString name, cont; int cq, itu; float lat, lon; };
     struct Ent { QString pfx; quint16 ci; };
     std::vector<Country> countries_;
     std::vector<Ent> prefixes_;                    // all aliases, all countries

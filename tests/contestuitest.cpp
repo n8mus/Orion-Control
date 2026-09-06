@@ -107,6 +107,25 @@ int main(int argc, char** argv) {
     auto* grid = w.findChild<QTableWidget*>();
     CHECK(grid && grid->rowCount() == 2, "mgr: log grid mirrors the deck");
 
+    // Push to the everyday logbook: rows land once; a second press
+    // skips every one of them (near-dupe guard).
+    {
+        LogDb ldb;
+        CHECK(ldb.open(tmp.path() + "/logbook.sqlite"),
+              "push: logbook opens");
+        ContestWindow wp(&db, &cty, &ldb);
+        wp.openContestId(cid);
+        QPushButton* push = buttonWithText(&wp, "→ Logbook");
+        CHECK(push, "push: button exists");
+        push->click();
+        CHECK(ldb.count() == 2, "push: both QSOs land in the logbook");
+        push->click();
+        CHECK(ldb.count() == 2, "push: second press doubles nothing");
+        const Qso q0 = ldb.qso(1);
+        CHECK(q0.comment.contains("CW-OPS"),
+              "push: comment names the contest");
+    }
+
     // ---- QTC: seeded WAE contest, full load/send/confirm ----------------
     ContestRow wae;
     wae.defId = "DARC-WAEDC-CW";

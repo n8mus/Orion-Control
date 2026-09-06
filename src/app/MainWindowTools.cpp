@@ -529,7 +529,7 @@ void MainWindow::openContestWindow() {
                 return;
             }
         }
-        contestWin_ = new ContestWindow(contestDb_, &cty_,
+        contestWin_ = new ContestWindow(contestDb_, &cty_, logDb_,
                                         toolWinParent(this));
         adoptToolWindow(contestWin_);
         connect(contestWin_, &ContestWindow::contestOpened, this,

@@ -6,6 +6,7 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -29,9 +30,16 @@
 
 namespace ttc {
 
+namespace {
+QString rstDefault(const QString& mode) {
+    return mode == QLatin1String("SSB") ? QStringLiteral("59")
+                                        : QStringLiteral("599");
+}
+} // namespace
+
 ContestWindow::ContestWindow(ContestDb* db, const CtyLookup* cty,
-                             QWidget* parent)
-    : QDialog(parent), db_(db), cty_(cty) {
+                             LogDb* logDb, QWidget* parent)
+    : QDialog(parent), db_(db), cty_(cty), logDb_(logDb) {
     setWindowTitle("Contest manager");
     buildUi();
     connect(db_, &ContestDb::changed, this, [this] {
@@ -142,6 +150,20 @@ void ContestWindow::buildUi() {
                 [this] { deleteSelected(); });
         h->addWidget(delBtn);
         h->addStretch(1);
+        auto* adifBtn = new QPushButton("ADIF…", this);
+        adifBtn->setToolTip("Write this contest's QSOs to a .adi file "
+                            "(cqrlog's File ▸ Import takes it whole)");
+        connect(adifBtn, &QPushButton::clicked, this,
+                [this] { exportAdif(); });
+        h->addWidget(adifBtn);
+        auto* pushBtn = new QPushButton("→ Logbook", this);
+        pushBtn->setToolTip(
+            "Copy this contest's QSOs into the everyday station log —\n"
+            "worked-before colors, LoTW and the online logs pick them up "
+            "from there.\nSafe to press twice: duplicates are skipped.");
+        connect(pushBtn, &QPushButton::clicked, this,
+                [this] { pushToLogbook(); });
+        h->addWidget(pushBtn);
         auto* cabBtn = new QPushButton("Cabrillo…", this);
         connect(cabBtn, &QPushButton::clicked, this,
                 [this] { exportCabrillo(); });
@@ -424,6 +446,99 @@ void ContestWindow::exportCabrillo() {
             .arg(qtcs.size())
             .arg(path));
     QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+}
+
+// One contest QSO as an everyday-log row: identity fields ride over,
+// the exchange folds into name/comment, and cty stamps country/zones.
+Qso ContestWindow::logbookQso(const ContestQso& q) const {
+    Qso o;
+    o.tsUtc = q.tsUtc;
+    o.call = q.v.call;
+    o.band = q.v.band;
+    o.mode = q.v.mode;
+    o.freqHz = q.freqHz;
+    o.rstS = q.v.rstS.isEmpty() ? rstDefault(q.v.mode) : q.v.rstS;
+    o.rstR = q.v.rstR.isEmpty() ? rstDefault(q.v.mode) : q.v.rstR;
+    if (def_)
+        for (int i = 0; i < def_->fields.size(); ++i)
+            if (def_->fields[i].label.contains("NAME")) {
+                switch (def_->fields[i].col) {
+                    case ExchCol::Exch1: o.name = q.v.exch1; break;
+                    case ExchCol::Exch2: o.name = q.v.exch2; break;
+                    case ExchCol::Exch3: o.name = q.v.exch3; break;
+                    default: break;
+                }
+            }
+    CtyInfo ci;
+    if (cty_ && cty_->info(normalizeForCty(q.v.call), ci)) {
+        o.country = ci.country;
+        o.cqz = ci.cq;
+        o.ituz = ci.itu;
+    }
+    QStringList ex;
+    if (q.v.serialS > 0) ex << QString("sent %1").arg(q.v.serialS);
+    QStringList r;
+    if (!q.v.serialR.isEmpty()) r << q.v.serialR;
+    for (const QString& e : {q.v.exch1, q.v.exch2, q.v.exch3})
+        if (!e.isEmpty()) r << e;
+    if (!r.isEmpty()) ex << "rcvd " + r.join(' ');
+    o.comment = (def_ ? def_->cabrilloName : row_.defId)
+        + (ex.isEmpty() ? QString() : " · " + ex.join(" · "));
+    return o;
+}
+
+void ContestWindow::pushToLogbook() {
+    if (contestId_ < 0 || !def_) return;
+    if (!logDb_) {
+        status_->setText("no station logbook attached");
+        return;
+    }
+    int pushed = 0, skipped = 0, failed = 0;
+    for (const ContestQso& q : qsos_) {
+        const Qso o = logbookQso(q);
+        if (logDb_->hasNearDuplicate(o)) {
+            ++skipped;                   // already there — never double
+            continue;
+        }
+        if (logDb_->addQso(o) > 0) ++pushed;
+        else ++failed;
+    }
+    trace(QString("PUSH->LOGBOOK %1: %2 pushed, %3 already there, "
+                  "%4 failed")
+              .arg(row_.title)
+              .arg(pushed)
+              .arg(skipped)
+              .arg(failed));
+    status_->setText(
+        QString("→ logbook: %1 pushed, %2 already there%3")
+            .arg(pushed)
+            .arg(skipped)
+            .arg(failed ? QString(", %1 FAILED").arg(failed)
+                        : QString()));
+}
+
+void ContestWindow::exportAdif() {
+    if (contestId_ < 0 || !def_) return;
+    const QString suggested =
+        QStandardPaths::writableLocation(QStandardPaths::DesktopLocation)
+        + "/" + QSettings().value("station/callsign", "N8EM").toString()
+        + "-" + def_->cabrilloName + ".adi";
+    const QString path = QFileDialog::getSaveFileName(
+        this, "Export contest ADIF", suggested, "ADIF (*.adi *.adif)");
+    if (path.isEmpty()) return;
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        status_->setText("cannot write " + path);
+        return;
+    }
+    f.write(Adif::fileHeader().toUtf8());
+    for (const ContestQso& q : qsos_)
+        f.write(Adif::writeRecord(LogDb::toAdif(logbookQso(q))).toUtf8());
+    f.close();
+    trace(QString("ADIF %1 (%2 QSOs)").arg(path).arg(qsos_.size()));
+    status_->setText(QString("ADIF written — %1 QSOs → %2")
+                         .arg(qsos_.size())
+                         .arg(path));
 }
 
 void ContestWindow::closeEvent(QCloseEvent* e) {

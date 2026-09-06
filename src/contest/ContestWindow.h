@@ -4,6 +4,7 @@
 #include <QList>
 
 #include "contest/ContestDb.h"
+#include "log/LogDb.h"           // Qso — the everyday log's row
 
 class QComboBox;
 class QLabel;
@@ -15,6 +16,7 @@ class QWidget;
 namespace ttc {
 
 class CtyLookup;
+class LogDb;
 
 // The contest MANAGER — the between-runs screen. Per-QSO operating
 // lives on the ContestDeck; this window starts/resumes contests, shows
@@ -24,8 +26,9 @@ class CtyLookup;
 class ContestWindow : public QDialog {
     Q_OBJECT
 public:
+    // logDb may be null (tests): the push-to-logbook button then warns.
     ContestWindow(ContestDb* db, const CtyLookup* cty,
-                  QWidget* parent = nullptr);
+                  LogDb* logDb = nullptr, QWidget* parent = nullptr);
 
     bool openContestId(qint64 id);
 
@@ -45,11 +48,19 @@ private:
     void editSelected();
     void deleteSelected();
     void exportCabrillo();
+    // Contest QSOs -> the everyday station log. The contest db stays
+    // authoritative for the contest; the logbook copy feeds awards,
+    // LoTW and the worked-before colors. Near-dupe guarded: pushing
+    // twice cannot double a QSO.
+    void pushToLogbook();
+    void exportAdif();                       // plain .adi file
+    Qso logbookQso(const ContestQso& q) const;
     qint64 selectedQsoId() const;
     void trace(const QString& line);
 
     ContestDb* db_;
     const CtyLookup* cty_;
+    LogDb* logDb_ = nullptr;
     qint64 contestId_ = -1;
     const ContestDef* def_ = nullptr;
     ContestRow row_;

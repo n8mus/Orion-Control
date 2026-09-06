@@ -23,6 +23,9 @@ signals:
     void result(const QString& call, bool ok, const QString& name,
                 const QString& qth, const QString& grid,
                 const QString& error);
+    // QRZ's per-station CQ/ITU zones (0 when absent) — the authoritative
+    // fill for a contest zone field (cty.dat gets US callareas wrong).
+    void zones(const QString& call, int cqz, int ituz);
 
 private:
     void fetchKey(const QString& thenCall);

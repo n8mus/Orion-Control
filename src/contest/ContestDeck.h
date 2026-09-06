@@ -121,6 +121,8 @@ private:
     QString fkeySpec(int key) const;        // override -> def fallback
     void applyFkeyLabels();
     void onCallEdited();
+    void autoFillExch();             // QRZ zone -> the ZONE field
+    void verifyExch();               // amber-flag a zone that mismatches
     void historyPrefill();                  // space in the call box
     void refreshScp();
     void keyText(const QString& text);
@@ -157,6 +159,8 @@ private:
     bool myCallSent_ = false, exchSent_ = false;
     bool callFromSpot_ = false;      // box filled by walk/click, untouched
     QString confirmPending_;         // no-country call awaiting 2nd Enter
+    bool exchAutoLock_ = false;      // operator overtyped an auto-fill
+    int  expectedCqz_ = 0, expectedItuz_ = 0;  // QRZ zones for the call
     double myLat_ = 0, myLon_ = 0;
     int hdg_ = -1;
 

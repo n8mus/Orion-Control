@@ -119,6 +119,8 @@ void QrzLookup::query(const QString& call, bool retryOnBadKey) {
         if (!state.isEmpty()) qth += (qth.isEmpty() ? "" : ", ") + state;
         emit result(call, true, name, qth, xml.value("grid").toUpper(),
                     QString());
+        emit zones(call, xml.value("cqzone").toInt(),
+                   xml.value("ituzone").toInt());
     });
 }
 

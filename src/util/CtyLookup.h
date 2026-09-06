@@ -31,10 +31,13 @@ public:
 private:
     int find(const QString& call) const;           // country index, -1 none
     struct Country { QString name, cont; int cq, itu; float lat, lon; };
-    struct Ent { QString pfx; quint16 ci; };
+    // An alias carries the country plus optional per-prefix zone
+    // overrides — cty.dat's "(cq)[itu]" decorations, e.g. W6 in the US
+    // is CQ zone 3 while the country default is 5. -1 = no override.
+    struct Ent { QString pfx; quint16 ci; qint16 cq = -1, itu = -1; };
     std::vector<Country> countries_;
     std::vector<Ent> prefixes_;                    // all aliases, all countries
-    QHash<QString, quint16> exact_;                // "=CALL" overrides
+    QHash<QString, Ent> exact_;                    // "=CALL" overrides
 };
 
 } // namespace ttc

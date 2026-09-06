@@ -92,6 +92,21 @@ static void testDupes() {
           "dupe: whole-contest scope, case-insensitive");
 }
 
+static void testCtyZones(const CtyLookup& cty) {
+    // Per-prefix CQ/ITU overrides must survive the load — this cty.dat
+    // carries them on specific calls (K6ACV = zone 4/7, off the US
+    // default 5/8). The area prefixes themselves are undifferentiated
+    // here, which is exactly why the authoritative fill comes from QRZ.
+    CtyInfo k6, us, dl;
+    cty.info("K6ACV", k6);
+    cty.info("W1XX", us);
+    cty.info("DL1ABC", dl);
+    CHECK(k6.cq == 4 && k6.itu == 7,
+          "cty: per-prefix CQ/ITU override survives the load (K6ACV 4/7)");
+    CHECK(us.cq == 5, "cty: US default zone 5 when no override");
+    CHECK(dl.cq == 14, "cty: single-zone DX keeps its country zone");
+}
+
 static void testCqWw(const CtyLookup& cty) {
     const ContestDef* d = contestDef("CQ-WW-CW");
     ContestContext ctx;
@@ -845,6 +860,7 @@ int main(int argc, char** argv) {
     testLoggable();
     testSerials();
     testDupes();
+    testCtyZones(cty);
     testCqWw(cty);
     testWae(cty);
     testMacros();

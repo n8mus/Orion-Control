@@ -38,7 +38,18 @@ bool CtyLookup::load(const QString& path) {
         if (!haveCountry) continue;
         const auto ci = quint16(countries_.size() - 1);
         for (QString tok : line.trimmed().remove(';').split(',', Qt::SkipEmptyParts)) {
-            // Strip per-alias override decorations.
+            // Pull the per-alias zone overrides BEFORE stripping them:
+            // "(cq)" and "[itu]" refine the country default for this
+            // prefix (the CQ-zone boundaries inside big countries).
+            qint16 cqOv = -1, ituOv = -1;
+            if (const int a = tok.indexOf('('); a >= 0) {
+                const int b = tok.indexOf(')', a);
+                if (b > a) cqOv = qint16(tok.mid(a + 1, b - a - 1).toInt());
+            }
+            if (const int a = tok.indexOf('['); a >= 0) {
+                const int b = tok.indexOf(']', a);
+                if (b > a) ituOv = qint16(tok.mid(a + 1, b - a - 1).toInt());
+            }
             for (const QChar cut : {QChar('('), QChar('['), QChar('<'),
                                     QChar('{'), QChar('~')}) {
                 const int i = tok.indexOf(cut);
@@ -46,8 +57,10 @@ bool CtyLookup::load(const QString& path) {
             }
             tok = tok.trimmed().toUpper();
             if (tok.isEmpty()) continue;
-            if (tok.startsWith('=')) exact_.insert(tok.mid(1), ci);
-            else                     prefixes_.push_back({tok, ci});
+            if (tok.startsWith('='))
+                exact_.insert(tok.mid(1), {tok.mid(1), ci, cqOv, ituOv});
+            else
+                prefixes_.push_back({tok, ci, cqOv, ituOv});
         }
     }
     return !prefixes_.empty();
@@ -57,7 +70,7 @@ int CtyLookup::find(const QString& call) const {
     const QString c = call.trimmed().toUpper();
     if (c.isEmpty()) return -1;
     if (const auto it = exact_.constFind(c); it != exact_.constEnd())
-        return *it;
+        return it->ci;
     int bestLen = 0, best = -1;
     for (const Ent& e : prefixes_)
         if (e.pfx.size() > bestLen && c.startsWith(e.pfx)) {
@@ -76,13 +89,29 @@ bool CtyLookup::lookup(const QString& call, double& lat, double& lon) const {
 }
 
 bool CtyLookup::info(const QString& call, CtyInfo& out) const {
-    const int ci = find(call);
+    const QString cc = call.trimmed().toUpper();
+    qint16 cqOv = -1, ituOv = -1;
+    int ci = -1;
+    if (const auto it = exact_.constFind(cc); it != exact_.constEnd()) {
+        ci = it->ci;
+        cqOv = it->cq;
+        ituOv = it->itu;
+    } else {
+        int bestLen = 0;
+        for (const Ent& e : prefixes_)
+            if (e.pfx.size() > bestLen && cc.startsWith(e.pfx)) {
+                ci = e.ci;
+                cqOv = e.cq;
+                ituOv = e.itu;
+                bestLen = e.pfx.size();
+            }
+    }
     if (ci < 0) return false;
     const Country& c = countries_[size_t(ci)];
     out.country = c.name;
     out.cont = c.cont;
-    out.cq  = c.cq;
-    out.itu = c.itu;
+    out.cq  = cqOv >= 0 ? cqOv : c.cq;    // per-prefix zone wins
+    out.itu = ituOv >= 0 ? ituOv : c.itu;
     out.lat = c.lat;
     out.lon = c.lon;
     return true;

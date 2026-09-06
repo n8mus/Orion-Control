@@ -173,7 +173,7 @@ ContestDef makeCqWw(bool cw) {
     d.sentExchDefault = "4";        // my CQ zone
     d.fields = {
         {ExchCol::RstR, "RCV", 4, cw ? "599" : "59", true, ""},
-        {ExchCol::Exch1, "ZONE", 4, "", true, ""},
+        {ExchCol::Exch1, "ZONE", 4, "", true, "", "cqz"},
     };
     // Own country 0 (still logs, still counts the mults), same continent
     // 1 — except NA-to-NA which CQ pays 2 — other continent 3.
@@ -464,7 +464,7 @@ ContestDef makeIaru() {
     d.sentExchDefault = "8";        // my ITU zone
     d.fields = {
         {ExchCol::RstR, "RCV", 4, "599", true, ""},
-        {ExchCol::Exch1, "ZONE/HQ", 6, "", true, ""},
+        {ExchCol::Exch1, "ZONE/HQ", 6, "", true, "", "ituz"},
     };
     // Same ITU zone (and HQ stations) 1, same continent 3, other
     // continent 5.

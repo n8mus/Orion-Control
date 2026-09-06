@@ -72,6 +72,20 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
                         trace("QRZ " + c + " failed: " + err);
                     if (c == call_->text().trimmed()) updateHeading();
                 });
+    // QRZ's per-station zones are the source for the zone field — cty.dat
+    // gets US zones wrong (country default, not the real callarea), so we
+    // fill from QRZ when the lookup lands, unless the operator has
+    // overtyped it. Only when it's still the call on screen.
+    if (qrz_)
+        connect(qrz_, &QrzLookup::zones, this,
+                [this](const QString& call, int cqz, int ituz) {
+                    if (call.trimmed().toUpper()
+                        != call_->text().trimmed().toUpper())
+                        return;
+                    if (cqz > 0) expectedCqz_ = cqz;
+                    if (ituz > 0) expectedItuz_ = ituz;
+                    autoFillExch();
+                });
     qrzTimer_.setSingleShot(true);
     qrzTimer_.setInterval(700);          // fire once the typing settles
     connect(&qrzTimer_, &QTimer::timeout, this,
@@ -726,8 +740,11 @@ void ContestDeck::rebuildEntryFields() {
         e->installEventFilter(this);     // ↑/↓ speed from here too
         connect(e, &QLineEdit::returnPressed, this,
                 [this] { enterPressed(); });
-        connect(e, &QLineEdit::textEdited, this,
-                [this] { updateEsmHint(); });
+        connect(e, &QLineEdit::textEdited, this, [this] {
+            exchAutoLock_ = true;    // operator overtyped an auto-fill
+            verifyExch();
+            updateEsmHint();
+        });
         box->addWidget(e);
         static_cast<QHBoxLayout*>(l)->addLayout(box);
         return e;
@@ -847,6 +864,7 @@ void ContestDeck::prefillCall(const QString& call, qint64 hz) {
     if (contestId_ < 0) return;
     call_->setText(call.trimmed().toUpper());
     myCallSent_ = exchSent_ = false;
+    exchAutoLock_ = false;           // a fresh call auto-fills its zone
     onCallEdited();
     callFromSpot_ = true;            // ←/→ keep walking from here
     anchorHz_ = hz > 0 ? hz : rigHz_;
@@ -1116,10 +1134,14 @@ void ContestDeck::wipe() {
                 def_->fields[i].col == ExchCol::RstR
                     ? rstPreset()
                     : def_->fields[i].preset);
+    for (const auto& [col, edit] : edits_)   // clear zone-mismatch flags
+        edit->setStyleSheet(QString());
     dupe_->clear();
     info_->clear();
     updateHeading();                     // call box empty -> "—"
     myCallSent_ = exchSent_ = false;
+    exchAutoLock_ = false;               // next call auto-fills fresh
+    expectedCqz_ = expectedItuz_ = 0;
     refreshScp();
     anchorHz_ = 0;                       // nothing in the box to abandon
     // A wipe means logged or abandoned — either way, back to CQing.
@@ -1307,12 +1329,15 @@ void ContestDeck::onCallEdited() {
     } else {
         dupe_->clear();
     }
+    // The zone field is filled from QRZ (authoritative per station),
+    // not cty.dat, whose US zones are the country default and wrong for
+    // half the country — the expected zone is cleared here and set when
+    // the QRZ lookup lands (see the zones handler).
+    expectedCqz_ = expectedItuz_ = 0;
     CtyInfo ci;
     if (cty_ && cty_->info(normalizeForCty(c), ci)) {
         info_->setStyleSheet("color:#8798a8;");
-        info_->setText(QString("%1 · %2 · CQ %3")
-                           .arg(ci.country, ci.cont)
-                           .arg(ci.cq));
+        info_->setText(ci.country + " · " + ci.cont);
     } else if (loggableCall(c)) {
         // The loudest bust alarm there is: a call that maps to NO
         // country. J12MED wore a quiet "—" while the real JI2MED sat
@@ -1326,6 +1351,44 @@ void ContestDeck::onCallEdited() {
     updateHeading();
     if (loggableCall(c)) qrzTimer_.start();  // ask QRZ once typing settles
     updateEsmHint();
+}
+
+void ContestDeck::autoFillExch() {
+    // Drop QRZ's looked-up zone into the field so the operator only
+    // corrects the rare mismatch. setText does NOT emit textEdited, so
+    // this never trips the "operator overtyped" lock; a hand edit does,
+    // and then we stop refilling for this call.
+    if (exchAutoLock_) { verifyExch(); return; }
+    for (int i = 0; i < def_->fields.size() && i < edits_.size(); ++i) {
+        const QString& v = def_->fields[i].verify;
+        int z = v == QLatin1String("cqz")  ? expectedCqz_
+              : v == QLatin1String("ituz") ? expectedItuz_
+                                           : 0;
+        if (z > 0) {
+            const QSignalBlocker b(edits_[i].second);
+            edits_[i].second->setText(QString::number(z));
+        }
+    }
+    verifyExch();
+}
+
+void ContestDeck::verifyExch() {
+    // Amber border when the typed zone disagrees with QRZ — a typo or a
+    // genuinely off-QRZ station, either way worth a second look (N1MM's
+    // zone highlight). Never a block: QRZ is stale, stations do move.
+    for (int i = 0; i < def_->fields.size() && i < edits_.size(); ++i) {
+        const QString& v = def_->fields[i].verify;
+        if (v.isEmpty()) continue;
+        const int expect = v == QLatin1String("cqz") ? expectedCqz_
+                                                      : expectedItuz_;
+        const QString t = edits_[i].second->text().trimmed();
+        bool numeric = !t.isEmpty();
+        for (QChar ch : t)
+            if (!ch.isDigit()) { numeric = false; break; }
+        const bool bad = expect > 0 && numeric && t.toInt() != expect;
+        edits_[i].second->setStyleSheet(
+            bad ? "QLineEdit { border:2px solid #e0b050; }" : QString());
+    }
 }
 
 void ContestDeck::updateHeading() {

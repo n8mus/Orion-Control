@@ -30,6 +30,11 @@ struct ExchFieldDef {
     // Which call-history column prefills this field ("name", "exch1",
     // "sect", "state", "ck", "grid"); empty = no prefill.
     QString historyCol;
+    // Sanity-check the typed value against cty.dat: "cqz" or "ituz"
+    // flags the field when the number doesn't match the call's expected
+    // zone (a station CAN be off-default, so it's a warning, not a
+    // block). Empty = no check.
+    QString verify;
 };
 
 // The values one QSO carries, engine-facing. Sent serial is numeric (the

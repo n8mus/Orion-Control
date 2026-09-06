@@ -116,6 +116,7 @@ private:
     void requestQrz(const QString& call);
     QString currentBand() const;
     QString modeNow() const;         // rig mode as the contest mode
+    QString rstPreset() const;       // "599" CW, "59" phone
     void trace(const QString& line);
 
     ContestDb* db_;

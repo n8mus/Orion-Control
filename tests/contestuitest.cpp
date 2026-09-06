@@ -217,6 +217,11 @@ int main(int argc, char** argv) {
             if (b->text().startsWith("F2\n")) f2 = b;
         CHECK(f2 && !f2->isEnabled(),
               "voiceui: F2 (his call) is blank on phone — you speak it");
+        // Phone reports are two digits (the AA Phone 599 live-find).
+        auto* snt = vdeck.findChild<QLineEdit*>("sntEdit");
+        auto* rcv = vdeck.findChild<QLineEdit*>("exchEdit0");
+        CHECK(snt && snt->text() == "59" && rcv && rcv->text() == "59",
+              "voiceui: SSB contest presets 59, not 599");
     }
 
     // ---- abandon-on-QSY: grabbed calls clear, typed calls park ----------

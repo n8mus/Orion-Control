@@ -61,8 +61,11 @@ QStringList Cabrillo::exchTokens(const ContestDef& def,
     QStringList out;
     for (const QString& tok : def.cabExch) {
         if (tok == QLatin1String("rst")) {
-            out << (sentSide ? (q.v.rstS.isEmpty() ? "599" : q.v.rstS)
-                             : (q.v.rstR.isEmpty() ? "599" : q.v.rstR));
+            // Empty-field fallback follows the QSO's mode: 59 on phone.
+            const char* dflt =
+                q.v.mode == QLatin1String("SSB") ? "59" : "599";
+            out << (sentSide ? (q.v.rstS.isEmpty() ? dflt : q.v.rstS)
+                             : (q.v.rstR.isEmpty() ? dflt : q.v.rstR));
         } else if (tok == QLatin1String("serial")) {
             out << (sentSide
                         ? QString::number(q.v.serialS).rightJustified(3, '0')

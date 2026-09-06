@@ -517,7 +517,10 @@ void ContestDeck::rebuildEntryFields() {
         static_cast<QHBoxLayout*>(l)->addLayout(box);
         return e;
     };
-    if (def_->hasRst) rstS_ = addField("SNT", 4, "599");
+    if (def_->hasRst) {
+        rstS_ = addField("SNT", 4, rstPreset());
+        rstS_->setObjectName("sntEdit");
+    }
     if (def_->sentSerial) {
         auto* box = new QVBoxLayout;
         auto* lb = new QLabel("SENT NR", fieldsBox_);
@@ -532,7 +535,9 @@ void ContestDeck::rebuildEntryFields() {
         static_cast<QHBoxLayout*>(l)->addLayout(box);
     }
     for (const ExchFieldDef& fd : def_->fields) {
-        QLineEdit* e = addField(fd.label, fd.widthCh, fd.preset);
+        QLineEdit* e = addField(fd.label, fd.widthCh,
+                                fd.col == ExchCol::RstR ? rstPreset()
+                                                        : fd.preset);
         e->setObjectName(QString("exchEdit%1").arg(edits_.size()));
         edits_ << qMakePair(fd.col, e);
     }
@@ -547,6 +552,18 @@ QString ContestDeck::modeNow() const {
     // Mixed-mode contests dupe per band+mode; follow the rig.
     return rigMode_ == QLatin1String("SSB") ? QStringLiteral("SSB")
                                             : QStringLiteral("CW");
+}
+
+QString ContestDeck::rstPreset() const {
+    // Phone reports are two digits (live-found: AA Phone showed a 599
+    // SNT). SSB defs say 59 outright; MIXED follows the rig.
+    if (!def_) return QStringLiteral("599");
+    if (def_->modeCategory == QLatin1String("SSB"))
+        return QStringLiteral("59");
+    if (def_->modeCategory == QLatin1String("MIXED")
+        && modeNow() == QLatin1String("SSB"))
+        return QStringLiteral("59");
+    return QStringLiteral("599");
 }
 
 void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
@@ -578,6 +595,19 @@ void ContestDeck::setRig(qint64 hz, const QString& adifMode) {
         }
     }
     if (bandMoved) onCallEdited();       // dupe verdict can flip
+    // MIXED contests: flipping the rig between CW and phone swaps the
+    // UNTOUCHED report presets (a typed real report is never clobbered).
+    if (rstS_ && def_ && def_->modeCategory == QLatin1String("MIXED")) {
+        const QString want = rstPreset();
+        const auto swap = [&want](QLineEdit* e) {
+            if (e && (e->text() == QLatin1String("599")
+                      || e->text() == QLatin1String("59")))
+                e->setText(want);
+        };
+        swap(rstS_);
+        for (const auto& [col, edit] : edits_)
+            if (col == ExchCol::RstR) swap(edit);
+    }
 }
 
 void ContestDeck::setNearbySpot(const QString& call, char cls, qint64 hz) {
@@ -781,10 +811,13 @@ void ContestDeck::logNow() {
 
 void ContestDeck::wipe() {
     call_->clear();
-    if (rstS_) rstS_->setText("599");
+    if (rstS_) rstS_->setText(rstPreset());
     if (def_)
         for (int i = 0; i < edits_.size() && i < def_->fields.size(); ++i)
-            edits_[i].second->setText(def_->fields[i].preset);
+            edits_[i].second->setText(
+                def_->fields[i].col == ExchCol::RstR
+                    ? rstPreset()
+                    : def_->fields[i].preset);
     dupe_->clear();
     info_->clear();
     updateHeading();                     // call box empty -> "—"

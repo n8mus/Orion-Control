@@ -261,6 +261,13 @@ int main(int argc, char** argv) {
         CHECK(vdeck.focusWidget() == age,
               "voiceui: Space lands on AGE, not the 59 box");
 
+        // The bust alarm: a loggable call that maps to no country.
+        vdeck.prefillCall("J12MED");
+        bool alarm = false;
+        for (QLabel* l : vdeck.findChildren<QLabel*>())
+            if (l->text().contains("no country")) alarm = true;
+        CHECK(alarm, "voiceui: J12MED raises the no-country alarm");
+
         // Phone deck: no CW panes.
         bool readVisible = false;
         for (QWidget* w : vdeck.findChildren<QWidget*>())

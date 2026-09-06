@@ -1051,8 +1051,17 @@ MainWindow::MainWindow(QWidget* parent)
                         const SpotLabel& A = labels[idx[a]];
                         const SpotLabel& B = labels[idx[b]];
                         if (!nearMissCall(A.call, B.call)) continue;
-                        const bool aOk = contestDeck_->scpHas(A.call);
-                        const bool bOk = contestDeck_->scpHas(B.call);
+                        // Referees, in order: master.scp, then whether
+                        // the call resolves to a COUNTRY at all —
+                        // J12MED points nowhere, JI2MED points to
+                        // Japan, and only one of them was ever real.
+                        bool aOk = contestDeck_->scpHas(A.call);
+                        bool bOk = contestDeck_->scpHas(B.call);
+                        if (aOk == bOk) {
+                            CtyInfo ci;
+                            aOk = cty_.info(normalizeForCty(A.call), ci);
+                            bOk = cty_.info(normalizeForCty(B.call), ci);
+                        }
                         if (aOk == bOk) continue;
                         drop.insert(aOk ? idx[b] : idx[a]);
                     }

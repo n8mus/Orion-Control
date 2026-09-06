@@ -1212,12 +1212,21 @@ void ContestDeck::onCallEdited() {
         dupe_->clear();
     }
     CtyInfo ci;
-    if (cty_ && cty_->info(normalizeForCty(c), ci))
+    if (cty_ && cty_->info(normalizeForCty(c), ci)) {
+        info_->setStyleSheet("color:#8798a8;");
         info_->setText(QString("%1 · %2 · CQ %3")
                            .arg(ci.country, ci.cont)
                            .arg(ci.cq));
-    else
+    } else if (loggableCall(c)) {
+        // The loudest bust alarm there is: a call that maps to NO
+        // country. J12MED wore a quiet "—" while the real JI2MED sat
+        // one keystroke away.
+        info_->setStyleSheet("color:#e0b050; font-weight:bold;");
+        info_->setText("⚠ no country — check the call");
+    } else {
+        info_->setStyleSheet("color:#8798a8;");
         info_->setText("—");
+    }
     updateHeading();
     if (loggableCall(c)) qrzTimer_.start();  // ask QRZ once typing settles
     updateEsmHint();

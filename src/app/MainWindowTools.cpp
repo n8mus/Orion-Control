@@ -387,8 +387,11 @@ void MainWindow::toggleContestMode(bool on) {
             // rails as the TX-bar buttons; a press during playback
             // aborts rather than stacking clips.
             contestDeck_->setVoiceKeyer(
-                [this](int slot) {
-                    if (!stopVoicePlayback()) playVoiceSlot(slot);
+                [this](int slot) -> bool {
+                    // A press during playback aborts (handled, beats
+                    // stand); otherwise report whether audio went out.
+                    if (stopVoicePlayback()) return true;
+                    return playVoiceSlot(slot);
                 },
                 [this] { stopVoicePlayback(); });
         }

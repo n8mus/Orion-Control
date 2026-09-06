@@ -49,7 +49,9 @@ public:
     void setRig(qint64 hz, const QString& adifMode);
     void setMasterScp(const QSet<QString>& scp) { scp_ = scp; }
     // Phone contests: {VK1}..{VK4} macros play DVR slots through these.
-    void setVoiceKeyer(std::function<void(int)> play,
+    // play returns false when nothing went out (slot not recorded) so
+    // the ESM beats stay honest.
+    void setVoiceKeyer(std::function<bool(int)> play,
                        std::function<void()> stop);
     // ↑/↓ anywhere in contest mode: keying speed (CW contests only).
     void nudgeSpeed(int delta);
@@ -182,8 +184,9 @@ private:
     QLabel* status_ = nullptr;
     QPushButton* qtcBtn_ = nullptr;      // WAE only
     QtcDialog* qtc_ = nullptr;           // lazy
-    std::function<void(int)> playVk_;    // 0-based DVR slot
+    std::function<bool(int)> playVk_;    // 0-based DVR slot; false = silent
     std::function<void()> stopVoice_;
+    QPushButton* esmBtn_ = nullptr;      // Enter-sends-message toggle
     QList<QShortcut*> shortcuts_;
     QTimer clockTimer_;
 };

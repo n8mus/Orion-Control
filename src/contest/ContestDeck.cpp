@@ -186,6 +186,25 @@ void ContestDeck::buildUi() {
             applyFkeyLabels();
             updateEsmHint();
         });
+        // ESM on/off, finally on a button (live-found on AA Phone: with
+        // old VK test recordings in the slots, Enter transmitted them —
+        // the operator wanted Enter to just LOG). Off = plain
+        // Enter-logs-when-complete, nothing keys or plays by itself.
+        esmBtn_ = new QPushButton("ESM", this);
+        esmBtn_->setCheckable(true);
+        esmBtn_->setFocusPolicy(Qt::NoFocus);
+        esmOn_ = QSettings().value("contest/esm", true).toBool();
+        esmBtn_->setChecked(esmOn_);
+        esmBtn_->setToolTip(
+            "Enter sends the next message (CW keys it, phone plays the "
+            "VK slot).\nOFF: Enter only logs when the exchange is "
+            "complete — nothing transmits by itself.");
+        connect(esmBtn_, &QPushButton::toggled, this, [this](bool on) {
+            esmOn_ = on;
+            QSettings().setValue("contest/esm", on);
+            updateEsmHint();
+        });
+        hdr->addWidget(esmBtn_);
         // AUTO CQ: F1 re-fires every N seconds. Typing a call PAUSES it
         // (never CQ over a station answering you); logging — or wiping,
         // which is abandoning — RESUMES it. Esc or the button stops it.
@@ -690,7 +709,24 @@ void ContestDeck::enterPressed() {
             in.exchComplete = false;
     in.myCallSent = myCallSent_;
     in.exchSent = exchSent_;
-    execPlan(esmPlan(in), false);
+    const QList<EsmAct> plan = esmPlan(in);
+    if (plan.isEmpty() && !in.callEmpty) {
+        // Enter has nothing to do — SAY WHY instead of sitting mute
+        // (live-found: an incomplete exchange read as "nothing logs").
+        for (int i = 0; i < def_->fields.size(); ++i)
+            if (def_->fields[i].required
+                && edits_[i].second->text().trimmed().isEmpty()) {
+                edits_[i].second->setFocus();
+                status_->setText(def_->fields[i].label
+                                 + " missing — Enter logs once the "
+                                   "exchange is complete");
+                return;
+            }
+        if (!in.callLoggable)
+            status_->setText("call needs 3+ chars with a letter and a "
+                             "digit");
+    }
+    execPlan(plan, false);
     updateEsmHint();
 }
 
@@ -848,7 +884,7 @@ QString ContestDeck::fkeySpec(int key) const {
     return set.value(key);
 }
 
-void ContestDeck::setVoiceKeyer(std::function<void(int)> play,
+void ContestDeck::setVoiceKeyer(std::function<bool(int)> play,
                                 std::function<void()> stop) {
     playVk_ = std::move(play);
     stopVoice_ = std::move(stop);
@@ -872,11 +908,15 @@ void ContestDeck::keyFkey(int idx0) {
     const QString raw = fkeyText(spec);
     if (const int slot = vkSlot(raw)) {
         // Phone: the key plays a recorded message instead of keying CW.
-        if (!playVk_) {
-            status_->setText("voice keyer not wired");
+        // A slot with no recording keys NOTHING and — critically —
+        // advances no ESM beat: a silent failure that still marched the
+        // state machine left Enter meaning nothing (live-found).
+        if (!playVk_ || !playVk_(slot - 1)) {
+            status_->setText(
+                QString("VK%1 has no recording — right-click it on the "
+                        "TX bar, or turn ESM off").arg(slot));
             return;
         }
-        playVk_(slot - 1);           // DVR slots are 0-based
         status_->setText(QString("▶ VK%1").arg(slot));
     } else {
         const QString text =

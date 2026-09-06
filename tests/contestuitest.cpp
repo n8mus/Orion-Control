@@ -199,7 +199,12 @@ int main(int argc, char** argv) {
         vdeck.setRig(14250000, "SSB");
         vdeck.show();
         QList<int> played;
-        vdeck.setVoiceKeyer([&played](int s) { played << s; }, [] {});
+        vdeck.setVoiceKeyer(
+            [&played](int s) {
+                played << s;
+                return true;
+            },
+            [] {});
         QPushButton* f1 = nullptr;
         for (QPushButton* b : vdeck.findChildren<QPushButton*>())
             if (b->text().startsWith("F1\n")) f1 = b;
@@ -222,6 +227,31 @@ int main(int argc, char** argv) {
         auto* rcv = vdeck.findChild<QLineEdit*>("exchEdit0");
         CHECK(snt && snt->text() == "59" && rcv && rcv->text() == "59",
               "voiceui: SSB contest presets 59, not 599");
+
+        // Unrecorded slot: nothing plays and the ESM beat stands still
+        // (the JI2MED live-find — a silent failure once marched the
+        // state machine and Enter stopped meaning anything).
+        vdeck.setVoiceKeyer([](int) { return false; }, [] {});
+        const int before = played.size();
+        auto* vCall2 = vdeck.findChild<QLineEdit*>("entryCall");
+        vdeck.prefillCall("JI2MED");
+        QMetaObject::invokeMethod(vCall2, "returnPressed");  // exch refused
+        rcv->setText("59");
+        vdeck.findChild<QLineEdit*>("exchEdit1")->setText("45");
+        QMetaObject::invokeMethod(vCall2, "returnPressed");  // still answer
+        CHECK(played.size() == before && !vCall2->text().isEmpty(),
+              "voiceui: dead slots never advance the beats");
+
+        // ESM off: Enter is a plain log — no keying, box wipes.
+        QPushButton* esm = buttonWithText(&vdeck, "ESM");
+        CHECK(esm && esm->isChecked(), "voiceui: ESM button exists, on");
+        esm->click();
+        QMetaObject::invokeMethod(vCall2, "returnPressed");
+        CHECK(db.qsos(sid).size() == 1
+                  && db.qsos(sid).last().v.call == "JI2MED"
+                  && vCall2->text().isEmpty(),
+              "voiceui: ESM off, Enter just logs and wipes");
+        esm->click();                    // back on for anyone after us
     }
 
     // ---- abandon-on-QSY: grabbed calls clear, typed calls park ----------

@@ -25,6 +25,7 @@
 
 #include "contest/QtcDialog.h"
 #include "cw/CwWindow.h"
+#include "log/QrzLookup.h"
 #include "net/RotorLink.h"
 #include "util/Bearing.h"
 #include "util/CtyLookup.h"
@@ -47,12 +48,31 @@ const char* kGlowStyle =
 } // namespace
 
 ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
-                         RotorLink* rotor, QWidget* parent)
-    : QWidget(parent), db_(db), cty_(cty), cw_(cw), rotor_(rotor) {
+                         RotorLink* rotor, QrzLookup* qrz, QWidget* parent)
+    : QWidget(parent), db_(db), cty_(cty), cw_(cw), rotor_(rotor),
+      qrz_(qrz) {
     buildUi();
     connect(db_, &ContestDb::changed, this, [this] {
         if (contestId_ >= 0) refreshAll();
     });
+    // A QRZ grid sharpens the heading when it lands; a failure leaves
+    // the (labeled) centroid and a trace line, never a stall.
+    if (qrz_)
+        connect(qrz_, &QrzLookup::result, this,
+                [this](const QString& call, bool ok, const QString&,
+                       const QString&, const QString& grid,
+                       const QString& err) {
+                    const QString c = call.trimmed().toUpper();
+                    if (ok && !grid.trimmed().isEmpty())
+                        qrzGrid_.insert(c, grid.trimmed());
+                    else if (!ok)
+                        trace("QRZ " + c + " failed: " + err);
+                    if (c == call_->text().trimmed()) updateHeading();
+                });
+    qrzTimer_.setSingleShot(true);
+    qrzTimer_.setInterval(700);          // fire once the typing settles
+    connect(&qrzTimer_, &QTimer::timeout, this,
+            [this] { requestQrz(call_->text().trimmed()); });
     connect(&clockTimer_, &QTimer::timeout, this, [this] {
         clock_->setText(
             QDateTime::currentDateTimeUtc().toString("HH:mm:ss'z'"));
@@ -179,8 +199,9 @@ void ContestDeck::buildUi() {
         row->addStretch(1);
         // heading + rotor, the sketch's spot for them
         auto* hbox = new QVBoxLayout;
-        auto* hlbl = new QLabel("HDG", this);
-        hlbl->setStyleSheet("color:#8798a8; font-size:10px;");
+        hdgSrcLbl_ = new QLabel("HDG", this);
+        hdgSrcLbl_->setStyleSheet("color:#8798a8; font-size:10px;");
+        auto* hlbl = hdgSrcLbl_;
         hdgLbl_ = new QLabel("—", this);
         QFont hf = hdgLbl_->font();
         hf.setPointSize(hf.pointSize() + 3);
@@ -447,7 +468,14 @@ void ContestDeck::prefillCall(const QString& call) {
     call_->setText(call.trimmed().toUpper());
     myCallSent_ = exchSent_ = false;
     onCallEdited();
+    requestQrz(call_->text().trimmed());  // a spot call is complete: ask now
     call_->setFocus();
+}
+
+void ContestDeck::requestQrz(const QString& call) {
+    if (!qrz_ || !loggableCall(call) || qrzAsked_.contains(call)) return;
+    qrzAsked_.insert(call);              // once per call, misses included
+    qrz_->lookup(call);
 }
 
 void ContestDeck::appendRead(const QString& text) {
@@ -620,8 +648,7 @@ void ContestDeck::wipe() {
             edits_[i].second->setText(def_->fields[i].preset);
     dupe_->clear();
     info_->clear();
-    hdgLbl_->setText("—");
-    hdg_ = -1;
+    updateHeading();                     // call box empty -> "—"
     myCallSent_ = exchSent_ = false;
     refreshScp();
     call_->setFocus();
@@ -772,8 +799,7 @@ void ContestDeck::onCallEdited() {
     if (c.isEmpty()) {
         dupe_->clear();
         info_->clear();
-        hdgLbl_->setText("—");
-        hdg_ = -1;
+        updateHeading();
         updateEsmHint();
         return;
     }
@@ -791,28 +817,56 @@ void ContestDeck::onCallEdited() {
         dupe_->clear();
     }
     CtyInfo ci;
-    if (cty_ && cty_->info(normalizeForCty(c), ci)) {
+    if (cty_ && cty_->info(normalizeForCty(c), ci))
         info_->setText(QString("%1 · %2 · CQ %3")
                            .arg(ci.country, ci.cont)
                            .arg(ci.cq));
-        // Entity-centre heading; a call-history grid sharpens it.
-        double lat = ci.lat, lon = ci.lon;
+    else
+        info_->setText("—");
+    updateHeading();
+    if (loggableCall(c)) qrzTimer_.start();  // ask QRZ once typing settles
+    updateEsmHint();
+}
+
+void ContestDeck::updateHeading() {
+    const QString c = call_->text().trimmed();
+    hdg_ = -1;
+    if (c.isEmpty() || contestId_ < 0) {
+        hdgLbl_->setText("—");
+        hdgSrcLbl_->setText("HDG");
+        return;
+    }
+    double lat = 0, lon = 0, glat = 0, glon = 0;
+    const char* src = nullptr;
+    const QString qg = qrzGrid_.value(c);
+    if (!qg.isEmpty() && CtyLookup::gridToLatLon(qg, glat, glon)) {
+        lat = glat;
+        lon = glon;
+        src = "QRZ";                     // his real QTH
+    } else {
         const HistoryRow h = db_->historyFor(c);
-        double glat, glon;
         if (!h.grid.isEmpty()
             && CtyLookup::gridToLatLon(h.grid, glat, glon)) {
             lat = glat;
             lon = glon;
+            src = "hist";                // call-history grid
+        } else {
+            CtyInfo ci;
+            if (cty_ && cty_->info(normalizeForCty(c), ci)) {
+                lat = ci.lat;
+                lon = ci.lon;
+                src = "cty ctr";         // entity centre — every US call
+            }                            // bears 228° from here; say so
         }
-        hdg_ = int(bearing::initialDeg(myLat_, myLon_, lat, lon) + 0.5)
-             % 360;
-        hdgLbl_->setText(QString("%1°").arg(hdg_));
-    } else {
-        info_->setText("—");
-        hdgLbl_->setText("—");
-        hdg_ = -1;
     }
-    updateEsmHint();
+    if (!src) {
+        hdgLbl_->setText("—");
+        hdgSrcLbl_->setText("HDG");
+        return;
+    }
+    hdg_ = int(bearing::initialDeg(myLat_, myLon_, lat, lon) + 0.5) % 360;
+    hdgLbl_->setText(QString("%1°").arg(hdg_));
+    hdgSrcLbl_->setText(QString("HDG · %1").arg(src));
 }
 
 void ContestDeck::historyPrefill() {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <QHash>
 #include <QList>
 #include <QPair>
 #include <QSet>
@@ -22,6 +23,7 @@ namespace ttc {
 
 class CtyLookup;
 class CwWindow;
+class QrzLookup;
 class QtcDialog;
 class RotorLink;
 
@@ -41,7 +43,8 @@ class ContestDeck : public QWidget {
     Q_OBJECT
 public:
     ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
-                RotorLink* rotor, QWidget* parent = nullptr);
+                RotorLink* rotor, QrzLookup* qrz = nullptr,
+                QWidget* parent = nullptr);
 
     void setRig(qint64 hz, const QString& adifMode);
     void setMasterScp(const QSet<QString>& scp) { scp_ = scp; }
@@ -86,6 +89,11 @@ private:
     void historyPrefill();                  // space in the call box
     void refreshScp();
     void keyText(const QString& text);
+    // True heading: QRZ grid > call-history grid > entity centre, and
+    // the label SAYS which one is on screen (the "rose stuck at 228°"
+    // evening was an unlabeled centroid, not a bug).
+    void updateHeading();
+    void requestQrz(const QString& call);
     QString currentBand() const;
     QString modeNow() const;         // rig mode as the contest mode
     void trace(const QString& line);
@@ -94,6 +102,10 @@ private:
     const CtyLookup* cty_;
     CwWindow* cw_;
     RotorLink* rotor_;
+    QrzLookup* qrz_ = nullptr;
+    QHash<QString, QString> qrzGrid_;    // call -> grid (hits only)
+    QSet<QString> qrzAsked_;             // incl. misses — ask once
+    QTimer qrzTimer_;                    // debounce while typing
 
     qint64 contestId_ = -1;
     const ContestDef* def_ = nullptr;
@@ -130,6 +142,7 @@ private:
     QLabel* info_ = nullptr;
     QLabel* hint_ = nullptr;
     QLabel* hdgLbl_ = nullptr;
+    QLabel* hdgSrcLbl_ = nullptr;        // "HDG · QRZ" / "hist" / "cty ctr"
     QPushButton* fk_[12] = {};
     QLineEdit* type_ = nullptr;
     QLabel* sent_ = nullptr;

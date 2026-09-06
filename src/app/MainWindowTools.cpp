@@ -320,7 +320,7 @@ void MainWindow::toggleContestMode(bool on) {
             // whether or not the CW window is ever opened.
             ensureCwWindow();
             contestDeck_ = new ContestDeck(contestDb_, &cty_, cwWin_,
-                                           &rotor_, this);
+                                           &rotor_, qrz_, this);
             leftLay_->insertWidget(2, contestDeck_);   // under the pan
             connect(contestDeck_, &ContestDeck::openManagerRequested,
                     this, [this] { openContestWindow(); });

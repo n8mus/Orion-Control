@@ -273,7 +273,7 @@ add_executable(contestuitest EXCLUDE_FROM_ALL
   src/cw/CwWindow.cpp src/cw/WinKeyer.cpp src/cw/OrionKeyer.cpp
   src/cw/CwKeyer.h
   src/util/CtyLookup.cpp src/util/LogbookIndex.cpp
-  src/log/LogDb.cpp src/log/Adif.cpp)
+  src/log/LogDb.cpp src/log/Adif.cpp src/log/QrzLookup.cpp)
 target_include_directories(contestuitest PRIVATE src)
 target_link_libraries(contestuitest PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets
   Qt6::Network Qt6::SerialPort Qt6::Sql)

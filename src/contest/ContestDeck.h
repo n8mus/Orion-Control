@@ -143,7 +143,9 @@ private:
     RotorLink* rotor_;
     QrzLookup* qrz_ = nullptr;
     QHash<QString, QString> qrzGrid_;    // call -> grid (hits only)
-    QSet<QString> qrzAsked_;             // incl. misses — ask once
+    QHash<QString, int> qrzCqz_;         // call -> QRZ CQ zone (explicit/derived)
+    QHash<QString, int> qrzItuz_;        // call -> QRZ ITU zone
+    QSet<QString> qrzAsked_;             // in flight / answered — don't re-ask
     QTimer qrzTimer_;                    // debounce while typing
 
     qint64 contestId_ = -1;

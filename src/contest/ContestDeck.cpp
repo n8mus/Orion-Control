@@ -68,8 +68,10 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
                     const QString c = call.trimmed().toUpper();
                     if (ok && !grid.trimmed().isEmpty())
                         qrzGrid_.insert(c, grid.trimmed());
-                    else if (!ok)
+                    else if (!ok) {
                         trace("QRZ " + c + " failed: " + err);
+                        qrzAsked_.remove(c);   // a hiccup must not blank it forever
+                    }
                     if (c == call_->text().trimmed()) updateHeading();
                 });
     // QRZ's per-station zones are the source for the zone field — cty.dat
@@ -79,9 +81,13 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
     if (qrz_)
         connect(qrz_, &QrzLookup::zones, this,
                 [this](const QString& call, int cqz, int ituz) {
-                    if (call.trimmed().toUpper()
-                        != call_->text().trimmed().toUpper())
-                        return;
+                    // Cache by call FIRST — so an answer that lands after
+                    // the operator moved on isn't lost; it fills instantly
+                    // when this call comes back (mirrors qrzGrid_).
+                    const QString c = call.trimmed().toUpper();
+                    if (cqz > 0) qrzCqz_.insert(c, cqz);
+                    if (ituz > 0) qrzItuz_.insert(c, ituz);
+                    if (c != call_->text().trimmed().toUpper()) return;
                     if (cqz > 0) expectedCqz_ = cqz;
                     if (ituz > 0) expectedItuz_ = ituz;
                     autoFillExch();
@@ -1353,7 +1359,13 @@ void ContestDeck::onCallEdited() {
         info_->setStyleSheet("color:#8798a8;");
         info_->setText("—");
     }
-    autoFillExch();                          // DX zone fills now; US on QRZ
+    // A QRZ zone we already looked up this session fills instantly — no
+    // lag, no re-ask, and it survives moving away from the call and back
+    // (the live answer may have arrived while it was off screen).
+    const QString cu = c.trimmed().toUpper();
+    if (qrzCqz_.contains(cu)) expectedCqz_ = qrzCqz_.value(cu);
+    if (qrzItuz_.contains(cu)) expectedItuz_ = qrzItuz_.value(cu);
+    autoFillExch();                          // DX/cached fills now; US on QRZ
     updateHeading();
     if (loggableCall(c)) qrzTimer_.start();  // ask QRZ once typing settles
     updateEsmHint();

@@ -2,10 +2,15 @@
 #include "log/CqrlogSync.h"
 
 #include <QBuffer>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QHash>
+#include <QHostAddress>
 #include <QProcess>
 #include <QSettings>
+#include <QTimeZone>
+#include <QUdpSocket>
 
 #include "log/Adif.h"
 #include "log/LogDb.h"
@@ -99,6 +104,109 @@ QByteArray CqrlogSync::rowsToAdif(const QString& tsv, qint64* maxId) {
         out += Adif::writeRecord(r).toUtf8();
     }
     return out;
+}
+
+QByteArray CqrlogSync::bridgeDatagram(const Qso& q) {
+    QByteArray d;
+    const auto tag = [&d](const char* n, const QString& v) {
+        const QByteArray b = v.trimmed().toUtf8();
+        if (!b.isEmpty())
+            d += '<' + QByteArray(n) + ':' + QByteArray::number(b.size())
+               + '>' + b + ' ';
+    };
+    const QDateTime ts = q.tsUtc.toUTC();
+    tag("CALL", q.call.toUpper());
+    tag("QSO_DATE", ts.toString("yyyyMMdd"));
+    tag("TIME_ON", ts.toString("HHmmss"));
+    tag("BAND", q.band);
+    if (q.freqHz > 0)
+        tag("FREQ", QString::number(q.freqHz / 1e6, 'f', 6));
+    tag("MODE", q.mode);
+    tag("RST_SENT", q.rstS);
+    tag("RST_RCVD", q.rstR);
+    tag("NAME", q.name);
+    tag("QTH", q.qth);
+    tag("GRIDSQUARE", q.grid);
+    if (!q.pota.trimmed().isEmpty()) {
+        tag("SIG", "POTA");
+        tag("SIG_INFO", q.pota);
+    }
+    tag("COMMENT", q.comment);
+    d += "<EOR>";
+    return d;
+}
+
+void CqrlogSync::checkMissing() {
+    if (checkProc_ || !db_) return;
+    if (!QFile::exists(cqrlogSocket())) {
+        emit missingReady({}, "cqrlog is not running — open it first");
+        return;
+    }
+    checkProc_ = new QProcess(this);
+    connect(checkProc_, &QProcess::finished, this,
+            [this](int code, QProcess::ExitStatus st) {
+        const QString out =
+            QString::fromUtf8(checkProc_->readAllStandardOutput());
+        checkProc_->deleteLater();
+        checkProc_ = nullptr;
+        if (st != QProcess::NormalExit || code != 0) {
+            emit missingReady({}, "cqrlog query failed");
+            return;
+        }
+        // cqrlog's QSOs as CALL|BAND -> epoch times.
+        QHash<QString, QList<qint64>> have;
+        for (const QString& line : out.split('\n', Qt::SkipEmptyParts)) {
+            const QStringList f = line.split('\t');
+            if (f.size() < 4) continue;
+            QString t = f.at(2).trimmed();          // HH:MM[:SS]
+            if (t.size() == 5) t += ":00";
+            const QDateTime ts(
+                QDate::fromString(f.at(1).trimmed(), "yyyy-MM-dd"),
+                QTime::fromString(t, "HH:mm:ss"), QTimeZone::utc());
+            if (!ts.isValid()) continue;
+            have[f.at(3).trimmed().toUpper() + '|'
+                 + f.at(0).trimmed().toUpper()]
+                << ts.toSecsSinceEpoch();
+        }
+        QList<qint64> missing;
+        for (const Qso& q : db_->allQsos()) {
+            const qint64 secs = q.tsUtc.toUTC().toSecsSinceEpoch();
+            bool found = false;
+            for (const qint64 h :
+                 have.value(q.call.trimmed().toUpper() + '|'
+                            + q.band.trimmed().toUpper()))
+                if (std::llabs(h - secs) <= 600) { found = true; break; }
+            if (!found) missing << q.id;
+        }
+        emit missingReady(missing, QString());
+    });
+    checkProc_->start(
+        "mysql", {"--socket=" + cqrlogSocket(), "-u", "root",
+                  cqrlogDbName(), "-N", "-B", "--connect-timeout=3", "-e",
+                  "SELECT band, qsodate, time_on, callsign"
+                  " FROM cqrlog_main;"});
+    QTimer::singleShot(20000, checkProc_, [p = checkProc_] {
+        if (p->state() != QProcess::NotRunning) p->kill();
+    });
+}
+
+void CqrlogSync::sendMissing(const QList<qint64>& ids) {
+    if (!db_ || ids.isEmpty()) return;
+    if (!udp_) udp_ = new QUdpSocket(this);
+    const quint16 port =
+        quint16(QSettings().value("log/port", 2334).toInt());
+    int i = 0;
+    for (const qint64 id : ids) {
+        const Qso q = db_->qso(id);
+        if (q.id < 0) continue;
+        const QByteArray d = bridgeDatagram(q);
+        // Paced: the bridge fills cqrlog's form and saves per datagram.
+        QTimer::singleShot(250 * i++, this, [this, d, port] {
+            udp_->writeDatagram(d, QHostAddress::LocalHost, port);
+        });
+    }
+    QTimer::singleShot(250 * i + 500, this,
+                       [this, i] { emit pushedToCqrlog(i); });
 }
 
 void CqrlogSync::pull() {

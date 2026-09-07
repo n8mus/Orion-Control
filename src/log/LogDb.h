@@ -49,6 +49,7 @@ public:
     bool   deleteQso(qint64 id);
     Qso    qso(qint64 id) const;
     QList<Qso> prevQsos(const QString& call, int limit = 8) const;
+    QList<Qso> allQsos() const;            // whole log (cqrlog sync compare)
     int    count() const;
 
     // Same call+band+mode within 5 minutes already in the log.

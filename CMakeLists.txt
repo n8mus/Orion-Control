@@ -268,7 +268,7 @@ add_executable(synctest EXCLUDE_FROM_ALL
   src/log/CqrlogSync.cpp src/log/LogDb.cpp src/log/Adif.cpp
   src/util/CtyLookup.cpp src/util/LogbookIndex.cpp)
 target_include_directories(synctest PRIVATE src)
-target_link_libraries(synctest PRIVATE Qt6::Core Qt6::Sql)
+target_link_libraries(synctest PRIVATE Qt6::Core Qt6::Network Qt6::Sql)
 
 # Practice-mode engine: morse timing, the sim caller's QSO protocol,
 # per-contest exchange truth, adaptive speed — all on the deterministic

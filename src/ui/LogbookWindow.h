@@ -24,6 +24,11 @@ public:
     LogbookWindow(LogDb* db, const CtyLookup* cty, QslUploader* uploader,
                   QWidget* parent = nullptr);
 
+signals:
+    // "→ cqrlog" button: ask the owner to compare this log against
+    // cqrlog and offer to send whatever cqrlog is missing.
+    void cqrlogSyncRequested();
+
 private:
     void applyFilter();
     void refreshStats();

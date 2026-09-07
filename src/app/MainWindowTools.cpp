@@ -16,6 +16,7 @@
 #include "cw/WinKeyer.h"
 #include "net/FldigiClient.h"
 #include "ui/DigiWindow.h"
+#include "log/CqrlogSync.h"
 #include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
@@ -39,6 +40,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -242,6 +244,45 @@ void MainWindow::openLogbookWindow() {
         logbookWin_ = new LogbookWindow(logDb_, &cty_, uploader_,
                                         toolWinParent(this));
         adoptToolWindow(logbookWin_);
+        // "→ cqrlog": compare, confirm with the count, then send —
+        // cqrlog is the award log, nothing goes over without a yes.
+        connect(logbookWin_, &LogbookWindow::cqrlogSyncRequested, this,
+                [this] {
+                    statusBar()->showMessage("comparing against cqrlog…");
+                    if (cqrSync_) cqrSync_->checkMissing();
+                });
+        connect(cqrSync_, &CqrlogSync::missingReady, this,
+                [this](const QList<qint64>& ids, const QString& err) {
+                    if (!err.isEmpty()) {
+                        statusBar()->showMessage("cqrlog sync: " + err,
+                                                 8000);
+                        return;
+                    }
+                    if (ids.isEmpty()) {
+                        statusBar()->showMessage(
+                            "cqrlog has everything — logs are in sync",
+                            6000);
+                        return;
+                    }
+                    const auto a = QMessageBox::question(
+                        logbookWin_, "Sync to cqrlog",
+                        QString("%1 QSO%2 in the station log %3 not in "
+                                "cqrlog.\nSend %4 through the bridge "
+                                "now?")
+                            .arg(ids.size())
+                            .arg(ids.size() == 1 ? "" : "s")
+                            .arg(ids.size() == 1 ? "is" : "are")
+                            .arg(ids.size() == 1 ? "it" : "them"));
+                    if (a == QMessageBox::Yes && cqrSync_)
+                        cqrSync_->sendMissing(ids);
+                });
+        connect(cqrSync_, &CqrlogSync::pushedToCqrlog, this,
+                [this](int n) {
+                    statusBar()->showMessage(
+                        QString("→ cqrlog: %1 QSO%2 sent through the "
+                                "bridge").arg(n).arg(n == 1 ? "" : "s"),
+                        8000);
+                });
     }
     logbookWin_->show();
     logbookWin_->raise();
@@ -564,38 +605,12 @@ void MainWindow::openSpotTable() {
     spotTable_->activateWindow();
 }
 
-// The QSO -> bridge datagram. The bridge ignores anything that doesn't
-// START with <CALL, and AdifRecord is a QHash, so the record is
-// assembled by hand rather than through writeRecord's arbitrary order.
+// One QSO -> cqrlog's bridge (builder shared with CqrlogSync — the
+// bridge drops anything that doesn't start with <CALL).
 void MainWindow::mirrorToCqrlog(const Qso& q, int delayMs) {
     if (!logUdp_ || q.id < 0) return;
     if (!QSettings().value("log/mirrorCqrlog", true).toBool()) return;
-    QByteArray d;
-    const auto tag = [&d](const char* n, const QString& v) {
-        const QByteArray b = v.trimmed().toUtf8();
-        if (!b.isEmpty())
-            d += '<' + QByteArray(n) + ':' + QByteArray::number(b.size())
-               + '>' + b + ' ';
-    };
-    const QDateTime ts = q.tsUtc.toUTC();
-    tag("CALL", q.call.toUpper());
-    tag("QSO_DATE", ts.toString("yyyyMMdd"));
-    tag("TIME_ON", ts.toString("HHmmss"));
-    tag("BAND", q.band);
-    if (q.freqHz > 0)
-        tag("FREQ", QString::number(q.freqHz / 1e6, 'f', 6));
-    tag("MODE", q.mode);
-    tag("RST_SENT", q.rstS);
-    tag("RST_RCVD", q.rstR);
-    tag("NAME", q.name);
-    tag("QTH", q.qth);
-    tag("GRIDSQUARE", q.grid);
-    if (!q.pota.trimmed().isEmpty()) {
-        tag("SIG", "POTA");
-        tag("SIG_INFO", q.pota);
-    }
-    tag("COMMENT", q.comment);
-    d += "<EOR>";
+    const QByteArray d = CqrlogSync::bridgeDatagram(q);
     const auto send = [this, d] {
         if (logUdp_)
             logUdp_->writeDatagram(

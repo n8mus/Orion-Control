@@ -87,6 +87,14 @@ LogbookWindow::LogbookWindow(LogDb* db, const CtyLookup* cty,
     tools->addWidget(impBtn);
     auto* expBtn = new QPushButton("Export ADIF", this);
     tools->addWidget(expBtn);
+    auto* cqrBtn = new QPushButton("→ cqrlog", this);
+    cqrBtn->setToolTip(
+        "Compare this log against cqrlog and send it whatever it's\n"
+        "missing, through the bridge (cqrlog must be open).\n"
+        "Shows the count and asks before sending anything.");
+    connect(cqrBtn, &QPushButton::clicked, this,
+            [this] { emit cqrlogSyncRequested(); });
+    tools->addWidget(cqrBtn);
     auto* onlineBtn = new QPushButton("Online logs…", this);
     onlineBtn->setToolTip("LoTW / eQSL / QRZ / ClubLog / HRDLOG uploads —\n"
                           "per-service setup with Test buttons");

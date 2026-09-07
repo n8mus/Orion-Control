@@ -201,6 +201,15 @@ QList<Qso> LogDb::prevQsos(const QString& call, int limit) const {
     return out;
 }
 
+QList<Qso> LogDb::allQsos() const {
+    QList<Qso> out;
+    if (!isOpen()) return out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    if (q.exec("SELECT * FROM qso ORDER BY id"))
+        while (q.next()) out.append(qsoFromQuery(q));
+    return out;
+}
+
 int LogDb::count() const {
     if (!isOpen()) return 0;
     QSqlQuery q(QSqlDatabase::database(conn_));

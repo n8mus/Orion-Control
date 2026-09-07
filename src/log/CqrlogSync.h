@@ -6,11 +6,13 @@
 #include <QTimer>
 
 class QProcess;
+class QUdpSocket;
 
 namespace ttc {
 
 class CtyLookup;
 class LogDb;
+struct Qso;
 
 // cqrlog -> console log mirror, so the two logs stay in sync for ALL
 // modes (operator's requirement). The console->cqrlog direction already
@@ -41,8 +43,26 @@ public:
     static QByteArray rowsToAdif(const QString& tsv, qint64* maxId);
     static int columnCount();
 
+    // One QSO as the bridge's headerless ADIF datagram (starts with
+    // <CALL — the bridge drops anything else). Shared by every path
+    // that mirrors toward cqrlog.
+    static QByteArray bridgeDatagram(const Qso& q);
+
+    // The other sync direction, on demand (the Logbook window's
+    // "→ cqrlog" button): ask cqrlog what it has, compare against the
+    // whole console log by call+band+time (±10 min), report the ids
+    // cqrlog is missing. Then sendMissing() pushes them through the
+    // bridge, paced. Nothing is sent without the caller's say-so —
+    // cqrlog is the award log, a mass mis-push there is the nightmare.
+    void checkMissing();
+    void sendMissing(const QList<qint64>& ids);
+
 signals:
     void pulled(int added);          // added > 0: new QSOs mirrored in
+    // checkMissing result. error nonempty = couldn't check (cqrlog
+    // closed, query failed); ids empty + no error = logs are in sync.
+    void missingReady(const QList<qint64>& ids, const QString& error);
+    void pushedToCqrlog(int sent);   // sendMissing finished scheduling
 
 private:
     void pull();
@@ -50,6 +70,8 @@ private:
     LogDb* db_;
     const CtyLookup* cty_;
     QProcess* proc_ = nullptr;
+    QProcess* checkProc_ = nullptr;  // the on-demand compare query
+    QUdpSocket* udp_ = nullptr;
     QTimer timer_;
     qint64 lastId_ = 0;
 };

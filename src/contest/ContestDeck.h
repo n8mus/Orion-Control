@@ -26,6 +26,7 @@ namespace ttc {
 
 class CtyLookup;
 class CwWindow;
+class PracticeEngine;
 class QrzLookup;
 class QtcDialog;
 class RotorLink;
@@ -127,6 +128,15 @@ private:
     void refreshScp();
     void keyText(const QString& text);
     void stopEverything();           // Esc: dump keyer/voice, kill auto-CQ
+    // PRACTICE mode (Morse-Runner-in-the-deck). While on, keyText routes
+    // to the simulator (the transmitter NEVER keys), logNow verifies
+    // against the sim's truth (contest.db is NEVER written), spots and
+    // QRZ lookups are fenced off. The four isolation guarantees live at
+    // those choke points — keep them there.
+    void setPractice(bool on);
+    bool practiceOn() const;
+    void practiceVerdict();          // practice-mode logNow
+    CQsoValues collectValues() const;
     // True heading: QRZ grid > call-history grid > entity centre, and
     // the label SAYS which one is on screen (the "rose stuck at 228°"
     // evening was an unlabeled centroid, not a bug).
@@ -231,6 +241,8 @@ private:
     std::function<bool(int)> playVk_;    // 0-based DVR slot; false = silent
     std::function<void()> stopVoice_;
     QPushButton* esmBtn_ = nullptr;      // Enter-sends-message toggle
+    QPushButton* pracBtn_ = nullptr;     // PRACTICE toggle (amber when on)
+    PracticeEngine* practice_ = nullptr;
     QList<QShortcut*> shortcuts_;
     QTimer clockTimer_;
 };

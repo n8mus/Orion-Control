@@ -26,6 +26,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
+#include "contest/PracticeEngine.h"
 #include "contest/QtcDialog.h"
 #include "cw/CwWindow.h"
 #include "log/QrzLookup.h"
@@ -271,6 +272,29 @@ void ContestDeck::buildUi() {
             autoCqTimer_.setInterval(v * 1000);
         });
         hdr->addWidget(autoSecs_);
+        // PRACTICE: a Morse-Runner-style sim caller answers your CQ in
+        // synthesized audio. Amber on purpose — this button changes what
+        // the transmitter does (nothing), so it must never read as one
+        // of the green everyday toggles.
+        pracBtn_ = new QPushButton("PRAC", this);
+        pracBtn_->setCheckable(true);
+        pracBtn_->setFocusPolicy(Qt::NoFocus);
+        pracBtn_->setToolTip(
+            "Practice mode: a simulated station answers your CQ with a "
+            "real call and this contest's exchange,\nin audio only. The "
+            "transmitter never keys, nothing is logged to the contest, "
+            "spots and lookups are off.\nCopy speed adapts to how you're "
+            "doing. Esc stops keying as usual.");
+        connect(pracBtn_, &QPushButton::toggled, this,
+                [this](bool on) { setPractice(on); });
+        hdr->addWidget(pracBtn_);
+        pracBtn_->setStyleSheet(
+            "QPushButton:checked { background:#3a2c10;"
+            " border:1px solid #e0b050; color:#e0b050;"
+            " font-weight:bold; }");
+        practice_ = new PracticeEngine(this);
+        connect(practice_, &PracticeEngine::status, this,
+                [this](const QString& s) { status_->setText(s); });
         // The mode buttons wear the F-key green when ON — "is it on?"
         // must be answerable from across the shack.
         for (QPushButton* b : {runBtn_, spBtn_, esmBtn_, autoBtn_})
@@ -526,6 +550,12 @@ void ContestDeck::buildUi() {
         spotBtn->setToolTip("Send the entered call as a DX spot to the "
                             "cluster, at the dial frequency");
         connect(spotBtn, &QPushButton::clicked, this, [this] {
+            // ISOLATION GUARANTEE #3: no practice call ever reaches the
+            // cluster — the fake pileup stays inside this room.
+            if (practiceOn()) {
+                status_->setText("practice: nothing goes to the cluster");
+                return;
+            }
             const QString c = call_->text().trimmed().toUpper();
             if (loggableCall(c))
                 emit spotDxRequested(c, rigHz_);
@@ -591,6 +621,7 @@ void ContestDeck::showEvent(QShowEvent* e) {
 
 void ContestDeck::hideEvent(QHideEvent* e) {
     QWidget::hideEvent(e);
+    if (practiceOn()) setPractice(false);   // leaving CNTST ends the drill
     for (QShortcut* s : shortcuts_) s->setEnabled(false);
     for (auto it = panes_.begin(); it != panes_.end(); ++it)
         if (it->fly) it->fly->hide();   // contest mode off = floats too
@@ -676,6 +707,7 @@ bool ContestDeck::openContestId(qint64 id) {
 }
 
 void ContestDeck::closeContest() {
+    if (practiceOn()) setPractice(false);
     contestId_ = -1;
     def_ = nullptr;
     QSettings().remove("contest/currentId");
@@ -697,6 +729,7 @@ void ContestDeck::openContest(qint64 id) {
         title_->setText("no contest open — Contest log… starts one");
         return;
     }
+    if (practiceOn()) setPractice(false);   // never carries across contests
     contestId_ = id;
     QSettings().setValue("contest/currentId", id);
     ctx_ = ContestContext();
@@ -879,6 +912,7 @@ void ContestDeck::prefillCall(const QString& call, qint64 hz) {
 }
 
 void ContestDeck::requestQrz(const QString& call) {
+    if (practiceOn()) return;        // no live lookups on sim traffic
     if (!qrz_ || !loggableCall(call) || qrzAsked_.contains(call)) return;
     qrzAsked_.insert(call);              // once per call, misses included
     qrz_->lookup(call);
@@ -1035,8 +1069,10 @@ void ContestDeck::execPlan(const QList<EsmAct>& plan, bool updateOnly) {
                     QString("VK%1 has no recording — right-click it on "
                             "the TX bar, or turn ESM off").arg(slot));
         } else {
-            const QString t = expandMacro(raw, *def_, ctx_, call_->text(),
-                                          row_.sentExch, row_.nextSerial);
+            const QString t = expandMacro(
+                raw, *def_, ctx_, call_->text(), row_.sentExch,
+                practiceOn() ? practice_->practiceSerial()
+                             : row_.nextSerial);
             if (!t.isEmpty()) { cw << t; sent = true; }
         }
         if (sent && beat == 3) didExch = true;
@@ -1087,29 +1123,43 @@ void ContestDeck::updateEsmHint() {
                                    : "Enter → " + words.join(" + "));
 }
 
+CQsoValues ContestDeck::collectValues() const {
+    CQsoValues v;
+    v.call = call_->text().trimmed().toUpper();
+    v.band = currentBand();
+    v.mode = modeNow();
+    v.rstS = def_ && def_->hasRst && rstS_ ? rstS_->text().trimmed()
+                                           : QString();
+    for (const auto& [col, edit] : edits_) {
+        const QString t = edit->text().trimmed();
+        switch (col) {
+            case ExchCol::RstR: v.rstR = t; break;
+            case ExchCol::SerialR: v.serialR = t; break;
+            case ExchCol::Exch1: v.exch1 = t; break;
+            case ExchCol::Exch2: v.exch2 = t; break;
+            case ExchCol::Exch3: v.exch3 = t; break;
+        }
+    }
+    return v;
+}
+
 void ContestDeck::logNow() {
     const QString c = call_->text().trimmed().toUpper();
     if (!loggableCall(c)) return;
+    // ISOLATION GUARANTEE #2: a practice "log" is verified against the
+    // sim's truth and counted in memory — contest.db is never written,
+    // no serial is consumed, nothing can reach the real score.
+    if (practiceOn()) {
+        practiceVerdict();
+        return;
+    }
     ContestQso q;
     q.contestId = contestId_;
     q.tsUtc = QDateTime::currentDateTimeUtc();
     q.freqHz = rigHz_ > 0 ? rigHz_ : 14030000;
-    q.v.call = c;
-    q.v.band = currentBand();
-    q.v.mode = modeNow();
-    q.v.rstS = def_->hasRst && rstS_ ? rstS_->text().trimmed() : QString();
+    q.v = collectValues();
     q.v.serialS = def_->sentSerial ? row_.nextSerial : 0;
     q.runSp = runMode_ ? "R" : "S";
-    for (const auto& [col, edit] : edits_) {
-        const QString t = edit->text().trimmed();
-        switch (col) {
-            case ExchCol::RstR: q.v.rstR = t; break;
-            case ExchCol::SerialR: q.v.serialR = t; break;
-            case ExchCol::Exch1: q.v.exch1 = t; break;
-            case ExchCol::Exch2: q.v.exch2 = t; break;
-            case ExchCol::Exch3: q.v.exch3 = t; break;
-        }
-    }
     CtyInfo ci;
     const bool ok = cty_ && cty_->info(normalizeForCty(c), ci);
     q.points = def_->points ? def_->points(q.v, ci, ok, ctx_) : 0;
@@ -1129,6 +1179,65 @@ void ContestDeck::logNow() {
     wipe();                          // the silent "it logged" signal
     refreshAll();
     status_->setText(QString("logged %1").arg(c));
+}
+
+bool ContestDeck::practiceOn() const {
+    return practice_ && practice_->active();
+}
+
+void ContestDeck::setPractice(bool on) {
+    if (!on) {
+        const bool was = practiceOn();
+        if (practice_) practice_->stop();
+        if (pracBtn_ && pracBtn_->isChecked()) pracBtn_->setChecked(false);
+        title_->setStyleSheet(QString());
+        if (def_) title_->setText(row_.title);
+        if (was) status_->setText("practice off — back on the air");
+        return;
+    }
+    if (!def_ || contestId_ < 0) {
+        pracBtn_->setChecked(false);
+        status_->setText("open a contest first — practice drills ITS exchange");
+        return;
+    }
+    if (def_->modeCategory != QLatin1String("CW")) {
+        pracBtn_->setChecked(false);
+        status_->setText("practice is CW-only for now");
+        return;
+    }
+    // Callers come from the master SCP list minus everyone already in
+    // THIS log — a practice caller colliding with a worked call would
+    // light the real dupe machinery for nothing.
+    QSet<QString> worked;
+    for (const CQsoValues& v : values_) worked.insert(v.call);
+    QStringList pool;
+    pool.reserve(scp_.size());
+    for (const QString& call : scp_)
+        if (!worked.contains(call)) pool << call;
+    practice_->start(def_, cty_, pool, wpm_ ? wpm_->value() : 25);
+    // ISOLATION GUARANTEE #4: the mode is unmissable while it's on.
+    title_->setText(row_.title + "  ·  PRACTICE — NOT ON AIR");
+    title_->setStyleSheet("color:#e0b050;");
+    trace("PRAC ON " + row_.defId);
+}
+
+void ContestDeck::practiceVerdict() {
+    const auto r = practice_->verifyLog(collectValues());
+    if (!r.haveCaller) {
+        status_->setText("no caller live — CQ (F1) brings one");
+        return;
+    }
+    const int pct = r.qsos ? r.good * 100 / r.qsos : 0;
+    const QString line =
+        r.allGood
+            ? QString("GOOD COPY %1 · %2 Q · %3% · streak %4 · next %5 wpm")
+                  .arg(r.call).arg(r.qsos).arg(pct).arg(r.streak).arg(r.wpm)
+            : QString("BUSTED %1 — %2 · %3% · next %4 wpm")
+                  .arg(r.call, r.misses.join("; ")).arg(pct).arg(r.wpm);
+    status_->setText((r.allGood ? "✓ " : "✗ ") + line);
+    appendRead((r.allGood ? "\n== ✓ " : "\n== ✗ ") + line + " ==\n");
+    trace("PRAC " + line);
+    wipe();                          // same silent reset as a real log
 }
 
 void ContestDeck::wipe() {
@@ -1209,9 +1318,9 @@ void ContestDeck::keyFkey(int idx0) {
         }
         status_->setText(QString("▶ VK%1").arg(slot));
     } else {
-        const QString text =
-            expandMacro(raw, *def_, ctx_, call_->text(),
-                        row_.sentExch, row_.nextSerial);
+        const QString text = expandMacro(
+            raw, *def_, ctx_, call_->text(), row_.sentExch,
+            practiceOn() ? practice_->practiceSerial() : row_.nextSerial);
         if (text.isEmpty()) return;
         keyText(text);
         status_->setText("→ " + text);
@@ -1228,6 +1337,13 @@ void ContestDeck::keyFkey(int idx0) {
 }
 
 void ContestDeck::keyText(const QString& text) {
+    // ISOLATION GUARANTEE #1: in practice mode every keyed message goes
+    // to the simulator's sidetone and NOTHING reaches the keyer — this
+    // early return is the only thing between a practice CQ and RF.
+    if (practiceOn()) {
+        practice_->opKeyed(text, wpm_ ? wpm_->value() : 25);
+        return;
+    }
     if (!cw_) {
         status_->setText("no keyer backend");
         return;
@@ -1587,8 +1703,12 @@ void ContestDeck::refreshAll() {
 // ---- key routing ---------------------------------------------------------
 
 void ContestDeck::stopEverything() {
-    if (cw_) cw_->stopKeying();      // dump the WinKeyer buffer NOW
-    if (stopVoice_) stopVoice_();
+    if (practiceOn()) {
+        practice_->abortSending();   // sim audio only; keyer untouched
+    } else {
+        if (cw_) cw_->stopKeying();  // dump the WinKeyer buffer NOW
+        if (stopVoice_) stopVoice_();
+    }
     if (autoBtn_ && autoBtn_->isChecked())
         autoBtn_->setChecked(false); // Esc also kills the auto-CQ robot
     status_->setText("stopped");

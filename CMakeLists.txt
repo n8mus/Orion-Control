@@ -108,6 +108,7 @@ add_executable(tentec-console
   src/contest/CallHistory.cpp   src/contest/CallHistory.h
   src/contest/ContestWindow.cpp src/contest/ContestWindow.h
   src/contest/ContestDeck.cpp   src/contest/ContestDeck.h
+  src/contest/PracticeEngine.cpp src/contest/PracticeEngine.h
   src/contest/QtcDialog.cpp     src/contest/QtcDialog.h
   src/log/Adif.cpp              src/log/Adif.h
   src/log/LogDb.cpp             src/log/LogDb.h
@@ -260,6 +261,17 @@ add_executable(contesttest EXCLUDE_FROM_ALL
 target_include_directories(contesttest PRIVATE src)
 target_link_libraries(contesttest PRIVATE Qt6::Core Qt6::Sql)
 
+# Practice-mode engine: morse timing, the sim caller's QSO protocol,
+# per-contest exchange truth, adaptive speed — all on the deterministic
+# pump clock (no wall time, no audio, no db: the isolation IS the test).
+add_executable(practicetest EXCLUDE_FROM_ALL
+  tests/practicetest.cpp
+  src/contest/PracticeEngine.cpp
+  src/contest/ContestDefs.cpp src/contest/ContestEngine.cpp
+  src/util/CtyLookup.cpp)
+target_include_directories(practicetest PRIVATE src)
+target_link_libraries(practicetest PRIVATE Qt6::Core)
+
 # Contest-window smoke harness: drives the real window offscreen (logs
 # QSOs through the widgets, checks db + score), saves a PNG to eyeball.
 add_executable(contestuitest EXCLUDE_FROM_ALL
@@ -268,6 +280,7 @@ add_executable(contestuitest EXCLUDE_FROM_ALL
   src/contest/ContestEngine.cpp src/contest/ContestDb.cpp
   src/contest/Cabrillo.cpp src/contest/CallHistory.cpp
   src/contest/ContestDeck.cpp src/contest/QtcDialog.cpp
+  src/contest/PracticeEngine.cpp
   src/net/RotorLink.cpp src/net/RotorClient.cpp src/net/RotorServer.cpp
   src/radio/DcuRotor.cpp src/radio/SerialPort.cpp
   src/cw/CwWindow.cpp src/cw/WinKeyer.cpp src/cw/OrionKeyer.cpp

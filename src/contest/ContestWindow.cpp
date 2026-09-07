@@ -637,13 +637,15 @@ void ContestWindow::pushToLogbook() {
         return;
     }
     int pushed = 0, skipped = 0, failed = 0;
+    QList<qint64> ids;                   // for the cqrlog mirror
     for (const ContestQso& q : qsos_) {
         const Qso o = logbookQso(q);
         if (logDb_->hasNearDuplicate(o)) {
             ++skipped;                   // already there — never double
             continue;
         }
-        if (logDb_->addQso(o) > 0) ++pushed;
+        const qint64 id = logDb_->addQso(o);
+        if (id > 0) { ++pushed; ids << id; }
         else ++failed;
     }
     trace(QString("PUSH->LOGBOOK %1: %2 pushed, %3 already there, "
@@ -660,7 +662,7 @@ void ContestWindow::pushToLogbook() {
                         : QString())
             .arg(pushed ? QStringLiteral(" · online logs sweeping…")
                         : QString()));
-    if (pushed) emit pushedToLogbook(pushed);
+    if (pushed) emit pushedToLogbook(ids);
 }
 
 void ContestWindow::exportAdif() {

@@ -69,6 +69,7 @@ class QrzLookup;
 class QslUploader;
 class SpotTableWindow;
 class WsjtxListener;
+struct Qso;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -106,6 +107,10 @@ private:
     void openSpotTable();
     void sendCqrLookup(const QString& call, const QString& park = {},
                        const QString& grid = {});
+    // One finished QSO -> cqrlog's bridge as a headerless ADIF datagram.
+    // delayMs paces batch mirrors (contest pushes) so the bridge's
+    // fill-form-then-save keeps up; honors log/mirrorCqrlog.
+    void mirrorToCqrlog(const Qso& q, int delayMs = 0);
     void setupCwUi();
     void wireRigCwPanel();             // rig's CW settings <-> CW window
     void applyCwPitch(int hz);         // the radio's sidetone pitch is truth

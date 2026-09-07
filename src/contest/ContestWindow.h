@@ -35,9 +35,10 @@ public:
 signals:
     // The deck follows whichever contest this manager opens or creates.
     void contestOpened(qint64 id);
-    // N fresh QSOs just landed in the everyday log — the owner should
-    // wake the online-log sweep so they ride to LoTW & friends.
-    void pushedToLogbook(int count);
+    // Fresh QSOs just landed in the everyday log (station-log ids,
+    // dup-skips absent) — the owner wakes the online-log sweep and
+    // mirrors each one onward to cqrlog's bridge.
+    void pushedToLogbook(const QList<qint64>& ids);
     // A contest was removed — if the deck is showing it, close it.
     void contestDeleted(qint64 id);
 

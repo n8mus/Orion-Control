@@ -295,6 +295,11 @@ void ContestDeck::buildUi() {
         practice_ = new PracticeEngine(this);
         connect(practice_, &PracticeEngine::status, this,
                 [this](const QString& s) { status_->setText(s); });
+        // The reader prints the sim caller just like it prints an
+        // on-air station — a silent CW READ made practice HARDER than
+        // the real deck (live-found on the first session).
+        connect(practice_, &PracticeEngine::callerText, this,
+                [this](const QString& t) { appendRead(t + "  "); });
         // The mode buttons wear the F-key green when ON — "is it on?"
         // must be answerable from across the shack.
         for (QPushButton* b : {runBtn_, spBtn_, esmBtn_, autoBtn_})
@@ -1214,7 +1219,12 @@ void ContestDeck::setPractice(bool on) {
     pool.reserve(scp_.size());
     for (const QString& call : scp_)
         if (!worked.contains(call)) pool << call;
-    practice_->start(def_, cty_, pool, wpm_ ? wpm_->value() : 25);
+    // The drill starts at ITS OWN remembered speed (gentle 20 wpm the
+    // first time), not the keyer speed — coming in at contest wpm cold
+    // was too much (live-found). It adapts from there and the last
+    // speed carries into the next session.
+    practice_->start(def_, cty_, pool,
+                     QSettings().value("contest/practiceWpm", 20).toInt());
     // ISOLATION GUARANTEE #4: the mode is unmissable while it's on.
     title_->setText(row_.title + "  ·  PRACTICE — NOT ON AIR");
     title_->setStyleSheet("color:#e0b050;");
@@ -1237,6 +1247,7 @@ void ContestDeck::practiceVerdict() {
     status_->setText((r.allGood ? "✓ " : "✗ ") + line);
     appendRead((r.allGood ? "\n== ✓ " : "\n== ✗ ") + line + " ==\n");
     trace("PRAC " + line);
+    QSettings().setValue("contest/practiceWpm", r.wpm);   // resume here
     wipe();                          // same silent reset as a real log
 }
 

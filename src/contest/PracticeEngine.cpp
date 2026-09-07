@@ -200,7 +200,7 @@ void PracticeEngine::queueOpTx(const QString& text, int wpm, TxKind kind) {
             || t.kind == TxKind::OpQuery)
             start = std::max(start, t.start + t.pcm.size());
     Tx tx;
-    tx.pcm = synth(text, wpm, 600.0, 0.85);
+    tx.pcm = synth(text, wpm, 600.0, 0.6);
     tx.start = start;
     tx.kind = kind;
     txs_.push_back(tx);
@@ -217,7 +217,7 @@ void PracticeEngine::spawnCaller(int delayMs) {
     callerExchKeyed_ = callerExchText();
     callerWpmActual_ = std::clamp(wpm_ + randInt(-2, 3), kWpmFloor, 50);
     callerPitch_ = randInt(450, 850);
-    callerAmp_ = randInt(35, 100) / 100.0;
+    callerAmp_ = randInt(40, 95) / 100.0;
     repeats_ = 0;
     opReplied_ = false;
     queueCallerTx(truth_.call, TxKind::CallerCall, delayMs);
@@ -272,6 +272,7 @@ void PracticeEngine::onTxDone(TxKind k) {
         case TxKind::OpOther:
             break;
         case TxKind::CallerCall:
+            emit callerText(truth_.call);
             state_ = State::WaitOpReply;
             if (opReplied_) {
                 opReplied_ = false;
@@ -283,6 +284,7 @@ void PracticeEngine::onTxDone(TxKind k) {
             }
             break;
         case TxKind::CallerExch:
+            emit callerText(callerExchKeyed_);
             state_ = State::WaitOpClose;
             // Patient: the op is typing what it just heard. 30 s of
             // silence before it moves on (12 s expired mid-entry).
@@ -501,7 +503,7 @@ void PracticeEngine::pump(int ms) {
                     acc += t.pcm[int(off)];
             }
             lcg = lcg * 1664525u + 1013904223u;
-            acc += int(lcg >> 20) - 2048;    // ±2048: a light band hiss
+            acc += int(lcg >> 22) - 512;     // ±512: a faint band hiss
             out[i] = qint16(std::clamp(acc, -32767, 32767));
         }
         writeAudio(buf.constData(), buf.size());

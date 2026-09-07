@@ -85,9 +85,13 @@ public:
     bool callerLive() const { return state_ != State::Idle; }
 
 signals:
-    // Generic progress for the deck status line. Never contains the
-    // caller's call before the QSO is logged — copying it IS the drill.
+    // Generic progress for the deck status line.
     void status(const QString& line);
+    // What the caller just finished keying — the deck's CW READ pane
+    // prints it exactly as the real decoder would print an on-air
+    // station (the reader is part of how the operator copies; a silent
+    // pane made practice harder than the real thing).
+    void callerText(const QString& text);
 
 private:
     enum class State { Idle, CallerCalling, WaitOpReply, CallerExch,

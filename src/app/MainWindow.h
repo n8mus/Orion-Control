@@ -61,6 +61,7 @@ namespace ttc {
 class ContestDb;
 class ContestDeck;
 class ContestWindow;
+class CqrlogSync;
 class LogDb;
 class LogWindow;
 class LogbookWindow;
@@ -418,6 +419,7 @@ private:
     std::atomic<bool> replayStop_{false};
     CwWindow* cwWin_ = nullptr;                // WinKeyer CW sender (lazy)
     LogDb* logDb_ = nullptr;                   // the station's own SQLite log
+    CqrlogSync* cqrSync_ = nullptr;            // cqrlog -> console mirror
     QslUploader* uploader_ = nullptr;          // online-log push engine
     WsjtxListener* wsjtx_ = nullptr;           // FT8 QSOs into the log
     QrzLookup* qrz_ = nullptr;                 // callbook for the LOG window

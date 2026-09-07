@@ -111,6 +111,7 @@ add_executable(tentec-console
   src/contest/PracticeEngine.cpp src/contest/PracticeEngine.h
   src/contest/QtcDialog.cpp     src/contest/QtcDialog.h
   src/log/Adif.cpp              src/log/Adif.h
+  src/log/CqrlogSync.cpp        src/log/CqrlogSync.h
   src/log/LogDb.cpp             src/log/LogDb.h
   src/log/QslUploader.cpp       src/log/QslUploader.h
   src/log/WsjtxListener.cpp     src/log/WsjtxListener.h
@@ -260,6 +261,14 @@ add_executable(contesttest EXCLUDE_FROM_ALL
   src/util/CtyLookup.cpp)
 target_include_directories(contesttest PRIVATE src)
 target_link_libraries(contesttest PRIVATE Qt6::Core Qt6::Sql)
+
+# cqrlog->console mirror: the TSV->ADIF converter + idempotent re-pull.
+add_executable(synctest EXCLUDE_FROM_ALL
+  tests/synctest.cpp
+  src/log/CqrlogSync.cpp src/log/LogDb.cpp src/log/Adif.cpp
+  src/util/CtyLookup.cpp src/util/LogbookIndex.cpp)
+target_include_directories(synctest PRIVATE src)
+target_link_libraries(synctest PRIVATE Qt6::Core Qt6::Sql)
 
 # Practice-mode engine: morse timing, the sim caller's QSO protocol,
 # per-contest exchange truth, adaptive speed — all on the deterministic

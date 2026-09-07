@@ -5,6 +5,7 @@
 #include "contest/ContestDeck.h"
 #include "contest/ContestEngine.h"
 #include <numeric>
+#include "log/CqrlogSync.h"
 #include "log/LogDb.h"
 #include "log/QrzLookup.h"
 #include "log/QslUploader.h"
@@ -1120,6 +1121,16 @@ MainWindow::MainWindow(QWidget* parent)
     logbook_.attachCty(&cty_);
     logbook_.attachDb(logDb_);
     logbook_.start();
+    // cqrlog -> console mirror: QSOs that land in cqrlog first (WSJT-X
+    // digi, hand entries there) pull into this log too, so the needed-
+    // dots agree across all modes. The other direction is the bridge.
+    cqrSync_ = new CqrlogSync(logDb_, &cty_, this);
+    connect(cqrSync_, &CqrlogSync::pulled, this, [this](int n) {
+        statusBar()->showMessage(
+            QString("station log: %1 QSO%2 mirrored from cqrlog")
+                .arg(n).arg(n == 1 ? "" : "s"), 6000);
+    });
+    cqrSync_->start();
     // Online-log push (GridTracker-style instant uploads + retry sweep).
     // Successes stay quiet — the status columns are the record; failures
     // get one status-bar line so a dead service doesn't fail silently.

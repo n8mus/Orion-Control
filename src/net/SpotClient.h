@@ -28,7 +28,10 @@ struct Spot {
 // uses): connects to a cluster node, answers the login prompt with the
 // operator's callsign, and parses "DX de SPOTTER: 14025.0 CALL ..." lines.
 // Spots are deduped per call (latest freq wins) and expire after 20 minutes
-// (10 for fast-churning FT8). Reconnects with backoff while enabled; fully
+// (10 for fast-churning FT8). On every login it also asks the node for its
+// recent-spot page (SH/DX) and folds in whatever is still inside that
+// window, so the band map is populated the moment the feed comes up
+// instead of after the next live spot. Reconnects with backoff while enabled; fully
 // quiet when disabled.
 class SpotClient : public QObject {
     Q_OBJECT
@@ -72,6 +75,10 @@ private:
     void onData();
     void prune();
     void sendModeConfig();
+    void afterLogin();                           // mode config, then backfill
+    void requestBackfill();                      // SH/DX <n> — the recent page
+    bool fill(Spot& s, const QString& kHz, const QString& call,
+              const QString& spotter, const QString& comment, qint64 atSecs);
 
     QTcpSocket sock_;
     QTimer     reconnect_;                       // retry while enabled

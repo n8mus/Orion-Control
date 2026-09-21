@@ -3,6 +3,7 @@
 
 #include <QRegularExpression>
 #include <QDateTime>
+#include <QTimeZone>
 #include <cmath>
 
 namespace ttc {
@@ -22,6 +23,20 @@ const QRegularExpression kSpotRe(
 const QRegularExpression kHzOffRe(QStringLiteral(R"((\d{2,4})\s*HZ\b)"));
 // POTA park reference in a human spot comment ("POTA US-2654 ...").
 const QRegularExpression kParkRe(QStringLiteral(R"(\b([A-Z0-9]{1,3}-\d{3,5})\b)"));
+// A SH/DX history line — the page the node prints when asked for the last
+// N spots. It is NOT the live "DX de" form: the spotter moves to the end in
+// angle brackets and the spot carries its own timestamp.
+//   " 14340.0  W1AW/9      21-Sep-2026 2237Z  WAS IL TNX QSO      <IU6DVS>"
+// Live-sampled 2026-09-21 from DXSpider (W3LPL), CC Cluster (K0XM) and
+// AR-Cluster (K1TTT) — all three print this same shape, which is why one
+// regex covers every node in the picker. K0XM clips the comment at ~25
+// characters; nothing else differs.
+const QRegularExpression kHistRe(
+    QStringLiteral(R"(^\s*([0-9]+(?:\.[0-9]+)?)\s+([A-Z0-9/\-]{3,})\s+)"
+                   R"((\d{1,2}-[A-Za-z]{3}-\d{4})\s+(\d{4})Z\s*)"
+                   R"((.*?)\s*<([A-Z0-9/\-#]+)>\s*$)"),
+    QRegularExpression::CaseInsensitiveOption);
+constexpr int kBackfillSpots = 100;    // ~covers the 20-minute TTL on a busy node
 } // namespace
 
 // Members destruct in REVERSE declaration order: the three QTimers die
@@ -61,7 +76,7 @@ SpotClient::SpotClient(QObject* parent) : QObject(parent) {
         if (!loginSent_ && sock_.state() == QAbstractSocket::ConnectedState) {
             sock_.write(login_.toLatin1() + "\r\n");
             loginSent_ = true;
-            QTimer::singleShot(1500, this, &SpotClient::sendModeConfig);
+            afterLogin();
         }
     });
     pruneTimer_.setInterval(60000);
@@ -113,6 +128,26 @@ void SpotClient::sendModeConfig() {
         : QByteArray("SET/FILTER DOC/PASS ") + spotterCty_.toLatin1() + "\r\n");
 }
 
+// Both login paths (prompt seen, or the no-prompt fallback) end here.
+// The node needs a moment to chew on the login before it will take
+// commands, and the mode config goes first so SH/DX answers under the
+// filters the operator actually wants.
+void SpotClient::afterLogin() {
+    QTimer::singleShot(1500, this, &SpotClient::sendModeConfig);
+    QTimer::singleShot(2500, this, &SpotClient::requestBackfill);
+}
+
+// Ask for the node's recent-spot page. Without this a fresh connection
+// shows nothing until live traffic happens to arrive, which on a quiet
+// band reads as a broken feed (and left the window all POTA, since that
+// feed arrives as one API snapshot). Spots older than the TTL are dropped
+// at parse time, so this fills exactly the window the console already
+// keeps — no stale page, no special case in prune().
+void SpotClient::requestBackfill() {
+    if (!loginSent_ || sock_.state() != QAbstractSocket::ConnectedState) return;
+    sock_.write("SH/DX " + QByteArray::number(kBackfillSpots) + "\r\n");
+}
+
 void SpotClient::clear() {
     if (byCall_.isEmpty()) return;
     byCall_.clear();
@@ -134,6 +169,34 @@ bool SpotClient::spotDx(const QString& call, qint64 hz,
     emit statusChanged(QString("spotted %1 at %2 kHz")
                            .arg(c)
                            .arg(hz / 1000.0, 0, 'f', 1));
+    return true;
+}
+
+// Both line shapes carry the same five facts in a different order; the
+// kind/offset/park rules must not drift between them, so they live here.
+// False = drop this spot (out of band, or the CW-RBN skimmer flood).
+bool SpotClient::fill(Spot& s, const QString& kHz, const QString& call,
+                      const QString& spotter, const QString& comment,
+                      qint64 atSecs) {
+    qint64 hz = static_cast<qint64>(std::llround(kHz.toDouble() * 1000.0));
+    if (hz < 1800000 || hz > 54000000) return false;   // HF/6m sanity
+    const QString up = comment.toUpper();
+    s.call    = call.toUpper();
+    s.atSecs  = atSecs;
+    s.spotter = spotter.toUpper();
+    s.comment = comment.trimmed();
+    if (up.contains("FT8") || up.contains("FT4")) {
+        s.kind = 'F';
+        const auto o = kHzOffRe.match(up);             // dial + audio offset
+        if (o.hasMatch()) hz += o.captured(1).toLongLong();
+    } else if (s.spotter.endsWith("-#")) {
+        return false;              // the CW-RBN flood riding in with SET/SKIMMER
+    } else if (up.contains("POTA")) {
+        s.kind = 'P';
+        const auto r = kParkRe.match(up);
+        if (r.hasMatch()) s.tag = r.captured(1);
+    }
+    s.hz = hz;
     return true;
 }
 
@@ -165,7 +228,7 @@ void SpotClient::onData() {
         if (sofar.contains("login") || sofar.contains("call")) {
             sock_.write(login_.toLatin1() + "\r\n");
             loginSent_ = true;
-            QTimer::singleShot(1500, this, &SpotClient::sendModeConfig);
+            afterLogin();
         }
     }
     bool changed = false;
@@ -174,31 +237,37 @@ void SpotClient::onData() {
         const QString line = QString::fromLatin1(lineBuf_.left(nl)).trimmed();
         lineBuf_.remove(0, nl + 1);
         const auto m = kSpotRe.match(line);
-        if (!m.hasMatch()) continue;
-        qint64 hz = static_cast<qint64>(std::llround(m.captured(2).toDouble() * 1000.0));
-        if (hz < 1800000 || hz > 54000000) continue;   // HF/6m sanity
-        const bool skimmer = m.captured(1).endsWith("-#");
-        const QString comment = m.captured(4).toUpper();
-        Spot s;
-        s.call    = m.captured(3).toUpper();
-        s.atSecs  = QDateTime::currentSecsSinceEpoch();
-        s.spotter = m.captured(1).toUpper();
-        s.comment = m.captured(4).trimmed();
-        if (comment.contains("FT8") || comment.contains("FT4")) {
-            s.kind = 'F';
-            const auto o = kHzOffRe.match(comment);    // dial + audio offset
-            if (o.hasMatch()) hz += o.captured(1).toLongLong();
-        } else if (skimmer) {
-            continue;              // the CW-RBN flood riding in with SET/SKIMMER
-        } else if (comment.contains("POTA")) {
-            s.kind = 'P';
-            const auto r = kParkRe.match(comment);
-            if (r.hasMatch()) s.tag = r.captured(1);
+        if (m.hasMatch()) {
+            Spot s;
+            if (!fill(s, m.captured(2), m.captured(3), m.captured(1),
+                      m.captured(4), QDateTime::currentSecsSinceEpoch()))
+                continue;
+            byCall_[s.call] = s;
+            changed = true;
+            emit rawSpotLine(line);    // relay feed (:7300), original text
+            continue;
         }
-        s.hz = hz;
+        // The SH/DX backfill page, one line per remembered spot. It is
+        // deliberately NOT relayed to :7300: a reconnect re-asks for the
+        // page, and the relay has no dedupe, so cqrlog's band map would
+        // get the same hour of spots again on every cluster hiccup.
+        const auto h = kHistRe.match(line);
+        if (!h.hasMatch()) continue;
+        const QDateTime when = QDateTime::fromString(
+            h.captured(3) + ' ' + h.captured(4), QStringLiteral("d-MMM-yyyy hhmm"));
+        if (!when.isValid()) continue;
+        Spot s;
+        if (!fill(s, h.captured(1), h.captured(2), h.captured(6), h.captured(5),
+                  QDateTime(when.date(), when.time(), QTimeZone::utc())
+                      .toSecsSinceEpoch()))
+            continue;
+        // Already too old to survive the next prune, or we already hold a
+        // fresher sighting of this call (the live feed outranks the page).
+        if (QDateTime::currentSecsSinceEpoch() - s.atSecs > ttlFor(s)) continue;
+        const auto it = byCall_.constFind(s.call);
+        if (it != byCall_.cend() && it->atSecs >= s.atSecs) continue;
         byCall_[s.call] = s;
         changed = true;
-        emit rawSpotLine(line);        // relay feed (:7300), original text
     }
     if (byCall_.size() > kMaxSpots) prune();
     if (changed) emit spotsChanged();

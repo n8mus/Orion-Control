@@ -155,6 +155,7 @@ private:
     void setDigitalMode(bool on);      // line-in for digital vs mic for voice
     void applyTxProfile(int slot);     // recall a stored TX-audio bundle
     void openSetup();                  // station-setup dialog (first run + SDR menu)
+    void applyClusterSettings();       // point the spot feed at the saved node, live
     void saveTxProfile(int slot);      // store current TX BW/PROC/MIC/PWR
     void pushVfoB();                   // VFO B dial+filter+TX state -> panadapter
     void saveBandMemory();             // stash freq/mode/filter in curBand_/curReg_
@@ -172,6 +173,8 @@ private:
     RadioController* radio_;                  // owned (QObject child); see makeRadio
     RigctldServer    rigctld_;
     SpotClient       spotClient_;                  // DX-cluster telnet feed
+    QAction*         spotSrcAct_ = nullptr;        // SPOT menu "source:" line
+    QAction*         spotsOnAct_ = nullptr;        // SPOT menu "Show spots"
     PotaClient       potaClient_;                  // POTA activator API feed
     SolarClient      solarClient_;                 // NOAA space-weather poller
     // VOACAP overlay driver: recomputed on solar data, band crossings and

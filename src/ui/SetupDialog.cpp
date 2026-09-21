@@ -275,12 +275,44 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     form->addRow("Radio audio in", audioDev_);
 
     form->addRow(section("DX CLUSTER", this));
-    spotHost_ = new QLineEdit(s.value("spots/host", "dxc.ve7cc.net").toString(), this);
+    // Editable combo: pick a node and the port follows, or type any host.
+    // Nodes are the ones that answered a TCP probe from this station on
+    // 2026-09-21 (VE7CC, the old default, did not — hence the list).
+    // Software matters: SET/FT8 and the spotter-area filter are CC Cluster
+    // commands, so the area chips bite hardest on a CC node.
+    static const struct { const char* host; int port; const char* who; } kNodes[] = {
+        {"hamqth.com",           7300, "HamQTH — DXSpider, worldwide"},
+        {"w3lpl.net",            7373, "W3LPL — DXSpider, Maryland"},
+        {"dxc.nc7j.com",         7373, "NC7J — CC Cluster"},
+        {"dxc.k0xm.net",         7300, "K0XM — CC Cluster, Missouri"},
+        {"k1ttt.net",            7373, "K1TTT — AR-Cluster"},
+        {"dxc.ve7cc.net",          23, "VE7CC — CC Cluster, BC"},
+        {"dxfun.com",            8000, "DXFun — DXSpider"},
+        {"gb7djk.dxcluster.net", 7300, "GB7DJK — DXSpider, UK"},
+    };
+    spotHost_ = new QComboBox(this);
+    spotHost_->setEditable(true);
+    for (const auto& n : kNodes)
+        spotHost_->addItem(QString("%1:%2 — %3").arg(n.host).arg(n.port)
+                               .arg(n.who),
+                           QStringList{n.host, QString::number(n.port)});
+    spotHost_->setEditText(s.value("spots/host", "dxc.ve7cc.net").toString());
+    spotHost_->setToolTip(
+        "Pick a node (the port follows) or type any host.\n"
+        "A node change takes effect as soon as you close this dialog.");
     form->addRow("Node", spotHost_);
     spotPort_ = new QSpinBox(this);
     spotPort_->setRange(1, 65535);
     spotPort_->setValue(s.value("spots/port", 23).toInt());
     form->addRow("Port", spotPort_);
+    // Choosing a preset leaves the HOST in the line edit, not the menu
+    // label — what gets saved is what the box shows.
+    connect(spotHost_, &QComboBox::activated, this, [this](int i) {
+        const QStringList d = spotHost_->itemData(i).toStringList();
+        if (d.size() != 2) return;
+        spotHost_->setEditText(d.at(0));
+        spotPort_->setValue(d.at(1).toInt());
+    });
     spotLogin_ = new QLineEdit(
         s.value("spots/login", s.value("station/callsign", "N8EM").toString())
             .toString(), this);
@@ -779,7 +811,7 @@ void SetupDialog::accept() {
     s.setValue("cw/port", keyerDev_->currentText().trimmed());
     s.setValue("cw/keyer", keyerSel_->currentData().toString());
     s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
-    s.setValue("spots/host", spotHost_->text().trimmed());
+    s.setValue("spots/host", spotHost_->currentText().trimmed());
     s.setValue("spots/port", spotPort_->value());
     s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());
     s.setValue("rotor/enabled", rotorOn_->isChecked());

@@ -60,7 +60,7 @@ private:
     QComboBox* keyerDev_ = nullptr;
     QLabel*    keyerTest_ = nullptr;
     QComboBox* audioDev_ = nullptr;
-    QLineEdit* spotHost_ = nullptr;
+    QComboBox* spotHost_ = nullptr;   // editable: presets + any node
     QSpinBox*  spotPort_ = nullptr;
     QLineEdit* spotLogin_ = nullptr;
     QCheckBox* rotorOn_ = nullptr;

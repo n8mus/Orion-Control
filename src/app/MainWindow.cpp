@@ -799,9 +799,10 @@ MainWindow::MainWindow(QWidget* parent)
         const QString host  = s.value("spots/host", "dxc.ve7cc.net").toString();
         const quint16 port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
         const QString login = s.value("spots/login", stationCall).toString();
-        auto* info = spotsMenu->addAction(QString("source: %1:%2 as %3")
-                                              .arg(host).arg(port).arg(login));
-        info->setEnabled(false);
+        spotSrcAct_ = spotsMenu->addAction(QString("source: %1:%2 as %3")
+                                               .arg(host).arg(port).arg(login));
+        spotSrcAct_->setEnabled(false);
+        spotsOnAct_ = spotsOn;                   // openSetup reconnects through it
         spotClient_.configure(host, port, login);
         spotsOn->setChecked(s.value("spots/enabled", true).toBool());
         dxOn->setChecked(s.value("spots/dx", true).toBool());
@@ -3650,6 +3651,23 @@ MainWindow::MainWindow(QWidget* parent)
         QTimer::singleShot(800, this, &MainWindow::openSetup);
 }
 
+// Re-read spots/{host,port,login} and point the feed at them, live.
+void MainWindow::applyClusterSettings() {
+    QSettings s;
+    const QString  host  = s.value("spots/host", "dxc.ve7cc.net").toString();
+    const quint16  port  = static_cast<quint16>(s.value("spots/port", 23).toUInt());
+    const QString  login = s.value("spots/login",
+                                   s.value("station/callsign", "N8EM")).toString();
+    spotClient_.configure(host, port, login);
+    if (spotSrcAct_)
+        spotSrcAct_->setText(QString("source: %1:%2 as %3")
+                                 .arg(host).arg(port).arg(login));
+    if (spotsOnAct_ && spotsOnAct_->isChecked()) {
+        spotClient_.setEnabled(false);           // drop the old node
+        spotClient_.setEnabled(true);            // ... and log in to the new one
+    }
+}
+
 void MainWindow::openSetup() {
     const QString keyerDev =
         (cwWin_ && cwWin_->keyerOpen())
@@ -3660,9 +3678,14 @@ void MainWindow::openSetup() {
         // point is "make CW come out of a different thing", and silently
         // deferring it reads as the selector doing nothing.
         if (cwWin_) cwWin_->reloadKeyer();
+        // The cluster node applies NOW too: the point of the node list is
+        // rolling through them when one goes quiet, and a restart per try
+        // is not rolling through anything. Reconnecting is just configure
+        // + an off/on of the client, which re-runs the login sequence.
+        applyClusterSettings();
         statusBar()->showMessage(
-            "setup saved — the keyer applies now; radio and cluster "
-            "changes apply on the next launch", 8000);
+            "setup saved — the keyer and the cluster node apply now; "
+            "radio changes apply on the next launch", 8000);
     }
 }
 

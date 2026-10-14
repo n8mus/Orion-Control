@@ -232,14 +232,23 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
                         "Tune by ear: listen here, then on the Orion's MON\n"
                         "into a dummy load or at low power.");
     prof->addWidget(preset_, 1);
+    auto* save = new QPushButton("Save", this);
+    save->setToolTip("Save your changes into the selected profile (a built-in\n"
+                     "asks for a name for your version — those stay as shipped)");
     auto* saveAs = new QPushButton("Save as…", this);
-    saveAs->setToolTip("Save the curve on screen as one of your profiles");
+    saveAs->setToolTip("Save the settings on screen as a new profile");
     auto* del = new QPushButton("Delete", this);
+    delBtn_ = del;
     del->setToolTip("Delete the selected profile (your own only)");
+    prof->addWidget(save);
     prof->addWidget(saveAs);
     prof->addWidget(del);
     lay->addLayout(prof);
     fillProfiles(QSettings().value("vk/eqProfile").toString());
+    // Edits keep the profile's name, marked "(modified)" until saved
+    // (operator's ask: tweak the profile he is on, not a nameless curve).
+    modified_ = QSettings().value("vk/eqProfileModified", false).toBool();
+    setModified(modified_);
     const auto syncDelete = [this, del] {
         del->setEnabled(preset_->currentData().toString().startsWith("u:"));
     };
@@ -373,15 +382,14 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
 
     load(s);
 
-    // Any edit redraws the curve at once, drops the preset label to "—"
-    // (the curve is now the operator's own), and re-renders shortly after.
+    // Any edit redraws the curve at once, marks the profile "(modified)"
+    // (its name stays — Save writes the edits back into it), and re-renders
+    // shortly after.
     const auto edited = [this] {
         if (loading_) return;
         refreshEnables();
         curve_->setSettings(collect());
-        const QSignalBlocker b(preset_);
-        preset_->setCurrentIndex(0);
-        setActiveProfile(QString());               // now his own, unsaved
+        setModified(true);
         emit liveSettingsChanged(collect());       // live mic: at once
         applyTimer_->start();                      // VK messages: when settled
     };
@@ -403,7 +411,9 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         if (row.slope)
             connect(row.slope, &QComboBox::currentIndexChanged, this, edited);
     }
-    connect(preset_, &QComboBox::currentIndexChanged, this, [this](int idx) {
+    // activated, not currentIndexChanged: picking the profile already shown
+    // reloads its saved version — the way to drop unsaved edits.
+    connect(preset_, &QComboBox::activated, this, [this](int idx) {
         const QString key = preset_->itemData(idx).toString();
         VoiceEqSettings s;
         if (key.startsWith("b:"))
@@ -412,29 +422,19 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
                  || !VoiceEqSettings::loadUserProfile(key.mid(2), s))
             return;                                // "—" or vanished
         load(s);
-        const QSignalBlocker b(preset_);
-        preset_->setCurrentIndex(idx);
         setActiveProfile(key);
+        setModified(false);
         emit liveSettingsChanged(collect());
         applyTimer_->start();
     });
-    connect(saveAs, &QPushButton::clicked, this, [this] {
-        const QString cur = preset_->currentData().toString();
-        bool ok = false;
-        const QString name = QInputDialog::getText(
-            this, "Save EQ profile", "Profile name:", QLineEdit::Normal,
-            cur.startsWith("u:") ? cur.mid(2) : QString(), &ok).trimmed();
-        if (!ok || name.isEmpty()) return;
-        if (VoiceEqSettings::userProfileNames().contains(name)
-            && QMessageBox::question(this, "Save EQ profile",
-                   QString("Replace your profile \"%1\"?").arg(name))
-                   != QMessageBox::Yes)
-            return;
-        VoiceEqSettings::saveUserProfile(name, collect());
-        fillProfiles("u:" + name);
-        setActiveProfile("u:" + name);
-        setStatus(QString("Saved profile \"%1\".").arg(name));
+    connect(save, &QPushButton::clicked, this, [this] {
+        const QString key = preset_->currentData().toString();
+        if (!key.startsWith("u:")) { saveAsPrompt(); return; }   // built-in / none
+        VoiceEqSettings::saveUserProfile(key.mid(2), collect());
+        setModified(false);
+        setStatus(QString("Saved \"%1\".").arg(key.mid(2)));
     });
+    connect(saveAs, &QPushButton::clicked, this, [this] { saveAsPrompt(); });
     connect(del, &QPushButton::clicked, this, [this] {
         const QString key = preset_->currentData().toString();
         if (!key.startsWith("u:")) return;
@@ -445,6 +445,7 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         VoiceEqSettings::deleteUserProfile(key.mid(2));
         fillProfiles(QString());
         setActiveProfile(QString());
+        setModified(false);
         setStatus(QString("Deleted profile \"%1\".").arg(key.mid(2)));
     });
     connect(listen, &QPushButton::clicked, this, [this] {
@@ -482,10 +483,43 @@ void VoiceEqDialog::fillProfiles(const QString& select) {
     if (!mine.isEmpty()) preset_->insertSeparator(preset_->count());
     for (const QString& n : mine) preset_->addItem("★ " + n, "u:" + n);
     preset_->setCurrentIndex(std::max(0, preset_->findData(select)));
+    if (delBtn_) delBtn_->setEnabled(preset_->currentData().toString().startsWith("u:"));
 }
 
 void VoiceEqDialog::setActiveProfile(const QString& key) {
     QSettings().setValue("vk/eqProfile", key);
+}
+
+// The shown profile's name gets " (modified)" while the settings on screen
+// differ from what it holds; the item's real name is restored by refilling.
+void VoiceEqDialog::setModified(bool m) {
+    modified_ = m;
+    QSettings().setValue("vk/eqProfileModified", m);
+    const int idx = preset_->currentIndex();
+    const QString key = preset_->currentData().toString();
+    fillProfiles(key);                             // clean names first
+    if (m && !key.isEmpty() && idx >= 0)
+        preset_->setItemText(preset_->currentIndex(),
+                             preset_->currentText() + "  (modified)");
+}
+
+void VoiceEqDialog::saveAsPrompt() {
+    const QString cur = preset_->currentData().toString();
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, "Save EQ profile", "Profile name:", QLineEdit::Normal,
+        cur.startsWith("u:") ? cur.mid(2) : QString(), &ok).trimmed();
+    if (!ok || name.isEmpty()) return;
+    if (VoiceEqSettings::userProfileNames().contains(name)
+        && QMessageBox::question(this, "Save EQ profile",
+               QString("Replace your profile \"%1\"?").arg(name))
+               != QMessageBox::Yes)
+        return;
+    VoiceEqSettings::saveUserProfile(name, collect());
+    fillProfiles("u:" + name);
+    setActiveProfile("u:" + name);
+    setModified(false);
+    setStatus(QString("Saved profile \"%1\".").arg(name));
 }
 
 namespace {

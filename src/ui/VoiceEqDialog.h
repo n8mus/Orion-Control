@@ -92,6 +92,8 @@ private:
     void load(const VoiceEqSettings& s);
     void fillProfiles(const QString& select);      // built-ins + the operator's
     void setActiveProfile(const QString& key);     // remembered across opens
+    void setModified(bool m);                      // "(modified)" on the name
+    void saveAsPrompt();
     void refreshEnables();
 
     QWidget* buildDynamicsPage();
@@ -131,6 +133,8 @@ private:
     bool         calRunning_ = false;
     QTimer*      applyTimer_ = nullptr;           // debounces live apply
     bool         loading_ = false;
+    bool         modified_ = false;                // edits not in the profile yet
+    QPushButton* delBtn_ = nullptr;
 };
 
 } // namespace ttc

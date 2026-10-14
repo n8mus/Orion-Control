@@ -25,6 +25,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMenu>
+#include <QApplication>
+#include <QThreadPool>
+#include <QMutex>
 #include <QProcess>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -195,34 +198,60 @@ QString MainWindow::vkRawPath(int slot) const {
     return dvrDir() + QString("/vk%1.raw.wav").arg(slot + 1);
 }
 
+// The VK message files are written from the GUI thread (a take landing)
+// and from the background re-render; one at a time.
+static QMutex& vkFileMutex() {
+    static QMutex m;
+    return m;
+}
+
 // A message recorded before the EQ existed has no raw take: adopt the
 // message itself as the original (once), so the first render shapes it
 // instead of skipping it. A slot with nothing usable is left alone.
-bool MainWindow::renderVkSlot(int slot, const VoiceEqSettings& eq,
-                              QString* err, VoiceRenderStats* stats) {
-    const QString raw = vkRawPath(slot);
+// Static and GUI-free: also runs on the background re-render thread.
+static bool renderVkFiles(const QString& raw, const QString& msg,
+                          const VoiceEqSettings& eq, QString* err,
+                          VoiceRenderStats* stats) {
+    QMutexLocker lock(&vkFileMutex());
     if (!QFileInfo::exists(raw)) {
-        if (!vkHasMessage(slot)) return false;
-        if (!QFile::copy(vkPath(slot), raw)) {
-            if (err) *err = "cannot keep the original of " + vkPath(slot);
+        double sec = 0, peak = 0;
+        if (!ClipDeck::wavStats(msg, sec, peak) || sec < kVkMinSeconds
+            || peak < kVkMinPeak)
+            return false;
+        if (!QFile::copy(msg, raw)) {
+            if (err) *err = "cannot keep the original of " + msg;
             return false;
         }
     }
-    return renderVoiceEq(raw, vkPath(slot), eq, 0.7, err, stats);
+    return renderVoiceEq(raw, msg, eq, 0.7, err, stats);
 }
+
+bool MainWindow::renderVkSlot(int slot, const VoiceEqSettings& eq,
+                              QString* err, VoiceRenderStats* stats) {
+    return renderVkFiles(vkRawPath(slot), vkPath(slot), eq, err, stats);
+}
+
+namespace {
+struct VkRenderResult {
+    int n = 0;
+    QString summary;                               // talk power + first detail
+    QString error;
+};
 
 // Talk power per message, then the first message's stage-by-stage detail —
 // how hard each stage worked, so the settings can be judged by numbers as
-// well as by ear.
-int MainWindow::rerenderVk(const VoiceEqSettings& eq, QString* summary) {
-    int n = 0;
+// well as by ear. GUI-free (background thread).
+VkRenderResult renderAllVk(const QString& dir, const VoiceEqSettings& eq) {
+    VkRenderResult r;
     QStringList talk;
     QString detail;
     for (int i = 0; i < 4; ++i) {
         QString err;
         VoiceRenderStats st;
-        if (renderVkSlot(i, eq, &err, &st)) {
-            ++n;
+        const QString raw = dir + QString("/vk%1.raw.wav").arg(i + 1);
+        const QString msg = dir + QString("/vk%1.wav").arg(i + 1);
+        if (renderVkFiles(raw, msg, eq, &err, &st)) {
+            ++r.n;
             talk << QString("VK%1 %2 dB").arg(i + 1)
                         .arg(st.talkPowerDb >= 0 ? "+" + QString::number(st.talkPowerDb, 'f', 1)
                                                  : QString::number(st.talkPowerDb, 'f', 1));
@@ -237,13 +266,67 @@ int MainWindow::rerenderVk(const VoiceEqSettings& eq, QString* summary) {
                 if (!d.isEmpty()) detail = QString("  (VK%1: %2)").arg(i + 1).arg(d.join(", "));
             }
         } else if (!err.isEmpty()) {
-            statusBar()->showMessage("VK audio: " + err, 10000);
+            r.error = err;
         }
     }
+    if (r.n > 0) r.summary = "Talk power " + talk.join(", ") + detail;
+    return r;
+}
+}  // namespace
+
+int MainWindow::rerenderVk(const VoiceEqSettings& eq, QString* summary) {
+    const VkRenderResult r = renderAllVk(dvrDir(), eq);
+    if (!r.error.isEmpty()) statusBar()->showMessage("VK audio: " + r.error, 10000);
     refreshVkLoaded();
-    if (summary && n > 0)
-        *summary = "Talk power " + talk.join(", ") + detail;
-    return n;
+    if (summary) *summary = r.summary;
+    return r.n;
+}
+
+// Every EQ-window edit re-renders all four messages — two chain passes
+// plus the look-ahead stage each — which froze the GUI (and the live mic,
+// which runs on the GUI thread) on every spin-box click (live-found). It
+// runs on the thread pool now; edits arriving meanwhile coalesce into one
+// more pass, and a pending Listen plays when the last pass lands.
+void MainWindow::startVkRender(const VoiceEqSettings& s) {
+    if (vkRenderBusy_) {
+        vkRenderPending_ = s;
+        vkRenderHasPending_ = true;
+        return;
+    }
+    vkRenderBusy_ = true;
+    if (vkEqDlg_) vkEqDlg_->setStatus("Updating the VK messages…");
+    QPointer<MainWindow> self(this);
+    const QString dir = dvrDir();
+    QThreadPool::globalInstance()->start([self, dir, s] {
+        const VkRenderResult r = renderAllVk(dir, s);
+        QMetaObject::invokeMethod(qApp, [self, r] {
+            if (self) self->finishVkRender(r.n, r.summary, r.error);
+        });
+    });
+}
+
+void MainWindow::finishVkRender(int n, const QString& summary,
+                                const QString& error) {
+    vkRenderBusy_ = false;
+    refreshVkLoaded();
+    if (vkRenderHasPending_) {                     // newer edits: one more pass
+        vkRenderHasPending_ = false;
+        startVkRender(vkRenderPending_);
+        return;
+    }
+    QString text = n == 0
+        ? QStringLiteral("Saved. No VK messages recorded yet — right-click a "
+                         "VK button to record one.")
+        : QString("Applied to %1 message%2. %3").arg(n).arg(n == 1 ? "" : "s")
+              .arg(summary);
+    if (!error.isEmpty()) text += "  (" + error + ")";
+    if (vkEqDlg_) vkEqDlg_->setStatus(text);
+    statusBar()->showMessage("VK EQ: " + text, 6000);
+    if (vkPreviewAfter_ >= 0) {
+        const int slot = vkPreviewAfter_;
+        vkPreviewAfter_ = -1;
+        previewVoiceSlot(slot);
+    }
 }
 
 // AUDIO ▾ → Voice keyer EQ…  Every edit re-renders every message from its
@@ -257,18 +340,11 @@ void MainWindow::showVoiceEq() {
         vkEqDlg_ = dlg;
         const auto apply = [this](const VoiceEqSettings& s) {
             s.save();
-            QString summary;
-            const int n = rerenderVk(s, &summary);
-            const QString text = n == 0
-                ? QStringLiteral("Saved. No VK messages recorded yet — "
-                                 "right-click a VK button to record one.")
-                : QString("Applied to %1 message%2. %3")
-                      .arg(n).arg(n == 1 ? "" : "s").arg(summary);
-            if (vkEqDlg_) vkEqDlg_->setStatus(text);
-            statusBar()->showMessage("VK EQ: " + text, 6000);
+            startVkRender(s);                      // background; GUI stays live
         };
         connect(dlg, &VoiceEqDialog::applyRequested, this, apply);
-        connect(dlg, &VoiceEqDialog::applyRequested, this,
+        // The live mic takes every edit at once — cheap, no rendering.
+        connect(dlg, &VoiceEqDialog::liveSettingsChanged, this,
                 [this](const VoiceEqSettings& s) {
                     if (live_ && liveMic_) live_->setSettings(s);   // as you talk
                 });
@@ -355,8 +431,8 @@ void MainWindow::showVoiceEq() {
         connect(dlg, &VoiceEqDialog::listenRequested, this,
                 [this, apply](int slot, const VoiceEqSettings& s) {
                     stopVoicePlayback();           // never re-render under TX
+                    vkPreviewAfter_ = slot;        // plays when the pass lands
                     apply(s);
-                    previewVoiceSlot(slot);
                 });
     }
     vkEqDlg_->show();

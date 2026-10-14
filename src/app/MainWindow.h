@@ -30,6 +30,7 @@ class QVBoxLayout;
 #include "util/LogbookIndex.h"
 #include "util/WatchList.h"
 #include "util/TuneTable.h"
+#include "audio/VoiceEq.h"
 #include <QHash>
 #include <QPointer>
 #include "cw/CwWindow.h"
@@ -202,6 +203,8 @@ private:
     // -> messages rendered; a one-line talk-power summary into *summary
     int  rerenderVk(const VoiceEqSettings& eq, QString* summary = nullptr);
     void showVoiceEq();
+    void startVkRender(const VoiceEqSettings& s);  // background re-render
+    void finishVkRender(int n, const QString& summary, const QString& error);
     void setLiveMic(bool on);          // LIVE: PC mic chain -> SignaLink
     bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers
@@ -303,6 +306,10 @@ private:
     LiveVoice* live_ = nullptr;          // live mic chain (LIVE button)
     bool liveMic_ = false;
     bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
+    bool vkRenderBusy_ = false;                // a background VK render runs
+    bool vkRenderHasPending_ = false;          // edits arrived meanwhile
+    VoiceEqSettings vkRenderPending_;
+    int  vkPreviewAfter_ = -1;                 // Listen waiting on the render
     // SignaLink pickup finder (EQ window): a rising tone into the SignaLink.
     QPointer<QProcess> calProc_;
     QElapsedTimer calClock_;

@@ -79,7 +79,8 @@ public:
     void setCalibration(bool running, const QString& text);
 
 signals:
-    void applyRequested(const ttc::VoiceEqSettings& s);
+    void applyRequested(const ttc::VoiceEqSettings& s);     // debounced: re-render
+    void liveSettingsChanged(const ttc::VoiceEqSettings& s); // every edit: live mic
     // Apply first, then play this slot on the PC speakers (nothing keyed).
     void listenRequested(int slot, const ttc::VoiceEqSettings& s);
     void calibrateStartRequested();                // play the rising tone

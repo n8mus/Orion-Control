@@ -367,7 +367,7 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
 
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);
-    applyTimer_->setInterval(400);                 // spin-box scrubbing settles
+    applyTimer_->setInterval(700);                 // spin-box scrubbing settles
     connect(applyTimer_, &QTimer::timeout, this,
             [this] { emit applyRequested(collect()); });
 
@@ -382,7 +382,8 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         const QSignalBlocker b(preset_);
         preset_->setCurrentIndex(0);
         setActiveProfile(QString());               // now his own, unsaved
-        applyTimer_->start();
+        emit liveSettingsChanged(collect());       // live mic: at once
+        applyTimer_->start();                      // VK messages: when settled
     };
     connect(enabled_, &QCheckBox::toggled, this, edited);
     for (QCheckBox* c : {dyn_.gateOn, dyn_.deessOn, dyn_.compOn, dyn_.limOn, dyn_.limDc})
@@ -414,6 +415,7 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         const QSignalBlocker b(preset_);
         preset_->setCurrentIndex(idx);
         setActiveProfile(key);
+        emit liveSettingsChanged(collect());
         applyTimer_->start();
     });
     connect(saveAs, &QPushButton::clicked, this, [this] {

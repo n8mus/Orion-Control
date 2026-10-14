@@ -58,6 +58,7 @@ public slots:
     void setTuneLevel(int watts);                 // restore from settings
     void showTuneActive(bool on);                 // reflect/force the TUNE latch
     void showMoxActive(bool on);                  // reflect/force the MOX latch
+    void toggleMox();                             // as a click: emits moxToggled
     void showTxPower(int pct);
     void showMicGain(int pct);
     void showTxFilter(int hz);

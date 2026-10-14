@@ -41,6 +41,9 @@
 #include <QLineEdit>
 #include <QSet>
 #include <QShortcut>
+#include <QPlainTextEdit>
+#include <QTextEdit>
+#include <QAbstractSpinBox>
 #include <QSpinBox>
 #include <QStandardPaths>
 #include <QUdpSocket>
@@ -3021,6 +3024,25 @@ MainWindow::MainWindow(QWidget* parent)
             this, keyGuard([this] { zeroBeat(); }));
     connect(new QShortcut(QKeySequence(Qt::Key_X), this), &QShortcut::activated,
             this, keyGuard([this] { flipCwSideband(); }));
+    // Space = MOX on / MOX off (operator's ask), exactly a click on MOX —
+    // same failsafe, same TUNE interlock. It transmits, so it is fenced off
+    // from typing: a focused text box (CALL, GRID, the contest deck's call
+    // field, which uses Space itself, any spin box or log editor) takes the
+    // key first, and the guard below re-checks; holding the bar down does
+    // not chatter the rig (no auto-repeat).
+    {
+        auto* space = new QShortcut(QKeySequence(Qt::Key_Space), this);
+        space->setAutoRepeat(false);
+        connect(space, &QShortcut::activated, this, [this] {
+            QWidget* f = QApplication::focusWidget();
+            if (qobject_cast<QLineEdit*>(f) || qobject_cast<QAbstractSpinBox*>(f)
+                || qobject_cast<QTextEdit*>(f) || qobject_cast<QPlainTextEdit*>(f))
+                return;
+            if (auto* cb = qobject_cast<QComboBox*>(f); cb && cb->isEditable())
+                return;
+            txBar_->toggleMox();
+        });
+    }
 
     // Start the interop seam. Clients (cqrlog/WSJT-X/fldigi/GridTracker) connect
     // here. TTC_RIGCTLD_PORT overrides for side-by-side protocol testing.

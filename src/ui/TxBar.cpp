@@ -114,7 +114,8 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     moxBtn_->setFocusPolicy(Qt::NoFocus);
     moxBtn_->setToolTip("Manual transmit (voice): key the rig so the mic — or, "
                         "in remote mode, the TRIP audio stream — goes on the "
-                        "air. Click again to un-key.");
+                        "air. Click again to un-key.\n"
+                        "Space bar does the same (not while typing in a box).");
     lay->addWidget(tuneBtn_);
     lay->addWidget(tuneLvl_);
     lay->addWidget(tunerBtn_);
@@ -334,6 +335,8 @@ void TxBar::showTuneActive(bool on) {
     QSignalBlocker block(tuneBtn_);
     tuneBtn_->setChecked(on);
 }
+
+void TxBar::toggleMox() { moxBtn_->toggle(); }
 
 void TxBar::showMoxActive(bool on) {
     QSignalBlocker block(moxBtn_);

@@ -10,6 +10,7 @@ class QComboBox;
 class QDoubleSpinBox;
 class QLabel;
 class QSpinBox;
+class QTimer;
 
 namespace ttc {
 
@@ -28,10 +29,12 @@ private:
     VoiceEqSettings s_;
 };
 
-// Voice keyer EQ editor (AUDIO ▾ → Voice keyer EQ…). Non-modal: edit,
-// Apply (re-renders every VK message from its untouched take), listen on
-// the speakers, adjust, repeat — then transmit with the VK buttons as
-// usual. Owns no files; MainWindow does the rendering on applyRequested.
+// Voice keyer EQ editor (AUDIO ▾ → Voice keyer EQ…). Non-modal and LIVE:
+// every edit (preset, checkbox, number) re-renders the VK messages from
+// their untouched takes ~0.4 s after the last change — no Apply step
+// (live-found: with an Apply button, preset changes that were never
+// applied went out unchanged and sounded like "the EQ does nothing").
+// Owns no files; MainWindow does the rendering on applyRequested.
 class VoiceEqDialog : public QDialog {
     Q_OBJECT
 public:
@@ -61,6 +64,7 @@ private:
     QComboBox*   slot_    = nullptr;
     VoiceEqCurve* curve_  = nullptr;
     QLabel*      status_  = nullptr;
+    QTimer*      applyTimer_ = nullptr;           // debounces live apply
     bool         loading_ = false;
 };
 

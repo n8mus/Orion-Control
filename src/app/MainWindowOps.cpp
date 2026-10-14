@@ -189,7 +189,7 @@ QString MainWindow::vkRawPath(int slot) const {
 }
 
 // A message recorded before the EQ existed has no raw take: adopt the
-// message itself as the original (once), so the first Apply shapes it
+// message itself as the original (once), so the first render shapes it
 // instead of skipping it. A slot with nothing usable is left alone.
 bool MainWindow::renderVkSlot(int slot, const VoiceEqSettings& eq,
                               QString* err) {
@@ -215,8 +215,10 @@ int MainWindow::rerenderVk(const VoiceEqSettings& eq) {
     return n;
 }
 
-// AUDIO ▾ → Voice keyer EQ…  Apply re-renders every message from its raw
-// take; "Apply & listen" then auditions one on the speakers.
+// AUDIO ▾ → Voice keyer EQ…  Every edit re-renders every message from its
+// raw take (debounced in the dialog); "Listen" auditions one on the
+// speakers. A render landing mid-transmission is harmless: the player
+// holds the old file open, and the next send uses the new curve.
 void MainWindow::showVoiceEq() {
     if (!vkEqDlg_) {
         auto* dlg = new VoiceEqDialog(VoiceEqSettings::load(), this);

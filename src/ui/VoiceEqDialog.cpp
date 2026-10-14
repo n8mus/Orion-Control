@@ -11,6 +11,7 @@
 #include <QPainterPath>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <cmath>
 
@@ -161,28 +162,35 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     slot_ = new QComboBox(this);
     for (int i = 1; i <= 4; ++i) slot_->addItem(QString("VK%1").arg(i), i - 1);
     bRow->addWidget(slot_);
-    auto* listen = new QPushButton("Apply && listen", this);
-    listen->setToolTip("Re-render the messages with this curve, then play\n"
-                       "the chosen one on the PC speakers (nothing keyed)");
+    auto* listen = new QPushButton("Listen", this);
+    listen->setToolTip("Play the chosen message on the PC speakers with the\n"
+                       "current curve (nothing keyed). Changes apply by\n"
+                       "themselves — the VK buttons always send the curve\n"
+                       "shown here.");
+    listen->setDefault(true);
     bRow->addWidget(listen);
     bRow->addStretch(1);
-    auto* apply = new QPushButton("Apply", this);
-    apply->setDefault(true);
     auto* close = new QPushButton("Close", this);
-    bRow->addWidget(apply);
     bRow->addWidget(close);
     lay->addLayout(bRow);
 
+    applyTimer_ = new QTimer(this);
+    applyTimer_->setSingleShot(true);
+    applyTimer_->setInterval(400);                 // spin-box scrubbing settles
+    connect(applyTimer_, &QTimer::timeout, this,
+            [this] { emit applyRequested(collect()); });
+
     load(s);
 
-    // Any edit redraws the curve and drops the preset label to "—" (the
-    // curve is now the operator's own). Nothing renders until Apply.
+    // Any edit redraws the curve at once, drops the preset label to "—"
+    // (the curve is now the operator's own), and re-renders shortly after.
     const auto edited = [this] {
         if (loading_) return;
         refreshEnables();
         curve_->setSettings(collect());
         const QSignalBlocker b(preset_);
         preset_->setCurrentIndex(0);
+        applyTimer_->start();
     };
     connect(enabled_, &QCheckBox::toggled, this, edited);
     for (Row& row : rows_) {
@@ -198,10 +206,10 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         load(VoiceEqSettings::preset(VoiceEqSettings::Preset(idx - 1)));
         const QSignalBlocker b(preset_);
         preset_->setCurrentIndex(idx);
+        applyTimer_->start();
     });
-    connect(apply, &QPushButton::clicked, this,
-            [this] { emit applyRequested(collect()); });
     connect(listen, &QPushButton::clicked, this, [this] {
+        applyTimer_->stop();                       // listen applies it now
         emit listenRequested(slot_->currentData().toInt(), collect());
     });
     connect(close, &QPushButton::clicked, this, &QDialog::close);

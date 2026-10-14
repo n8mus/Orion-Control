@@ -11,7 +11,7 @@ namespace ttc {
 // Manual tuner + amp settings the operator has found by hand, per antenna
 // and band, at the frequencies where he actually tuned up: the Ten-Tec 238C
 // (Capacitor 1.0-10.0, one 10-position impedance knob Low Z 1-5 / High Z
-// 1-5, Inductor 1-30, or BYPASS where the antenna needs no tuner) and the
+// 1-5, Inductor 1.0-30.0, or BYPASS where the antenna needs no tuner) and the
 // Titan III (Tune and Load, 1.0-10.0). The panadapter's tuner box shows
 // the saved point nearest the TX frequency, above or below.
 //
@@ -25,7 +25,7 @@ struct TunePoint {
     double  cap      = 1.0;     // 1.0 .. 10.0, 0.1 steps
     bool    highZ    = false;   // impedance knob side ...
     int     zPos     = 1;       // ... and position 1-5 on that side
-    int     ind      = 1;       // 1 .. 30
+    double  ind      = 1.0;     // 1.0 .. 30.0, 0.1 steps
     double  ampTune  = 1.0;     // 1.0 .. 10.0, 0.1 steps
     double  ampLoad  = 1.0;     // 1.0 .. 10.0, 0.1 steps
     double  swr      = 0.0;     // wattmeter SWR at save time; 0 = none

@@ -13,7 +13,6 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QSpinBox>
 #include <QTableWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -75,7 +74,7 @@ QString tuneZText(const TunePoint& p) {
 QString tuneTunerText(const TunePoint& p) {
     if (p.bypass) return QStringLiteral("BYPASS");
     return QString("Cap %1   %2   Ind %3")
-        .arg(p.cap, 0, 'f', 1).arg(tuneZText(p)).arg(p.ind);
+        .arg(p.cap, 0, 'f', 1).arg(tuneZText(p)).arg(p.ind, 0, 'f', 1);
 }
 
 QString tuneAmpText(const TunePoint& p) {
@@ -131,9 +130,8 @@ TuneEntryDialog::TuneEntryDialog(const QString& antenna, const TunePoint& start,
     z_->setFixedWidth(110);
     tg->addWidget(z_, 2, 1);
     tg->addWidget(new QLabel("Inductor", tuner), 3, 0);
-    ind_ = new QSpinBox(tuner);
-    ind_->setRange(1, 30);
-    ind_->setFixedWidth(80);
+    ind_ = tenthsBox(tuner);
+    ind_->setRange(1.0, 30.0);
     tg->addWidget(ind_, 3, 1);
     tg->setColumnStretch(2, 1);
     lay->addWidget(tuner);
@@ -409,7 +407,7 @@ void TuneTableDialog::refresh() {
         cell(kColTuner, p.bypass ? QStringLiteral("BYPASS")
                                  : QString("Cap %1").arg(p.cap, 0, 'f', 1));
         cell(kColZ, p.bypass ? QString() : tuneZText(p));
-        cell(kColInd, p.bypass ? QString() : QString::number(p.ind), true);
+        cell(kColInd, p.bypass ? QString() : QString::number(p.ind, 'f', 1), true);
         cell(kColTune, QString::number(p.ampTune, 'f', 1), true);
         cell(kColLoad, QString::number(p.ampLoad, 'f', 1), true);
         cell(kColSwr, p.swr >= 1.0 ? QString::number(p.swr, 'f', 2)

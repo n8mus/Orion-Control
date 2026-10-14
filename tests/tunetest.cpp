@@ -22,7 +22,7 @@ static void check(bool ok, const char* what) {
     }
 }
 
-static TunePoint pt(qint64 hz, double cap, int ind = 10) {
+static TunePoint pt(qint64 hz, double cap, double ind = 10.0) {
     TunePoint p;
     p.hz = hz;
     p.cap = cap;
@@ -81,7 +81,7 @@ int main() {
     t.upsert("dipole", "40", wild);
     n = t.nearest("dipole", "40", 7200000);
     check(n && n->cap == 10.0, "cap clamps to 10.0");
-    check(n && n->ind == 30, "inductor clamps to 30");
+    check(n && n->ind == 30.0, "inductor clamps to 30");
     check(n && n->zPos == 5, "Z position clamps to 5");
     check(n && n->ampTune == 1.0, "tune clamps to 1.0");
     check(n && n->ampLoad == 5.3, "load rounds to the tenth");
@@ -91,7 +91,7 @@ int main() {
     check(!t.remove("dipole", "40", 7200000), "second remove finds nothing");
 
     // JSON + file round trip, including bypass, high Z, SWR and note.
-    TunePoint b = pt(14250000, 3.3, 7);
+    TunePoint b = pt(14250000, 3.3, 7.4);
     b.bypass = true;
     b.highZ = true;
     b.zPos = 4;
@@ -109,6 +109,7 @@ int main() {
     n = u.nearest("tribander", "20", 14250000);
     check(n && n->bypass && n->highZ && n->zPos == 4, "bypass + High Z 4 kept");
     check(n && n->swr == 1.23, "SWR kept to 2 places");
+    check(n && n->ind == 7.4, "inductor tenths kept");
     check(n && n->note == "best spot, phone end", "note kept, trimmed");
     check(n && n->savedMs == 1760400000000, "timestamp kept");
     check(u.antennas() == QStringList({"", "dipole", "tribander"}),

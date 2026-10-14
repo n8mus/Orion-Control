@@ -54,7 +54,7 @@ private:
     QCheckBox*      bypass_ = nullptr;
     QDoubleSpinBox* cap_    = nullptr;
     QComboBox*      z_      = nullptr;             // Low Z 1-5, High Z 1-5
-    QSpinBox*       ind_    = nullptr;
+    QDoubleSpinBox* ind_    = nullptr;
     QDoubleSpinBox* tune_   = nullptr;
     QDoubleSpinBox* load_   = nullptr;
     QDoubleSpinBox* swr_    = nullptr;

@@ -32,6 +32,13 @@ const char* kStyle =
     "QDialog { background: #141b24; }"
     "QLabel { color: #8fa3b8; font-size: 12px; }"
     "QCheckBox { color: #c8d4e0; }"
+    // Group headings carry their own colour: unstyled, they take the
+    // desktop theme's (live-found on Cinnamon: dark grey on the dark
+    // dialog, unreadable).
+    "QGroupBox { color: #e8b04a; font-weight: bold; border: 1px solid #2a3644;"
+    " margin-top: 12px; padding-top: 6px; }"
+    "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
+    "QTabWidget::pane, QTabWidget > QWidget > QWidget { background: #141b24; }"
     "QComboBox, QPushButton { background: #1c2430; color: #c8d4e0;"
     " border: 1px solid #2a3644; padding: 3px 8px; }"
     "QPushButton:default { border-color: #3ecf7a; }"

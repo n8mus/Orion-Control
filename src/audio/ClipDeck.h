@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QProcess>
 #include <QVector>
+#include <vector>
 
 class QTimer;
 
@@ -50,6 +51,13 @@ public:
     // A header-only take reads 0 s — how a silent/empty voice-keyer
     // recording is caught before it replaces a good message.
     static bool wavStats(const QString& wavPath, double& seconds, double& peak);
+    // Whole 16-bit PCM WAV as mono float (-1..1; stereo is averaged), and
+    // the reverse: write mono float as a plain 44-byte-header 16-bit WAV
+    // (clamped). For offline processing of voice-keyer messages.
+    static bool readWavMono(const QString& wavPath, std::vector<float>& out,
+                            int& rate);
+    static bool writeWavMono(const QString& wavPath,
+                             const std::vector<float>& samples, int rate);
     // Peak-normalize a 16-bit PCM WAV in place so quiet takes (radio line
     // out, timid mic) still drive the rig. Gain is capped so a near-silent
     // file can't be turned into pure noise. The cap is 50x (~34 dB): the

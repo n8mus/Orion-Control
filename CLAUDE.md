@@ -78,6 +78,7 @@ senders and weak-signal cases are the hard set.
 | `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `dcutest` | DCU-3 frame parser (streams-while-turning captures) + the rotctld server we put in front of it | — |
 | `watchtest` | DX-watch pattern matching | — |
+| `vkeqtest` | voice keyer EQ: the AetherSDR-ported `ClientEq` (src/dsp) measured against its own analytic curve, `snapToTargets()` for offline renders, `renderVoiceEq` high-pass + normalize + capped make-up gain, settings JSON | — |
 | `tunetest` | tuner/amp settings table behind the pan's amber tuner box (238C + Titan III, per antenna/band, `tuning.json`): nearest-point lookup, same-kHz overwrite, knob clamping, file round trip | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
 | `pmtest` | PowerMaster wattmeter frame decode + CRC (pure parser, no hardware) | — |

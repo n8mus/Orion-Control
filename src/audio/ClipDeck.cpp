@@ -410,6 +410,55 @@ bool ClipDeck::wavStats(const QString& wavPath, double& seconds, double& peak) {
     return true;
 }
 
+bool ClipDeck::readWavMono(const QString& wavPath, std::vector<float>& out,
+                           int& rate) {
+    out.clear();
+    QFile file(wavPath);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray b = file.readAll();
+    qsizetype off = 0, len = 0;
+    int ch = 1;
+    rate = 48000;
+    if (!findPcm16(b, off, len, rate, ch) || rate <= 0) return false;
+    const auto* s = reinterpret_cast<const qint16*>(b.constData() + off);
+    const qsizetype frames = len / 2 / ch;
+    out.resize(static_cast<size_t>(frames));
+    for (qsizetype f = 0; f < frames; ++f) {
+        int acc = 0;
+        for (int c = 0; c < ch; ++c) acc += s[f * ch + c];
+        out[static_cast<size_t>(f)] = float(acc) / float(ch) / 32768.0f;
+    }
+    return true;
+}
+
+bool ClipDeck::writeWavMono(const QString& wavPath,
+                            const std::vector<float>& samples, int rate) {
+    QFile file(wavPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+    const quint32 dataBytes = quint32(samples.size() * 2);
+    QByteArray h;
+    const auto put16 = [&h](quint16 v) { h.append(char(v & 0xff)); h.append(char(v >> 8)); };
+    const auto put32 = [&put16](quint32 v) { put16(quint16(v & 0xffff)); put16(quint16(v >> 16)); };
+    h.append("RIFF");
+    put32(36 + dataBytes);
+    h.append("WAVEfmt ");
+    put32(16);
+    put16(1);                                      // PCM
+    put16(1);                                      // mono
+    put32(quint32(rate));
+    put32(quint32(rate) * 2);                      // byte rate
+    put16(2);                                      // block align
+    put16(16);                                     // bits
+    h.append("data");
+    put32(dataBytes);
+    QByteArray pcm(qsizetype(dataBytes), Qt::Uninitialized);
+    auto* d = reinterpret_cast<qint16*>(pcm.data());
+    for (size_t i = 0; i < samples.size(); ++i)
+        d[i] = qint16(std::clamp(int(std::lround(samples[i] * 32767.0f)),
+                                 -32768, 32767));
+    return file.write(h) == h.size() && file.write(pcm) == pcm.size();
+}
+
 bool ClipDeck::normalizeWav(const QString& wavPath, double targetPeak,
                             double maxGain) {
     QFile file(wavPath);

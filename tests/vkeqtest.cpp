@@ -1,0 +1,186 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Voice keyer EQ verification (pure DSP + file I/O, no audio devices):
+//   cmake --build build --target vkeqtest && ./build/vkeqtest
+// - the ported AetherSDR ClientEq matches its own analytic response
+// - snapToTargets() puts the very first block on the final curve
+// - renderVoiceEq high-passes, normalizes to the target peak, writes a
+//   readable WAV, and passes audio through untouched (bar level) when off
+// - settings survive JSON
+#include <QCoreApplication>
+#include <QTemporaryDir>
+#include <cmath>
+#include <cstdio>
+#include <vector>
+
+#include "audio/ClipDeck.h"
+#include "audio/VoiceEq.h"
+#include "dsp/ClientEq.h"
+
+using namespace ttc;
+
+static int fails = 0;
+static void check(bool ok, const char* what) {
+    if (!ok) { printf("FAIL: %s\n", what); ++fails; }
+}
+
+static std::vector<float> tone(float hz, int n, float amp = 0.25f, int rate = 48000) {
+    std::vector<float> x(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i)
+        x[size_t(i)] = amp * std::sin(2.0 * M_PI * hz * i / rate);
+    return x;
+}
+
+static double rmsDb(const std::vector<float>& x, size_t from, size_t to) {
+    double acc = 0;
+    for (size_t i = from; i < to; ++i) acc += double(x[i]) * x[i];
+    return 10.0 * std::log10(acc / double(to - from) + 1e-30);
+}
+
+// Single-bin DFT power of hz in x (Goertzel would do; this is short).
+static double binDb(const std::vector<float>& x, float hz, int rate = 48000) {
+    double re = 0, im = 0;
+    for (size_t i = 0; i < x.size(); ++i) {
+        re += x[i] * std::cos(2.0 * M_PI * hz * double(i) / rate);
+        im += x[i] * std::sin(2.0 * M_PI * hz * double(i) / rate);
+    }
+    return 20.0 * std::log10(std::hypot(re, im) / double(x.size()) + 1e-30);
+}
+
+static double gainThrough(ClientEq& eq, float hz) {
+    std::vector<float> x = tone(hz, 48000);
+    const double in = rmsDb(x, 24000, 48000);
+    eq.reset();
+    for (size_t o = 0; o < x.size(); o += 512)
+        eq.process(x.data() + o, int(std::min<size_t>(512, x.size() - o)), 1);
+    return rmsDb(x, 24000, 48000) - in;            // steady-state half
+}
+
+int main(int argc, char** argv) {
+    QCoreApplication app(argc, argv);
+
+    // 1. Measured gain == analytic magnitude, for each filter type.
+    struct Case { ClientEq::FilterType t; float f0, gain, q; int slope; float probe; };
+    const Case cases[] = {
+        {ClientEq::FilterType::Peak,      1000, 6,  1.0f, 12, 1000},
+        {ClientEq::FilterType::Peak,      300, -3,  1.0f, 12,  300},
+        {ClientEq::FilterType::LowShelf,  150,  4, 0.707f, 12,  60},
+        {ClientEq::FilterType::HighShelf, 3000, 5, 0.707f, 12, 4500},
+        {ClientEq::FilterType::HighPass,  100,  0, 0.707f, 24,  50},
+        {ClientEq::FilterType::LowPass,   3000, 0, 0.707f, 24, 6000},
+    };
+    for (const Case& c : cases) {
+        ClientEq eq;
+        eq.prepare(48000);
+        eq.setEnabled(true);
+        eq.setActiveBandCount(1);
+        ClientEq::BandParams b;
+        b.type = c.t; b.freqHz = c.f0; b.gainDb = c.gain; b.q = c.q;
+        b.slopeDbPerOct = c.slope; b.enabled = true;
+        eq.setBand(0, b);
+        eq.snapToTargets();
+        const double meas = gainThrough(eq, c.probe);
+        const double want = ClientEq::bandMagnitudeDb(b, c.probe, 48000);
+        // The analytic curve is the analog prototype (as AetherSDR draws
+        // it); the digital filter departs from it slightly deep in a
+        // stopband near the top of the band, so allow more there.
+        const double tol = std::fabs(want) > 12.0 ? 2.0 : 0.6;
+        if (std::fabs(meas - want) > tol) {
+            printf("  type %d f0 %.0f probe %.0f: measured %.2f dB, analytic %.2f dB\n",
+                   int(c.t), c.f0, c.probe, meas, want);
+            check(false, "measured gain matches analytic response");
+        }
+    }
+
+    // 2. snapToTargets: the first 10 ms already carry the +6 dB peak
+    //    (without it the smoother would start from 0 dB at 1 kHz).
+    {
+        ClientEq eq;
+        eq.prepare(48000);
+        eq.setEnabled(true);
+        eq.setActiveBandCount(1);
+        ClientEq::BandParams b;
+        b.type = ClientEq::FilterType::Peak; b.freqHz = 2500; b.gainDb = 9;
+        b.q = 1.0f; b.enabled = true;
+        eq.setBand(0, b);
+        eq.snapToTargets();
+        std::vector<float> x = tone(2500, 4800);
+        const double in = rmsDb(x, 240, 480);
+        eq.process(x.data(), 480, 1);
+        check(std::fabs(rmsDb(x, 240, 480) - in - 9.0) < 1.0,
+              "first block is already on the final curve");
+    }
+
+    // 3. Render: 50 Hz rumble + 1 kHz voice-band tone through SSB voice.
+    QTemporaryDir dir;
+    const QString in = dir.path() + "/raw.wav", out = dir.path() + "/vk.wav";
+    {
+        std::vector<float> x = tone(50, 48000, 0.3f);
+        const std::vector<float> v = tone(1000, 48000, 0.25f);
+        for (size_t i = 0; i < x.size(); ++i) x[i] += v[i];
+        check(ClipDeck::writeWavMono(in, x, 48000), "write test WAV");
+        const VoiceEqSettings s = VoiceEqSettings::preset(VoiceEqSettings::Preset::SsbVoice);
+        QString err;
+        check(renderVoiceEq(in, out, s, 0.7, &err), "render with SSB voice");
+        std::vector<float> y; int rate = 0;
+        check(ClipDeck::readWavMono(out, y, rate) && rate == 48000 && y.size() == x.size(),
+              "rendered WAV reads back, same length/rate");
+        double sec = 0, pk = 0;
+        ClipDeck::wavStats(out, sec, pk);
+        check(std::fabs(pk - 0.7) < 0.01, "rendered message normalized to 0.7 peak");
+        const double before = binDb(x, 50) - binDb(x, 1000);
+        const double after  = binDb(y, 50) - binDb(y, 1000);
+        printf("  50 Hz vs 1 kHz: %.1f dB before, %.1f dB after\n", before, after);
+        check(before - after > 20.0, "high-pass took the 50 Hz rumble down >20 dB");
+
+        // Make-up gain after the EQ is capped at +12 dB: a take that was
+        // mostly rumble must not have its remainder pumped up 20 dB.
+        {
+            std::vector<float> z = tone(50, 48000, 0.6f);
+            const std::vector<float> w = tone(1000, 48000, 0.02f);
+            for (size_t i = 0; i < z.size(); ++i) z[i] += w[i];
+            ClipDeck::writeWavMono(in, z, 48000);
+            renderVoiceEq(in, out, s, 0.7, &err);
+            double zs = 0, zp = 0;
+            ClipDeck::wavStats(out, zs, zp);
+            check(zp > 0.05 && zp < 0.5, "make-up gain capped at +12 dB (no full-level pump-up)");
+            ClipDeck::writeWavMono(in, x, 48000);  // back to the main signal
+        }
+
+        VoiceEqSettings off = s;
+        off.enabled = false;
+        check(renderVoiceEq(in, out, off, 0.7, &err), "render with EQ off");
+        ClipDeck::readWavMono(out, y, rate);
+        const double offRatio = binDb(y, 50) - binDb(y, 1000);
+        check(std::fabs(offRatio - before) < 0.2, "EQ off leaves the spectrum alone");
+        check(!QFile::exists(out + ".tmp"), "no temp file left behind");
+        check(!renderVoiceEq(dir.path() + "/missing.wav", out, s, 0.7, &err),
+              "missing input reports failure");
+    }
+
+    // 4. JSON round trip keeps every band; types stay pinned to slots.
+    {
+        VoiceEqSettings s = VoiceEqSettings::preset(VoiceEqSettings::Preset::WideSsb);
+        s.bands[3].enabled = true;
+        s.bands[3].gainDb = -4.5f;
+        s.bands[7].slopeDbPerOct = 36;
+        const VoiceEqSettings r = VoiceEqSettings::fromJson(s.toJson());
+        bool same = r.enabled == s.enabled;
+        for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
+            const auto& a = s.bands[size_t(i)];
+            const auto& b = r.bands[size_t(i)];
+            same &= a.enabled == b.enabled && a.freqHz == b.freqHz
+                 && a.gainDb == b.gainDb && a.q == b.q
+                 && a.slopeDbPerOct == b.slopeDbPerOct
+                 && b.type == VoiceEqSettings::slotType(i);
+        }
+        check(same, "settings JSON round trip");
+        const VoiceEqSettings w = VoiceEqSettings::preset(VoiceEqSettings::Preset::WideSsb);
+        check(std::fabs(w.responseDb(1000)) < 1.0, "Wide SSB is ~flat at 1 kHz");
+        check(w.responseDb(30) < -6.0, "Wide SSB high-pass bites at 30 Hz");
+        check(VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat).responseDb(100) == 0.0f,
+              "Flat is flat");
+    }
+
+    if (fails == 0) printf("vkeqtest: all checks passed\n");
+    return fails ? 1 : 0;
+}

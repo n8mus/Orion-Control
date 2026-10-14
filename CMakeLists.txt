@@ -153,6 +153,9 @@ add_executable(tentec-console
   src/ui/FrequencyDisplay.cpp   src/ui/FrequencyDisplay.h
   src/ui/TxBar.cpp              src/ui/TxBar.h
   src/audio/ClipDeck.cpp        src/audio/ClipDeck.h
+  src/audio/VoiceEq.cpp         src/audio/VoiceEq.h
+  src/dsp/ClientEq.cpp          src/dsp/ClientEq.h
+  src/ui/VoiceEqDialog.cpp      src/ui/VoiceEqDialog.h
   src/dsp/Fft.cpp               src/dsp/Fft.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
@@ -367,6 +370,15 @@ add_executable(watchtest EXCLUDE_FROM_ALL
   src/util/WatchList.cpp)
 target_include_directories(watchtest PRIVATE src)
 target_link_libraries(watchtest PRIVATE Qt6::Core)
+
+# Voice keyer EQ: the ported AetherSDR ClientEq against its own analytic
+# response, the offline-render snap, and the VK render (EQ + normalize).
+add_executable(vkeqtest EXCLUDE_FROM_ALL
+  tests/vkeqtest.cpp
+  src/audio/VoiceEq.cpp src/audio/ClipDeck.cpp src/audio/ClipDeck.h
+  src/dsp/ClientEq.cpp)
+target_include_directories(vkeqtest PRIVATE src)
+target_link_libraries(vkeqtest PRIVATE Qt6::Core)
 
 # Tuner/amp settings table behind the pan's tuner box: nearest-point
 # lookup, same-kHz overwrite, clamping, JSON round trip. Pure logic.

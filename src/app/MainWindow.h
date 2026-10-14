@@ -71,6 +71,8 @@ class QrzLookup;
 class QslUploader;
 class SpotTableWindow;
 class TuneEntryDialog;
+class VoiceEqDialog;
+struct VoiceEqSettings;
 class TuneTableDialog;
 class WsjtxListener;
 struct Qso;
@@ -189,6 +191,12 @@ private:
     // plugged in after launch is found. Empty = none; *why says so.
     QString vkMicSource(QString* why) const;
     QString vkTakePath(int slot) const;
+    // Voice keyer EQ: each slot keeps its untouched take (vkN.raw.wav) and
+    // the message that plays/transmits (vkN.wav) is rendered from it.
+    QString vkRawPath(int slot) const;
+    bool renderVkSlot(int slot, const VoiceEqSettings& eq, QString* err);
+    int  rerenderVk(const VoiceEqSettings& eq);   // -> messages rendered
+    void showVoiceEq();
     bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers
     void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
@@ -285,6 +293,7 @@ private:
     TuneTable tuneTable_;                      // operator's tuner/amp settings
     QPointer<TuneEntryDialog> tuneEntryDlg_;   // one entry form at a time
     QPointer<TuneTableDialog> tuneTableDlg_;   // non-modal table editor
+    QPointer<VoiceEqDialog> vkEqDlg_;          // non-modal voice keyer EQ
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing

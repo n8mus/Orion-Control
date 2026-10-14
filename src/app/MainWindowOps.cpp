@@ -8,6 +8,8 @@
 #include "ui/SmithChartWidget.h"
 #include "ui/SwrHistoryDialog.h"
 #include "ui/TuneDialogs.h"
+#include "ui/VoiceEqDialog.h"
+#include "audio/VoiceEq.h"
 
 #include <QVBoxLayout>
 
@@ -150,10 +152,18 @@ void MainWindow::dvrStopped() {
                                          .arg(peak * 100.0, 0, 'f', 1));
             } else {
                 ClipDeck::normalizeWav(take);
-                QFile::remove(vkPath(slot));
-                QFile::rename(take, vkPath(slot));
-                msg = QString("VK%1: saved a %2 s message — Shift+click to "
-                              "listen").arg(slot + 1).arg(sec, 0, 'f', 1);
+                QFile::remove(vkRawPath(slot));       // the take becomes the
+                QFile::rename(take, vkRawPath(slot)); // slot's raw original
+                const VoiceEqSettings eq = VoiceEqSettings::load();
+                QString err;
+                if (renderVkSlot(slot, eq, &err))
+                    msg = QString("VK%1: saved a %2 s message%3 — Shift+click "
+                                  "to listen").arg(slot + 1).arg(sec, 0, 'f', 1)
+                              .arg(eq.enabled ? QStringLiteral(" (EQ on)")
+                                              : QString());
+                else
+                    msg = QString("VK%1: recorded, but the message could not "
+                                  "be written: %2").arg(slot + 1).arg(err);
             }
         } else if (sec <= 0.0) {
             // Off-air take with no audio at all (header only): nothing to
@@ -172,6 +182,69 @@ void MainWindow::dvrStopped() {
 
 QString MainWindow::vkTakePath(int slot) const {
     return dvrDir() + QString("/vk%1.take.wav").arg(slot + 1);
+}
+
+QString MainWindow::vkRawPath(int slot) const {
+    return dvrDir() + QString("/vk%1.raw.wav").arg(slot + 1);
+}
+
+// A message recorded before the EQ existed has no raw take: adopt the
+// message itself as the original (once), so the first Apply shapes it
+// instead of skipping it. A slot with nothing usable is left alone.
+bool MainWindow::renderVkSlot(int slot, const VoiceEqSettings& eq,
+                              QString* err) {
+    const QString raw = vkRawPath(slot);
+    if (!QFileInfo::exists(raw)) {
+        if (!vkHasMessage(slot)) return false;
+        if (!QFile::copy(vkPath(slot), raw)) {
+            if (err) *err = "cannot keep the original of " + vkPath(slot);
+            return false;
+        }
+    }
+    return renderVoiceEq(raw, vkPath(slot), eq, 0.7, err);
+}
+
+int MainWindow::rerenderVk(const VoiceEqSettings& eq) {
+    int n = 0;
+    for (int i = 0; i < 4; ++i) {
+        QString err;
+        if (renderVkSlot(i, eq, &err)) ++n;
+        else if (!err.isEmpty()) statusBar()->showMessage("VK EQ: " + err, 10000);
+    }
+    refreshVkLoaded();
+    return n;
+}
+
+// AUDIO ▾ → Voice keyer EQ…  Apply re-renders every message from its raw
+// take; "Apply & listen" then auditions one on the speakers.
+void MainWindow::showVoiceEq() {
+    if (!vkEqDlg_) {
+        auto* dlg = new VoiceEqDialog(VoiceEqSettings::load(), this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        vkEqDlg_ = dlg;
+        const auto apply = [this](const VoiceEqSettings& s) {
+            s.save();
+            const int n = rerenderVk(s);
+            const QString text = n == 0
+                ? QStringLiteral("Saved. No VK messages recorded yet — "
+                                 "right-click a VK button to record one.")
+                : QString("Applied to %1 message%2 — EQ %3.")
+                      .arg(n).arg(n == 1 ? "" : "s")
+                      .arg(s.enabled ? "on" : "off");
+            if (vkEqDlg_) vkEqDlg_->setStatus(text);
+            statusBar()->showMessage("VK EQ: " + text, 6000);
+        };
+        connect(dlg, &VoiceEqDialog::applyRequested, this, apply);
+        connect(dlg, &VoiceEqDialog::listenRequested, this,
+                [this, apply](int slot, const VoiceEqSettings& s) {
+                    stopVoicePlayback();           // never re-render under TX
+                    apply(s);
+                    previewVoiceSlot(slot);
+                });
+    }
+    vkEqDlg_->show();
+    vkEqDlg_->raise();
+    vkEqDlg_->activateWindow();
 }
 
 bool MainWindow::vkHasMessage(int slot) const {

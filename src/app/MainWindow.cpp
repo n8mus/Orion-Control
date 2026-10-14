@@ -841,6 +841,9 @@ MainWindow::MainWindow(QWidget* parent)
     auto* audioAction = new QWidgetAction(audioMenu);
     audioAction->setDefaultWidget(audioPanel_);
     audioMenu->addAction(audioAction);
+    audioMenu->addSeparator();
+    connect(audioMenu->addAction("Voice keyer EQ…"), &QAction::triggered,
+            this, &MainWindow::showVoiceEq);
     audioBtn->setMenu(audioMenu);
     topLay->addSpacing(8);
     topLay->addWidget(audioBtn);

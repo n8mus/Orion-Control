@@ -52,7 +52,7 @@ QString VoiceEqSettings::slotName(int i) {
 
 QStringList VoiceEqSettings::presetNames() {
     return {"Flat", "SSB voice", "Wide SSB", "DX punch (2.4 kHz)",
-            "ESSB smooth"};
+            "ESSB smooth", "Shure 444"};
 }
 
 // SSB voice: the usual broadcast-voice moves for a dynamic mic on SSB —
@@ -75,6 +75,22 @@ VoiceEqSettings VoiceEqSettings::preset(Preset p) {
         s.bands[5] = band(2600.f, 6.f, 1.3f, true, FT::Peak);
         s.bands[6] = band(3000.f, 0, 0.707f, false, FT::HighShelf);
         s.bands[7] = band(2900.f, 0, 0.707f, true, FT::LowPass, 24);
+        return s;
+    }
+    if (p == Preset::Shure444) {
+        // Least-squares fit to the Shure 444 target over 50-4000 Hz (the
+        // Orion's widest TX passband): rms 0.75 dB, worst 2 dB. The 444's
+        // thin bottom is mostly the -6 dB shelf; its rising presence is a
+        // broad 1.8 kHz lift plus a narrower 2.8 kHz peak.
+        s.enabled = true;
+        s.bands[0] = band(90.f, 0, 0.707f, true, FT::HighPass, 12);
+        s.bands[1] = band(240.f, -6.f, 0.707f, true, FT::LowShelf);
+        s.bands[2] = band(300.f, 0, 1.0f, false, FT::Peak);
+        s.bands[3] = band(800.f, 0, 1.0f, false, FT::Peak);
+        s.bands[4] = band(1800.f, 2.f, 0.8f, true, FT::Peak);
+        s.bands[5] = band(2800.f, 3.f, 1.8f, true, FT::Peak);
+        s.bands[6] = band(3000.f, 0, 0.707f, false, FT::HighShelf);
+        s.bands[7] = band(3800.f, 0, 0.707f, false, FT::LowPass, 24);
         return s;
     }
     if (p == Preset::EssbSmooth) {

@@ -181,6 +181,34 @@ int main(int argc, char** argv) {
               "Flat is flat");
     }
 
+    // 5. The fitted presets stay on the targets they were fitted to (a
+    //    later tweak must not silently drift them off): relative to 1 kHz,
+    //    within 2.5 dB at every probe inside each preset's passband.
+    {
+        const auto& targets = voiceEqTargets();
+        const auto byName = [&](const char* n) -> const VoiceEqTarget& {
+            for (const auto& t : targets) if (t.name == n) return t;
+            return targets.front();
+        };
+        struct Fit { VoiceEqSettings::Preset p; const char* target; float lo, hi; };
+        const Fit fits[] = {
+            {VoiceEqSettings::Preset::DxPunch,  "Heil DX",   300, 2700},
+            {VoiceEqSettings::Preset::Shure444, "Shure 444", 100, 4000},
+        };
+        for (const Fit& f : fits) {
+            const VoiceEqSettings s = VoiceEqSettings::preset(f.p);
+            const VoiceEqTarget& t = byName(f.target);
+            const float ref = s.responseDb(1000) - t.dbAt(1000);
+            float worst = 0;
+            for (float hz = f.lo; hz <= f.hi; hz *= 1.06f)
+                worst = std::max(worst, std::fabs(s.responseDb(hz) - t.dbAt(hz) - ref));
+            printf("  %s vs %s: worst %.2f dB (%.0f-%.0f Hz)\n",
+                   qPrintable(VoiceEqSettings::presetNames()[int(f.p)]), f.target,
+                   worst, f.lo, f.hi);
+            check(worst < 2.5f, "fitted preset tracks its target");
+        }
+    }
+
     if (fails == 0) printf("vkeqtest: all checks passed\n");
     return fails ? 1 : 0;
 }

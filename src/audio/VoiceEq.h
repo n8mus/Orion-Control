@@ -33,9 +33,11 @@ struct VoiceEqSettings {
 
     // Starting points to tune by ear on the MON, not measured answers.
     // DxPunch is fitted to the Heil DX target inside a 2.4 kHz TX filter;
-    // EssbSmooth keeps flat lows and a broad high lift for 50-3900 Hz.
+    // EssbSmooth keeps flat lows and a broad high lift for 50-3900 Hz;
+    // Shure444 is fitted to the Shure 444's response (the RE20/RE320 are
+    // near-flat, so this lays the 444's colour over them).
     enum class Preset { Flat = 0, SsbVoice = 1, WideSsb = 2, DxPunch = 3,
-                        EssbSmooth = 4 };
+                        EssbSmooth = 4, Shure444 = 5 };
     static QStringList presetNames();
     static VoiceEqSettings preset(Preset p);
 

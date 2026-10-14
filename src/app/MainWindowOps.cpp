@@ -152,7 +152,7 @@ void MainWindow::dvrStopped() {
                 ClipDeck::normalizeWav(take);
                 QFile::remove(vkPath(slot));
                 QFile::rename(take, vkPath(slot));
-                msg = QString("VK%1: saved a %2 s message — right-click to "
+                msg = QString("VK%1: saved a %2 s message — Shift+click to "
                               "listen").arg(slot + 1).arg(sec, 0, 'f', 1);
             }
         } else if (sec <= 0.0) {
@@ -205,12 +205,12 @@ QString MainWindow::vkMicSource(QString* why) const {
     return found;
 }
 
-// Right-click a VK button: audition the message on the PC speakers —
+// Shift+click a VK button: audition the message on the PC speakers —
 // nothing keyed, nothing switched on the radio.
 void MainWindow::previewVoiceSlot(int slot) {
     if (!vkHasMessage(slot)) {
         statusBar()->showMessage(QString(
-            "VK%1 is empty — Shift+click it on the TX bar to record a "
+            "VK%1 is empty — right-click it on the TX bar to record a "
             "message").arg(slot + 1));
         return;
     }
@@ -239,7 +239,7 @@ bool MainWindow::playVoiceSlot(int slot) {
     const QString f = vkPath(slot);
     if (!vkHasMessage(slot)) {                     // never key up on dead air
         statusBar()->showMessage(QString(
-            "VK%1 is empty — Shift+click it on the TX bar to record a "
+            "VK%1 is empty — right-click it on the TX bar to record a "
             "message").arg(slot + 1));
         return false;
     }

@@ -192,10 +192,10 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         connect(s, &QSlider::valueChanged, this, [this] { markProfile(-1); });
 
     // DVR (Record/Playback + VKx voice keyer idea): REC/PLAY work the off-air
-    // deck, VK1-4 are canned voice messages. One rule for every button:
-    // left-click TRANSMITS, right-click LISTENS on the PC speakers, Shift+
-    // click RECORDS a VK message; lights are red = on the air, blue =
-    // recording, green = speakers (operator's scheme, 2026-10-14). Buttons only emit intents —
+    // deck, VK1-4 are canned voice messages. Left-click always TRANSMITS.
+    // PLAY: right-click listens on the PC speakers. VK: right-click
+    // RECORDS, Shift + either click listens. Lights: red = on the air,
+    // blue = recording, green = speakers (operator's scheme, 2026-10-14). Buttons only emit intents —
     // MainWindow lights them back through showDvr*() once the deck confirms,
     // so a click can never show a state the audio engine isn't actually in.
     lay->addSpacing(10);
@@ -236,12 +236,16 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         lay->addWidget(b);
         connect(b, &QPushButton::clicked, this, [this, i] {
             if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
-                emit vkRecordClicked(i);
+                emit vkPreviewClicked(i);
             else
                 emit vkClicked(i);
         });
-        connect(b, &QPushButton::customContextMenuRequested, this,
-                [this, i] { emit vkPreviewClicked(i); });
+        connect(b, &QPushButton::customContextMenuRequested, this, [this, i] {
+            if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
+                emit vkPreviewClicked(i);
+            else
+                emit vkRecordClicked(i);
+        });
     }
     lay->addStretch(1);
 }
@@ -373,17 +377,17 @@ void TxBar::setVkLoaded(int slot, bool loaded) {
         ? QString("Voice keyer message %1\n"
                   "left-click:  TRANSMIT the message (red) — rig switches to\n"
                   "    line-in, keys up, plays it, restores your mic/speech\n"
-                  "right-click:  LISTEN on the PC speakers (green, nothing\n"
-                  "    transmitted)\n"
-                  "Shift+click:  RE-RECORD it from the mic (blue while\n"
+                  "right-click:  RE-RECORD it from the mic (blue while\n"
                   "    recording, click to stop; replaces the old message\n"
                   "    only if the new take has real audio in it)\n"
+                  "Shift + left or right click:  LISTEN on the PC speakers\n"
+                  "    (green, nothing transmitted)\n"
                   "click while lit:  stop (and un-key)").arg(slot + 1)
         : QString("Voice keyer slot %1 — EMPTY\n"
-                  "Shift+click:  record a message from the mic (button goes\n"
+                  "right-click:  record a message from the mic (button goes\n"
                   "    blue), click it again to stop and save\n"
                   "left-click:  transmits the message (once one is recorded)\n"
-                  "right-click:  listens to it on the PC speakers")
+                  "Shift+click:  listens to it on the PC speakers")
               .arg(slot + 1));
 }
 

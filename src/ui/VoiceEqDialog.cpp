@@ -9,6 +9,8 @@
 #include <QLabel>
 #include <QPainter>
 #include <QPainterPath>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
@@ -115,14 +117,6 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     enabled_ = new QCheckBox("EQ on for VK1-VK4 messages", this);
     top->addWidget(enabled_);
     top->addStretch(1);
-    top->addWidget(new QLabel("Preset", this));
-    preset_ = new QComboBox(this);
-    preset_->addItem("—");
-    preset_->addItems(VoiceEqSettings::presetNames());
-    preset_->setToolTip("Starting points — tune by ear (listen here, then\n"
-                        "on the Orion's MON while transmitting into a\n"
-                        "dummy load or at low power)");
-    top->addWidget(preset_);
     top->addWidget(new QLabel("Target", this));
     target_ = new QComboBox(this);
     for (const VoiceEqTarget& t : voiceEqTargets()) target_->addItem(t.name);
@@ -130,6 +124,32 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
                         "shape toward — display only. From AetherSDR.");
     top->addWidget(target_);
     lay->addLayout(top);
+
+    // Profiles: the built-in starting points, then the operator's own.
+    // Save as… stores the curve on screen under a name; Delete removes one
+    // of his (built-ins stay). The curve on screen is ALWAYS saved anyway
+    // (live apply) — profiles are for keeping and switching between curves.
+    auto* prof = new QHBoxLayout;
+    prof->addWidget(new QLabel("Profile", this));
+    preset_ = new QComboBox(this);
+    preset_->setMinimumWidth(220);
+    preset_->setToolTip("Built-in starting points, then your saved profiles.\n"
+                        "Tune by ear: listen here, then on the Orion's MON\n"
+                        "into a dummy load or at low power.");
+    prof->addWidget(preset_, 1);
+    auto* saveAs = new QPushButton("Save as…", this);
+    saveAs->setToolTip("Save the curve on screen as one of your profiles");
+    auto* del = new QPushButton("Delete", this);
+    del->setToolTip("Delete the selected profile (your own only)");
+    prof->addWidget(saveAs);
+    prof->addWidget(del);
+    lay->addLayout(prof);
+    fillProfiles(QSettings().value("vk/eqProfile").toString());
+    const auto syncDelete = [this, del] {
+        del->setEnabled(preset_->currentData().toString().startsWith("u:"));
+    };
+    syncDelete();
+    connect(preset_, &QComboBox::currentIndexChanged, this, syncDelete);
 
     curve_ = new VoiceEqCurve(this);
     lay->addWidget(curve_);
@@ -220,6 +240,7 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         curve_->setSettings(collect());
         const QSignalBlocker b(preset_);
         preset_->setCurrentIndex(0);
+        setActiveProfile(QString());               // now his own, unsaved
         applyTimer_->start();
     };
     connect(enabled_, &QCheckBox::toggled, this, edited);
@@ -232,11 +253,47 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
             connect(row.slope, &QComboBox::currentIndexChanged, this, edited);
     }
     connect(preset_, &QComboBox::currentIndexChanged, this, [this](int idx) {
-        if (idx <= 0) return;
-        load(VoiceEqSettings::preset(VoiceEqSettings::Preset(idx - 1)));
+        const QString key = preset_->itemData(idx).toString();
+        VoiceEqSettings s;
+        if (key.startsWith("b:"))
+            s = VoiceEqSettings::preset(VoiceEqSettings::Preset(key.mid(2).toInt()));
+        else if (!key.startsWith("u:")
+                 || !VoiceEqSettings::loadUserProfile(key.mid(2), s))
+            return;                                // "—" or vanished
+        load(s);
         const QSignalBlocker b(preset_);
         preset_->setCurrentIndex(idx);
+        setActiveProfile(key);
         applyTimer_->start();
+    });
+    connect(saveAs, &QPushButton::clicked, this, [this] {
+        const QString cur = preset_->currentData().toString();
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            this, "Save EQ profile", "Profile name:", QLineEdit::Normal,
+            cur.startsWith("u:") ? cur.mid(2) : QString(), &ok).trimmed();
+        if (!ok || name.isEmpty()) return;
+        if (VoiceEqSettings::userProfileNames().contains(name)
+            && QMessageBox::question(this, "Save EQ profile",
+                   QString("Replace your profile \"%1\"?").arg(name))
+                   != QMessageBox::Yes)
+            return;
+        VoiceEqSettings::saveUserProfile(name, collect());
+        fillProfiles("u:" + name);
+        setActiveProfile("u:" + name);
+        setStatus(QString("Saved profile \"%1\".").arg(name));
+    });
+    connect(del, &QPushButton::clicked, this, [this] {
+        const QString key = preset_->currentData().toString();
+        if (!key.startsWith("u:")) return;
+        if (QMessageBox::question(this, "Delete EQ profile",
+                QString("Delete your profile \"%1\"? (The curve on screen "
+                        "stays.)").arg(key.mid(2))) != QMessageBox::Yes)
+            return;
+        VoiceEqSettings::deleteUserProfile(key.mid(2));
+        fillProfiles(QString());
+        setActiveProfile(QString());
+        setStatus(QString("Deleted profile \"%1\".").arg(key.mid(2)));
     });
     connect(listen, &QPushButton::clicked, this, [this] {
         applyTimer_->stop();                       // listen applies it now
@@ -246,6 +303,25 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
 }
 
 void VoiceEqDialog::setStatus(const QString& text) { status_->setText(text); }
+
+// Item data: "" = none/edited, "b:<n>" = built-in preset n, "u:<name>" =
+// the operator's profile.
+void VoiceEqDialog::fillProfiles(const QString& select) {
+    const QSignalBlocker b(preset_);
+    preset_->clear();
+    preset_->addItem("—  (your current curve)", QString());
+    const QStringList builtins = VoiceEqSettings::presetNames();
+    for (int i = 0; i < builtins.size(); ++i)
+        preset_->addItem(builtins[i], QString("b:%1").arg(i));
+    const QStringList mine = VoiceEqSettings::userProfileNames();
+    if (!mine.isEmpty()) preset_->insertSeparator(preset_->count());
+    for (const QString& n : mine) preset_->addItem("★ " + n, "u:" + n);
+    preset_->setCurrentIndex(std::max(0, preset_->findData(select)));
+}
+
+void VoiceEqDialog::setActiveProfile(const QString& key) {
+    QSettings().setValue("vk/eqProfile", key);
+}
 
 void VoiceEqDialog::load(const VoiceEqSettings& s) {
     loading_ = true;

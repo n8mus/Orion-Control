@@ -56,7 +56,12 @@ static double gainThrough(ClientEq& eq, float hz) {
 }
 
 int main(int argc, char** argv) {
+    // Profiles live in QSettings: keep the test's away from the real config.
+    QTemporaryDir cfg;
+    qputenv("XDG_CONFIG_HOME", cfg.path().toLocal8Bit());
     QCoreApplication app(argc, argv);
+    QCoreApplication::setOrganizationName("vkeqtest");
+    QCoreApplication::setApplicationName("vkeqtest");
 
     // 1. Measured gain == analytic magnitude, for each filter type.
     struct Case { ClientEq::FilterType t; float f0, gain, q; int slope; float probe; };
@@ -207,6 +212,30 @@ int main(int argc, char** argv) {
                    worst, f.lo, f.hi);
             check(worst < 2.5f, "fitted preset tracks its target");
         }
+    }
+
+    // 6. The operator's named profiles: save, list, load, replace, delete.
+    {
+        check(VoiceEqSettings::userProfileNames().isEmpty(), "no profiles at start");
+        VoiceEqSettings mine = VoiceEqSettings::preset(VoiceEqSettings::Preset::DxPunch);
+        mine.bands[5].gainDb = 7.5f;
+        VoiceEqSettings::saveUserProfile("EV DX / contest", mine);   // '/' in a name
+        VoiceEqSettings::saveUserProfile("ragchew", VoiceEqSettings::preset(
+                                             VoiceEqSettings::Preset::EssbSmooth));
+        check(VoiceEqSettings::userProfileNames()
+                  == QStringList({"EV DX / contest", "ragchew"}), "profiles listed, sorted");
+        VoiceEqSettings got;
+        check(VoiceEqSettings::loadUserProfile("EV DX / contest", got)
+                  && got.bands[5].gainDb == 7.5f && got.enabled, "profile loads back");
+        mine.bands[5].gainDb = 4.0f;
+        VoiceEqSettings::saveUserProfile("EV DX / contest", mine);    // replace
+        VoiceEqSettings::loadUserProfile("EV DX / contest", got);
+        check(got.bands[5].gainDb == 4.0f && VoiceEqSettings::userProfileNames().size() == 2,
+              "same name replaces, no duplicate");
+        VoiceEqSettings::deleteUserProfile("ragchew");
+        check(VoiceEqSettings::userProfileNames() == QStringList({"EV DX / contest"}),
+              "delete removes only that profile");
+        check(!VoiceEqSettings::loadUserProfile("ragchew", got), "deleted one is gone");
     }
 
     if (fails == 0) printf("vkeqtest: all checks passed\n");

@@ -163,6 +163,43 @@ VoiceEqSettings VoiceEqSettings::load() {
     return fromJson(doc.object());
 }
 
+namespace {
+QJsonObject userProfiles() {
+    return QJsonDocument::fromJson(
+               QSettings().value("vk/eqProfiles").toByteArray()).object();
+}
+void storeUserProfiles(const QJsonObject& o) {
+    QSettings().setValue("vk/eqProfiles",
+                         QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+}  // namespace
+
+QStringList VoiceEqSettings::userProfileNames() {
+    QStringList names = userProfiles().keys();
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+bool VoiceEqSettings::loadUserProfile(const QString& name, VoiceEqSettings& out) {
+    const QJsonObject all = userProfiles();
+    if (!all.contains(name)) return false;
+    out = fromJson(all.value(name).toObject());
+    return true;
+}
+
+void VoiceEqSettings::saveUserProfile(const QString& name,
+                                      const VoiceEqSettings& s) {
+    QJsonObject all = userProfiles();
+    all[name] = s.toJson();
+    storeUserProfiles(all);
+}
+
+void VoiceEqSettings::deleteUserProfile(const QString& name) {
+    QJsonObject all = userProfiles();
+    all.remove(name);
+    storeUserProfiles(all);
+}
+
 void VoiceEqSettings::save() const {
     QSettings().setValue("vk/eq", QJsonDocument(toJson())
                                       .toJson(QJsonDocument::Compact));

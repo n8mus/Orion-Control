@@ -51,6 +51,8 @@ signals:
 private:
     VoiceEqSettings collect() const;
     void load(const VoiceEqSettings& s);
+    void fillProfiles(const QString& select);      // built-ins + the operator's
+    void setActiveProfile(const QString& key);     // remembered across opens
     void refreshEnables();
 
     struct Row {

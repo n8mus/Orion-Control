@@ -41,6 +41,14 @@ struct VoiceEqSettings {
     static QStringList presetNames();
     static VoiceEqSettings preset(Preset p);
 
+    // The operator's own named profiles (vk/eqProfiles, one JSON object
+    // keyed by name — any characters allowed in a name). Built-in presets
+    // are separate and can't be overwritten or deleted.
+    static QStringList userProfileNames();          // sorted, case-blind
+    static bool loadUserProfile(const QString& name, VoiceEqSettings& out);
+    static void saveUserProfile(const QString& name, const VoiceEqSettings& s);
+    static void deleteUserProfile(const QString& name);
+
     QJsonObject toJson() const;
     static VoiceEqSettings fromJson(const QJsonObject& o);
     static VoiceEqSettings load();                 // QSettings vk/eq (default SSB)

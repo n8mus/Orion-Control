@@ -2339,23 +2339,7 @@ MainWindow::MainWindow(QWidget* parent)
     // works on both radios even where CAT TX audio config doesn't.
     dvr_ = new ClipDeck(this);
     {
-        QSettings s;
-        const QString radioMatch =
-            s.value("dvr/radioAudioMatch",
-#ifdef Q_OS_WIN
-                    // Windows device descriptions, not PipeWire node names —
-                    // and the codec spells itself "USB AUDIO  CODEC" (double
-                    // space, live-found), so match only the stable prefix.
-                    "USB AUDIO"
-#else
-                    // The SignaLink's PCM2906C by its full vendor string.
-                    // Bare "USB_AUDIO_CODEC" also matched (case-blind) the
-                    // Alesis mixer's PCM2900 "Burr-Brown_from_TI_USB_Audio_
-                    // CODEC" — first-listed won, so a re-plug could send VK
-                    // TX audio into the mixer (live-found 2026-10-14).
-                    "BurrBrown_from_Texas_Instruments_USB_AUDIO_CODEC"
-#endif
-                    ).toString();
+        const QString radioMatch = ClipDeck::radioAudioMatch();
         radioSink_   = ClipDeck::findSink(radioMatch);
         radioSource_ = ClipDeck::findSource(radioMatch);
         radioAudioMatch_ = radioMatch;             // VK mic: resolved per take

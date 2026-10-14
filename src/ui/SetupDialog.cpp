@@ -9,6 +9,7 @@
 #include <QFileInfo>
 #include <QFormLayout>
 #include <QHostAddress>
+#include <QInputDialog>
 #include <QMultiMap>
 #include <QLabel>
 #include <QLineEdit>
@@ -284,7 +285,7 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     const QString curMic = s.value("dvr/micSource").toString();
     bool curListed = curMic.isEmpty();
     for (const ttc::ClipDeck::Source& src : ttc::ClipDeck::sources()) {
-        vkMic_->addItem(src.label, src.node);
+        vkMic_->addItem(ttc::ClipDeck::friendlyLabel(src), src.node);
         curListed |= src.node == curMic;
     }
     if (!curListed)                                // chosen mic unplugged now
@@ -292,7 +293,32 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     vkMic_->setCurrentIndex(std::max(0, vkMic_->findData(curMic)));
     vkMic_->setToolTip("Where VK1-VK4 messages are recorded from (right-click\n"
                        "a VK button). Takes effect on the next recording.");
-    form->addRow("Voice keyer mic", vkMic_);
+    // Name…: the operator's own label for the selected device, saved at
+    // once (audio/names/<node>) — it is a label, not a setting to cancel.
+    auto* nameBtn = new QPushButton("Name…", this);
+    nameBtn->setToolTip("Give the selected input your own name (e.g. \"Alesis\n"
+                        "mixer (EV mic)\") so it is recognisable in this list");
+    connect(nameBtn, &QPushButton::clicked, this, [this] {
+        const QString node = vkMic_->currentData().toString();
+        if (node.isEmpty()) return;                // "Auto" has no device
+        QSettings st;
+        const QString key = "audio/names/" + node;
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            this, "Name this input",
+            "Your name for this device (empty = none):", QLineEdit::Normal,
+            st.value(key).toString(), &ok).trimmed();
+        if (!ok) return;
+        if (name.isEmpty()) st.remove(key); else st.setValue(key, name);
+        for (const ttc::ClipDeck::Source& src : ttc::ClipDeck::sources())
+            if (src.node == node)
+                vkMic_->setItemText(vkMic_->currentIndex(),
+                                    ttc::ClipDeck::friendlyLabel(src));
+    });
+    auto* micRow = new QHBoxLayout;
+    micRow->addWidget(vkMic_, 1);
+    micRow->addWidget(nameBtn);
+    form->addRow("Voice keyer mic", micRow);
 
     form->addRow(section("DX CLUSTER", this));
     // Editable combo: pick a node and the port follows, or type any host.

@@ -5,6 +5,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSettings>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -349,9 +350,39 @@ QVector<ClipDeck::Source> ClipDeck::sources() {
 
 #endif // TTC_CLIPDECK_QTMM
 
+QString ClipDeck::radioAudioMatch() {
+    return QSettings().value("dvr/radioAudioMatch",
+#ifdef Q_OS_WIN
+        // Windows device descriptions, not PipeWire node names — and the
+        // codec spells itself "USB AUDIO  CODEC" (double space, live-found),
+        // so match only the stable prefix.
+        "USB AUDIO"
+#else
+        // The SignaLink's PCM2906C by its full vendor string. Bare
+        // "USB_AUDIO_CODEC" also matched (case-blind) the Alesis mixer's
+        // PCM2900 "Burr-Brown_from_TI_USB_Audio_CODEC" — first-listed won,
+        // so a re-plug could send VK TX audio into the mixer (live-found
+        // 2026-10-14).
+        "BurrBrown_from_Texas_Instruments_USB_AUDIO_CODEC"
+#endif
+        ).toString();
+}
+
+QString ClipDeck::friendlyLabel(const Source& src) {
+    const QString own =
+        QSettings().value("audio/names/" + src.node).toString().trimmed();
+    if (!own.isEmpty()) return QString("%1  (%2)").arg(own, src.label);
+    const QString match = radioAudioMatch();
+    if (!match.isEmpty() && src.node.contains(match, Qt::CaseInsensitive))
+        return src.label + "  — SignaLink (radio audio)";
+    if (src.node.contains(".pci-"))
+        return src.label + "  — motherboard jack";
+    return src.label;
+}
+
 QString ClipDeck::sourceLabel(const QString& node) {
     for (const Source& src : sources())
-        if (src.node == node) return src.label;
+        if (src.node == node) return friendlyLabel(src);
     return node;
 }
 

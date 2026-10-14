@@ -46,7 +46,17 @@ public:
     // device description.
     struct Source { QString node, label; };
     static QVector<Source> sources();
-    static QString sourceLabel(const QString& node);   // label, or node itself
+    // A device's label for people: the operator's own name for it if he
+    // gave one (audio/names/<node>, Setup ▸ Voice keyer mic ▸ Name…), else
+    // its description tagged when the console knows what it is — the
+    // SignaLink is "radio audio", a pci- node is the motherboard jack. Two
+    // TI codecs (SignaLink PCM2906C, Alesis PCM2900) describe themselves
+    // almost identically, which is why this exists.
+    static QString friendlyLabel(const Source& src);
+    static QString sourceLabel(const QString& node);   // friendly, or node
+    // The node-name substring that identifies the SignaLink (radio codec):
+    // dvr/radioAudioMatch, defaulting to its full vendor string.
+    static QString radioAudioMatch();
     // Length and peak (0..1) of a 16-bit PCM WAV; false if unreadable.
     // A header-only take reads 0 s — how a silent/empty voice-keyer
     // recording is caught before it replaces a good message.

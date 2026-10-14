@@ -81,8 +81,10 @@ struct VoiceEqSettings {
     // EssbSmooth keeps flat lows and a broad high lift for 50-3900 Hz;
     // Shure444 is fitted to the Shure 444's response (the RE20/RE320 are
     // near-flat, so this lays the 444's colour over them).
+    // HeilPr40 is fitted to the PR40's published on-axis response — on a
+    // near-flat RE20/RE320 it lays the PR40's colour over the voice.
     enum class Preset { Flat = 0, SsbVoice = 1, WideSsb = 2, DxPunch = 3,
-                        EssbSmooth = 4, Shure444 = 5 };
+                        EssbSmooth = 4, Shure444 = 5, HeilPr40 = 6 };
     static QStringList presetNames();
     static VoiceEqSettings preset(Preset p);
 

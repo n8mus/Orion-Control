@@ -204,6 +204,7 @@ int main(int argc, char** argv) {
         const Fit fits[] = {
             {VoiceEqSettings::Preset::DxPunch,  "Heil DX",   300, 2700},
             {VoiceEqSettings::Preset::Shure444, "Shure 444", 100, 4000},
+            {VoiceEqSettings::Preset::HeilPr40, "Heil PR40", 60, 4000},
         };
         for (const Fit& f : fits) {
             const VoiceEqSettings s = VoiceEqSettings::preset(f.p);

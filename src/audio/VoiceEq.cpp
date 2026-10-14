@@ -56,7 +56,7 @@ QString VoiceEqSettings::slotName(int i) {
 
 QStringList VoiceEqSettings::presetNames() {
     return {"Flat", "SSB voice", "Wide SSB", "DX punch (2.4 kHz)",
-            "ESSB smooth", "Shure 444"};
+            "ESSB smooth", "Shure 444", "Heil PR40"};
 }
 
 // SSB voice: the usual broadcast-voice moves for a dynamic mic on SSB —
@@ -79,6 +79,23 @@ static VoiceEqSettings eqPreset(VoiceEqSettings::Preset p) {
         s.bands[5] = band(2600.f, 6.f, 1.3f, true, FT::Peak);
         s.bands[6] = band(3000.f, 0, 0.707f, false, FT::HighShelf);
         s.bands[7] = band(2900.f, 0, 0.707f, true, FT::LowPass, 24);
+        return s;
+    }
+    if (p == VoiceEqSettings::Preset::HeilPr40) {
+        // Least-squares fit to the Heil PR40 target (digitised from Heil's
+        // chart) over 50-4000 Hz: rms 0.32 dB, worst 0.95 dB. Its gentle
+        // low-end roll-off is the 60 Hz high-pass, the slight mid scoop a
+        // broad dip at 390 Hz, its rising presence a 3.1 kHz peak plus a
+        // high shelf.
+        s.enabled = true;
+        s.bands[0] = band(60.f, 0, 0.707f, true, FT::HighPass, 12);
+        s.bands[1] = band(120.f, 0, 0.707f, false, FT::LowShelf);
+        s.bands[2] = band(390.f, -1.f, 0.4f, true, FT::Peak);
+        s.bands[3] = band(800.f, 0, 1.0f, false, FT::Peak);
+        s.bands[4] = band(1600.f, 0, 1.0f, false, FT::Peak);
+        s.bands[5] = band(3100.f, 4.f, 0.9f, true, FT::Peak);
+        s.bands[6] = band(4800.f, 6.f, 0.707f, true, FT::HighShelf);
+        s.bands[7] = band(3800.f, 0, 0.707f, false, FT::LowPass, 24);
         return s;
     }
     if (p == VoiceEqSettings::Preset::Shure444) {

@@ -5,11 +5,28 @@
 #include <algorithm>
 #include <cmath>
 
+#ifdef Q_OS_LINUX
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <unistd.h>
+#endif
+
 namespace ttc {
 
 namespace {
 constexpr int kRate = 48000;
 constexpr int kBlock = 480;                        // 10 ms through the chain
+// Backlog control. The mic (Alesis) and the SignaLink run on separate
+// clocks and pacat starts after parec, so capture outruns playback and
+// the queue only ever grows — live-found: 640 ms sat in the pipe alone
+// (a full 64 KB) plus more in our write buffer, 2-3 s mouth-to-radio, so
+// the operator unkeyed before his words arrived. Hold it near kTarget by
+// dropping 10 ms blocks, in a quiet moment when we can (inaudible), or
+// at once past kHard.
+constexpr qint64 kBytesPerMs = 96;                 // 48 kHz s16 mono
+constexpr qint64 kTargetBytes = 40 * kBytesPerMs;
+constexpr qint64 kHardBytes = 120 * kBytesPerMs;
+constexpr float kQuiet = 0.01f;                    // -40 dBFS block peak
 }
 
 LiveVoice::LiveVoice(QObject* parent) : QObject(parent) {}
@@ -49,11 +66,24 @@ bool LiveVoice::start(const QString& sourceNode, const QString& sinkNode,
         emit failed("parec/pacat would not start");
         return false;
     }
+    dropped_ = 0;
+#ifdef Q_OS_LINUX
+    // Open pacat's stdin pipe a second time, read end, purely to measure
+    // what is queued in it (FIONREAD) — never read from it — and shrink it
+    // from 64 KB (680 ms!) to one page (~40 ms).
+    probeFd_ = ::open(QString("/proc/%1/fd/0").arg(play_->processId())
+                          .toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK);
+    if (probeFd_ >= 0) ::fcntl(probeFd_, F_SETPIPE_SZ, 4096);
+#endif
     return true;
 }
 
 void LiveVoice::stop() {
     stopping_ = true;
+#ifdef Q_OS_LINUX
+    if (probeFd_ >= 0) ::close(probeFd_);
+#endif
+    probeFd_ = -1;
     for (QProcess** p : {&rec_, &play_}) {
         if (!*p) continue;
         (*p)->disconnect(this);
@@ -63,6 +93,19 @@ void LiveVoice::stop() {
         *p = nullptr;
     }
     carry_.clear();
+}
+
+qint64 LiveVoice::backlogBytes() const {
+    qint64 n = play_ ? play_->bytesToWrite() : 0;
+#ifdef Q_OS_LINUX
+    int inPipe = 0;
+    if (probeFd_ >= 0 && ::ioctl(probeFd_, FIONREAD, &inPipe) == 0) n += inPipe;
+#endif
+    return n;
+}
+
+double LiveVoice::backlogMs() const {
+    return double(backlogBytes()) / double(kBytesPerMs);
 }
 
 void LiveVoice::setSettings(const VoiceEqSettings& s) {
@@ -85,13 +128,29 @@ void LiveVoice::onCaptured() {
     carry_.remove(0, qsizetype(take) * 2);
     inPeakDb_ = 20.f * std::log10(std::max(pk, 1e-6f));
     for (int o = 0; o < take; o += kBlock) chain_.process(buf_.data() + o, kBlock);
-    QByteArray out(qsizetype(take) * 2, Qt::Uninitialized);
-    auto* d = reinterpret_cast<qint16*>(out.data());
-    for (int i = 0; i < take; ++i)
-        d[i] = muted_ ? qint16(0)
-                      : qint16(std::clamp(int(std::lround(buf_[size_t(i)] * 32767.f)),
-                                          -32768, 32767));
-    play_->write(out);
+    // Write block by block, dropping whole 10 ms blocks while the queue is
+    // over target — quiet ones only, unless it is far over.
+    QByteArray out;
+    out.reserve(qsizetype(take) * 2);
+    qint64 queued = backlogBytes();
+    for (int o = 0; o < take; o += kBlock) {
+        float pk = 0.f;
+        for (int i = 0; i < kBlock; ++i)
+            pk = std::max(pk, std::fabs(buf_[size_t(o + i)]));
+        const bool over = queued > kTargetBytes;
+        if (queued > kHardBytes || (over && pk < kQuiet)) {
+            ++dropped_;
+            queued -= kBlock * 2;                  // what writing would have added
+            continue;
+        }
+        for (int i = 0; i < kBlock; ++i) {
+            const float v = muted_ ? 0.f : buf_[size_t(o + i)];
+            const qint16 q = qint16(std::clamp(int(std::lround(v * 32767.f)), -32768, 32767));
+            out.append(reinterpret_cast<const char*>(&q), 2);
+        }
+        queued += kBlock * 2;
+    }
+    if (!out.isEmpty()) play_->write(out);
 }
 
 } // namespace ttc

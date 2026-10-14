@@ -40,6 +40,10 @@ public:
 
     // Meters of the last processed block, for the UI.
     float inputPeakDb() const { return inPeakDb_; }
+    // Audio queued between us and the SignaLink, ms (what the operator
+    // hears as delay on top of the device latencies).
+    double backlogMs() const;
+    int droppedBlocks() const { return dropped_; }
     float compGrDb() const { return chain_.compGrDb(); }
     float gateGrDb() const { return chain_.gateGrDb(); }
 
@@ -48,6 +52,7 @@ signals:
 
 private:
     void onCaptured();
+    qint64 backlogBytes() const;
 
     QProcess* rec_ = nullptr;
     QProcess* play_ = nullptr;
@@ -57,6 +62,9 @@ private:
     bool muted_ = false;
     bool stopping_ = false;
     float inPeakDb_ = -120.f;
+    int probeFd_ = -1;                             // read end of pacat's stdin,
+                                                   // opened only to measure it
+    int dropped_ = 0;
 };
 
 } // namespace ttc

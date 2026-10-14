@@ -353,6 +353,22 @@ const std::vector<VoiceEqTarget>& voiceEqTargets() {
         {"Heil HC-5", {{50, -28}, {100, -18}, {200, -8}, {300, -3}, {500, 0},
                        {1000, 0}, {1500, 2}, {2000, 4}, {2500, 6}, {3000, 5},
                        {3500, 1}, {4000, -5}, {5000, -15}}},
+        // Appended (stored target indices must not move). Ours, not AetherSDR's:
+        // EV RE20 from Electro-Voice's spec text: flat 80 Hz-6 kHz, -3 dB at
+        // 45 Hz, a broad +2.5 dB rise 6-14 kHz (only its start is on this
+        // plot). The bass-tilt switch adds -4.5 dB from 400 down to 100 Hz.
+        {"EV RE20", {{40, -4.5f}, {45, -3}, {60, -1}, {80, 0}, {1000, 0},
+                     {6000, 0}, {7000, 0.6f}}},
+        {"EV RE20 (bass tilt)", {{40, -9}, {45, -7.5f}, {60, -5.5f}, {80, -5},
+                                 {100, -4.5f}, {150, -3}, {200, -2}, {300, -0.8f},
+                                 {400, 0}, {6000, 0}, {7000, 0.6f}}},
+        // Heil PR40: digitised from the on-axis (blue) curve of Heil's spec-
+        // sheet chart (Heil_PR40_PS.pdf, 1/2021) at 400 dpi, relative to 1 kHz.
+        {"Heil PR40", {{40, -7}, {50, -5.5f}, {63, -3.7f}, {80, -1.7f}, {100, -0.3f},
+                       {150, -1}, {200, -1.2f}, {300, -1}, {500, -0.8f}, {700, -1},
+                       {1000, 0}, {1500, 0.8f}, {2000, 2.3f}, {2500, 3.7f},
+                       {3000, 4.9f}, {3500, 5.2f}, {4000, 5.3f}, {5000, 7.2f},
+                       {6000, 7.6f}, {7000, 7.2f}}},
     };
     return t;
 }

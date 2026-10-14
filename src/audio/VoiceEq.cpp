@@ -10,6 +10,10 @@
 #include <vector>
 
 #include "audio/ClipDeck.h"
+#include "dsp/ClientComp.h"
+#include "dsp/ClientDeEss.h"
+#include "dsp/ClientFinalLimiter.h"
+#include "dsp/ClientGate.h"
 
 namespace ttc {
 
@@ -59,9 +63,9 @@ QStringList VoiceEqSettings::presetNames() {
 // rumble/proximity gone below 100 Hz, a little mud out around 300 Hz,
 // presence up around 2.5 kHz. Wide SSB keeps more bottom (50 Hz HPF,
 // gentle low shelf) for the Orion's 3.9 kHz TX filter.
-VoiceEqSettings VoiceEqSettings::preset(Preset p) {
+static VoiceEqSettings eqPreset(VoiceEqSettings::Preset p) {
     VoiceEqSettings s;
-    if (p == Preset::DxPunch) {
+    if (p == VoiceEqSettings::Preset::DxPunch) {
         // Heil DX target, fitted inside a 300-2700 Hz (2.4 kHz) TX filter:
         // within ~1-2 dB of it across the passband, steep outside so the
         // ALC/processor never spend drive on audio the filter removes.
@@ -77,7 +81,7 @@ VoiceEqSettings VoiceEqSettings::preset(Preset p) {
         s.bands[7] = band(2900.f, 0, 0.707f, true, FT::LowPass, 24);
         return s;
     }
-    if (p == Preset::Shure444) {
+    if (p == VoiceEqSettings::Preset::Shure444) {
         // Least-squares fit to the Shure 444 target over 50-4000 Hz (the
         // Orion's widest TX passband): rms 0.75 dB, worst 2 dB. The 444's
         // thin bottom is mostly the -6 dB shelf; its rising presence is a
@@ -93,7 +97,7 @@ VoiceEqSettings VoiceEqSettings::preset(Preset p) {
         s.bands[7] = band(3800.f, 0, 0.707f, false, FT::LowPass, 24);
         return s;
     }
-    if (p == Preset::EssbSmooth) {
+    if (p == VoiceEqSettings::Preset::EssbSmooth) {
         // Full, smooth bottom (flat to 60 Hz, gentle shelf) with the mud
         // trimmed around 300 Hz and a broad +3..4.5 dB lift from 2 to
         // 3.8 kHz — for the Orion's 50-3900 Hz TX filter.
@@ -108,9 +112,9 @@ VoiceEqSettings VoiceEqSettings::preset(Preset p) {
         s.bands[7] = band(3800.f, 0, 0.707f, false, FT::LowPass, 24);
         return s;
     }
-    s.enabled = p != Preset::Flat;
-    const bool wide = p == Preset::WideSsb;
-    const bool on = p != Preset::Flat;
+    s.enabled = p != VoiceEqSettings::Preset::Flat;
+    const bool wide = p == VoiceEqSettings::Preset::WideSsb;
+    const bool on = p != VoiceEqSettings::Preset::Flat;
     s.bands[0] = band(wide ? 50.f : 100.f, 0, 0.707f, on, FT::HighPass, 24);
     s.bands[1] = band(120.f, wide ? 2.f : 0.f, 0.707f, wide, FT::LowShelf);
     s.bands[2] = band(wide ? 350.f : 300.f, wide ? -2.f : -3.f, 1.0f, on, FT::Peak);
@@ -123,13 +127,78 @@ VoiceEqSettings VoiceEqSettings::preset(Preset p) {
     return s;
 }
 
+// The dynamics each built-in starts from: the EQ curve says what the voice
+// sounds like, these say how hard it is driven. All tune-by-ear starting
+// points; the final limiter is the safety net in every one but Flat.
+// Flat is a TRUE bypass — limiter off too: its 25 Hz DC block tilts flat-
+// topped (clipped) takes into excursions bigger than the speech, which
+// then set the peak and turn the message down (live-found on a clipped
+// ONN take: -6 dB). AetherSDR ships its final limiter off by default too.
+VoiceEqSettings VoiceEqSettings::preset(Preset p) {
+    VoiceEqSettings s = eqPreset(p);
+    s.limit = Limit{};
+    if (p == Preset::Flat) {                       // nothing touches the take
+        s.limit.on = false;
+        return s;
+    }
+    s.gate.on = true;                              // gentle expander
+    s.comp.on = true;
+    switch (p) {
+    case Preset::DxPunch:                          // pile-up talk power
+        s.gate.thresholdDb = -42.f;
+        s.gate.ratio = 3.f;
+        s.comp.thresholdDb = -24.f;
+        s.comp.ratio = 4.f;
+        s.comp.attackMs = 5.f;
+        s.comp.releaseMs = 120.f;
+        s.comp.driveDb = 3.f;
+        s.deess.on = true;                         // the +6 dB presence peak
+        s.deess.freqHz = 3500.f;                   // makes esses spit
+        s.deess.amountDb = -4.f;
+        break;
+    case Preset::EssbSmooth:                       // open, unsquashed
+        s.comp.thresholdDb = -20.f;
+        s.comp.ratio = 2.f;
+        s.comp.attackMs = 15.f;
+        s.comp.releaseMs = 250.f;
+        s.comp.kneeDb = 8.f;
+        s.deess.on = true;
+        s.deess.freqHz = 3800.f;
+        s.deess.amountDb = -5.f;
+        break;
+    case Preset::WideSsb:
+        s.comp.ratio = 2.5f;
+        s.comp.thresholdDb = -22.f;
+        break;
+    default:                                       // SSB voice, Shure 444
+        break;
+    }
+    return s;
+}
+
 QJsonObject VoiceEqSettings::toJson() const {
     QJsonArray arr;
     for (const auto& b : bands)
         arr.append(QJsonObject{{"on", b.enabled}, {"hz", b.freqHz},
                                {"db", b.gainDb}, {"q", b.q},
                                {"slope", b.slopeDbPerOct}});
-    return QJsonObject{{"enabled", enabled}, {"bands", arr}};
+    return QJsonObject{
+        {"enabled", enabled}, {"bands", arr},
+        {"gate", QJsonObject{{"on", gate.on}, {"thr", gate.thresholdDb},
+                             {"ratio", gate.ratio}, {"floor", gate.floorDb},
+                             {"hold", gate.holdMs}, {"rel", gate.releaseMs},
+                             {"ret", gate.returnDb}, {"look", gate.lookaheadMs}}},
+        {"deess", QJsonObject{{"on", deess.on}, {"hz", deess.freqHz},
+                              {"q", deess.q}, {"thr", deess.thresholdDb},
+                              {"amt", deess.amountDb}, {"slope", deess.slopeStages}}},
+        {"comp", QJsonObject{{"on", comp.on}, {"thr", comp.thresholdDb},
+                             {"ratio", comp.ratio}, {"att", comp.attackMs},
+                             {"rel", comp.releaseMs}, {"knee", comp.kneeDb},
+                             {"drive", comp.driveDb}, {"phase", comp.phaseStages},
+                             {"lim", comp.limiterOn}, {"ceil", comp.ceilingDb}}},
+        {"limit", QJsonObject{{"on", limit.on}, {"ceil", limit.ceilingDb},
+                              {"dc", limit.dcBlock}}},
+    };
 }
 
 VoiceEqSettings VoiceEqSettings::fromJson(const QJsonObject& o) {
@@ -146,6 +215,43 @@ VoiceEqSettings VoiceEqSettings::fromJson(const QJsonObject& o) {
         d.q = std::clamp(float(b.value("q").toDouble(d.q)), 0.1f, 18.f);
         d.slopeDbPerOct = std::clamp(b.value("slope").toInt(12), 12, 48) / 12 * 12;
     }
+    // Dynamics: absent (a curve saved before they existed) = all off,
+    // final limiter included, so it renders exactly as it did. Ranges are
+    // the ported classes' own clamps.
+    const auto f = [](const QJsonObject& g, const char* k, float def, float lo, float hi) {
+        return std::clamp(float(g.value(k).toDouble(def)), lo, hi);
+    };
+    const QJsonObject g = o.value("gate").toObject();
+    s.gate.on = g.value("on").toBool(false);
+    s.gate.thresholdDb = f(g, "thr", s.gate.thresholdDb, -80, 0);
+    s.gate.ratio = f(g, "ratio", s.gate.ratio, 1, 10);
+    s.gate.floorDb = f(g, "floor", s.gate.floorDb, -80, 0);
+    s.gate.holdMs = f(g, "hold", s.gate.holdMs, 0, 500);
+    s.gate.releaseMs = f(g, "rel", s.gate.releaseMs, 5, 2000);
+    s.gate.returnDb = f(g, "ret", s.gate.returnDb, 0, 20);
+    s.gate.lookaheadMs = f(g, "look", s.gate.lookaheadMs, 0, 5);
+    const QJsonObject d = o.value("deess").toObject();
+    s.deess.on = d.value("on").toBool(false);
+    s.deess.freqHz = f(d, "hz", s.deess.freqHz, 1000, 12000);
+    s.deess.q = f(d, "q", s.deess.q, 0.5f, 5);
+    s.deess.thresholdDb = f(d, "thr", s.deess.thresholdDb, -60, 0);
+    s.deess.amountDb = f(d, "amt", s.deess.amountDb, -24, 0);
+    s.deess.slopeStages = std::clamp(d.value("slope").toInt(s.deess.slopeStages), 1, 4);
+    const QJsonObject c = o.value("comp").toObject();
+    s.comp.on = c.value("on").toBool(false);
+    s.comp.thresholdDb = f(c, "thr", s.comp.thresholdDb, -60, 0);
+    s.comp.ratio = f(c, "ratio", s.comp.ratio, 1, 20);
+    s.comp.attackMs = f(c, "att", s.comp.attackMs, 0.1f, 200);
+    s.comp.releaseMs = f(c, "rel", s.comp.releaseMs, 5, 2000);
+    s.comp.kneeDb = f(c, "knee", s.comp.kneeDb, 0, 24);
+    s.comp.driveDb = f(c, "drive", s.comp.driveDb, 0, 18);
+    s.comp.phaseStages = std::clamp(c.value("phase").toInt(s.comp.phaseStages), 0, 6);
+    s.comp.limiterOn = c.value("lim").toBool(true);
+    s.comp.ceilingDb = f(c, "ceil", s.comp.ceilingDb, -12, 0);
+    const QJsonObject l = o.value("limit").toObject();
+    s.limit.on = l.value("on").toBool(false);
+    s.limit.ceilingDb = f(l, "ceil", s.limit.ceilingDb, -12, 0);
+    s.limit.dcBlock = l.value("dc").toBool(true);
     return s;
 }
 
@@ -249,37 +355,246 @@ const std::vector<VoiceEqTarget>& voiceEqTargets() {
     return t;
 }
 
+// Offline level stage for processed messages (a ttc addition, not
+// AetherSDR's): peak-normalize by the message's sustained level, not by
+// the few word onsets a compressor's attack lets through, then hold those
+// onsets to the target with a look-ahead brickwall that a live limiter
+// cannot have. Gain = min-filter of the needed reduction over the next
+// 2 ms, then a 2 ms moving average — the textbook overshoot-free look-
+// ahead limiter. Measured on a compressed test phrase: the onsets sat
+// 2-3 dB over the steady level and, used as the peak, cost all the talk
+// power the compressor had made.
+static void lookaheadLevel(std::vector<float>& x, int rate, float target,
+                           float maxGain) {
+    std::vector<float> mag(x.size());
+    for (size_t i = 0; i < x.size(); ++i) mag[i] = std::fabs(x[i]);
+    std::vector<float> sorted = mag;
+    const size_t k = std::min(sorted.size() - 1, sorted.size() * 9995 / 10000);
+    std::nth_element(sorted.begin(), sorted.begin() + long(k), sorted.end());
+    const float sustained = std::max(sorted[k], 1e-6f);
+    const float gain = std::min(target / sustained, maxGain);
+    for (size_t i = 0; i < x.size(); ++i) { x[i] *= gain; mag[i] *= gain; }
+
+    const size_t L = size_t(std::max(1, rate / 500));   // 2 ms
+    const size_t n = x.size();
+    std::vector<float> need(n);
+    for (size_t i = 0; i < n; ++i)
+        need[i] = mag[i] > target ? target / mag[i] : 1.0f;
+    // Sliding minimum over [i, i+L) (monotone deque).
+    std::vector<float> g(n);
+    std::vector<size_t> dq;
+    dq.reserve(n);
+    size_t head = 0;
+    for (size_t j = 0; j < n + L; ++j) {
+        if (j < n) {
+            while (dq.size() > head && need[dq.back()] >= need[j]) dq.pop_back();
+            dq.push_back(j);
+        }
+        if (j + 1 >= L) {
+            const size_t i = j + 1 - L;
+            if (i >= n) break;                     // window start past the end
+            while (dq[head] < i) ++head;
+            g[i] = need[dq[head]];
+        }
+    }
+    // Smooth with a length-L moving average of the (shifted) minimum so the
+    // gain ramps down over the 2 ms before each onset instead of stepping.
+    std::vector<float> gs(n);
+    double acc = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t src = i >= L ? i - L : 0;     // look back over the min
+        acc += g[i];
+        if (i >= L) acc -= g[src];
+        const size_t cnt = std::min(i + 1, L);
+        gs[i] = float(acc / double(cnt));
+    }
+    for (size_t i = 0; i < n; ++i) x[i] *= std::min(g[i], gs[i]);
+}
+
 bool renderVoiceEq(const QString& inWav, const QString& outWav,
                    const VoiceEqSettings& s, double targetPeak,
-                   QString* error) {
+                   QString* error, VoiceRenderStats* stats) {
     std::vector<float> x;
     int rate = 48000;
     if (!ClipDeck::readWavMono(inWav, x, rate) || x.empty()) {
         if (error) *error = "cannot read " + inWav;
         return false;
     }
-    if (s.enabled) {
+    const std::vector<float> dry = x;              // for the talk-power figure
+    float dryPeak = 0.0f;
+    for (float v : dry) dryPeak = std::max(dryPeak, std::fabs(v));
+    const float speechFloor = dryPeak * 0.0178f;   // -35 dB: "speech" blocks
+    const int kBlock = rate / 100;                 // 10 ms: stages meter per block
+
+    // One pass of the chain over a fresh copy of the take. Stages are
+    // rebuilt each pass (they hold envelope state). makeupDb only matters
+    // with the compressor on.
+    const auto runChain = [&](float makeupDb, std::vector<float>& y,
+                              VoiceRenderStats& st) {
+        y = dry;
+        st = VoiceRenderStats{};
+        ClientGate gate;
         ClientEq eq;
-        eq.prepare(rate);
-        eq.setEnabled(true);
-        eq.setActiveBandCount(VoiceEqSettings::kBands);
-        for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
-            ClientEq::BandParams b = s.bands[size_t(i)];
-            b.type = VoiceEqSettings::slotType(i);
-            eq.setBand(i, b);
+        ClientDeEss deess;
+        ClientComp comp;
+        ClientFinalLimiter limit;
+        if (s.gate.on) {
+            gate.prepare(rate);
+            gate.setEnabled(true);
+            gate.setThresholdDb(s.gate.thresholdDb);
+            gate.setRatio(s.gate.ratio);
+            gate.setFloorDb(s.gate.floorDb);
+            gate.setHoldMs(s.gate.holdMs);
+            gate.setReleaseMs(s.gate.releaseMs);
+            gate.setReturnDb(s.gate.returnDb);
+            gate.setLookaheadMs(s.gate.lookaheadMs);
         }
-        eq.snapToTargets();                        // whole message on the curve
-        constexpr int kBlock = 1024;
-        for (size_t o = 0; o < x.size(); o += kBlock)
-            eq.process(x.data() + o,
-                       int(std::min<size_t>(kBlock, x.size() - o)), 1);
+        if (s.enabled) {
+            eq.prepare(rate);
+            eq.setEnabled(true);
+            eq.setActiveBandCount(VoiceEqSettings::kBands);
+            for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
+                ClientEq::BandParams b = s.bands[size_t(i)];
+                b.type = VoiceEqSettings::slotType(i);
+                eq.setBand(i, b);
+            }
+            eq.snapToTargets();                    // whole message on the curve
+        }
+        if (s.deess.on) {
+            deess.prepare(rate);
+            deess.setEnabled(true);
+            deess.setFrequencyHz(s.deess.freqHz);
+            deess.setQ(s.deess.q);
+            deess.setThresholdDb(s.deess.thresholdDb);
+            deess.setAmountDb(s.deess.amountDb);
+            deess.setSlopeStages(s.deess.slopeStages);
+        }
+        if (s.comp.on) {
+            comp.prepare(rate);
+            comp.setEnabled(true);
+            comp.setThresholdDb(s.comp.thresholdDb);
+            comp.setRatio(s.comp.ratio);
+            comp.setAttackMs(s.comp.attackMs);
+            comp.setReleaseMs(s.comp.releaseMs);
+            comp.setKneeDb(s.comp.kneeDb);
+            comp.setDriveDb(s.comp.driveDb);
+            comp.setMakeupDb(makeupDb);
+            comp.setPhaseRotatorStages(s.comp.phaseStages);
+            comp.setLimiterEnabled(s.comp.limiterOn);
+            comp.setLimiterCeilingDb(s.comp.ceilingDb);
+        }
+        if (s.limit.on) {                          // off = not even its DC block
+            limit.prepare(rate);
+            limit.setEnabled(true);
+            limit.setCeilingDb(s.limit.ceilingDb);
+            limit.setDcBlockEnabled(s.limit.dcBlock);
+        }
+        double compSum = 0;
+        int speechBlocks = 0, limitBlocks = 0;
+        for (size_t o = 0; o < y.size(); o += size_t(kBlock)) {
+            const int n = int(std::min<size_t>(size_t(kBlock), y.size() - o));
+            float* blk = y.data() + o;
+            float inPk = 0.0f;
+            for (int i = 0; i < n; ++i) inPk = std::max(inPk, std::fabs(dry[o + size_t(i)]));
+            if (s.gate.on) gate.process(blk, n, 1);
+            if (s.enabled) eq.process(blk, n, 1);
+            if (s.deess.on) deess.process(blk, n, 1);
+            if (s.comp.on) comp.process(blk, n, 1);
+            if (s.limit.on) limit.process(blk, n, 1);
+            if (s.gate.on) st.gateMaxDb = std::min(st.gateMaxDb, double(gate.gainReductionDb()));
+            if (s.deess.on) st.deessMaxDb = std::min(st.deessMaxDb, double(deess.gainReductionDb()));
+            if (inPk >= speechFloor) {
+                ++speechBlocks;
+                if (s.comp.on) {
+                    const double gr = comp.gainReductionDb();
+                    compSum += gr;
+                    st.compMaxDb = std::min(st.compMaxDb, gr);
+                }
+                if (s.limit.on && limit.active()) ++limitBlocks;
+            }
+        }
+        if (speechBlocks > 0) {
+            st.compAvgDb = compSum / speechBlocks;
+            st.limitPct = 100.0 * limitBlocks / speechBlocks;
+        }
+    };
+
+    // Auto make-up: a compressor turns loud speech DOWN; the talk power
+    // comes from raising it back up to the ceiling and letting the
+    // limiters catch the word onsets its attack lets through. Offline we
+    // can measure instead of guess: pass 1 (no make-up) finds the level
+    // the compressed speech sits at — the 95th percentile of its 10 ms
+    // block peaks — and pass 2 lifts that to the compressor's ceiling.
+    // (Average gain reduction is the wrong yardstick: it under-lifts the
+    // loud passages and the onsets then set the peak — measured.)
+    VoiceRenderStats st;
+    runChain(0.0f, x, st);
+    if (s.comp.on) {
+        std::vector<float> blockPk;
+        for (size_t o = 0; o < x.size(); o += size_t(kBlock)) {
+            const size_t n = std::min<size_t>(size_t(kBlock), x.size() - o);
+            float inPk = 0.0f, outPk = 0.0f;
+            for (size_t i = 0; i < n; ++i) {
+                inPk = std::max(inPk, std::fabs(dry[o + i]));
+                outPk = std::max(outPk, std::fabs(x[o + i]));
+            }
+            if (inPk >= speechFloor && outPk > 0.0f) blockPk.push_back(outPk);
+        }
+        if (!blockPk.empty()) {
+            const size_t k = std::min(blockPk.size() - 1, blockPk.size() * 95 / 100);
+            std::nth_element(blockPk.begin(), blockPk.begin() + long(k), blockPk.end());
+            const float p95Db = 20.0f * std::log10(blockPk[k]);
+            const float makeup = std::clamp(s.comp.ceilingDb - p95Db, 0.0f, 24.0f);
+            runChain(makeup, x, st);
+        }
     }
+
     float peak = 0.0f;
     for (float v : x) peak = std::max(peak, std::fabs(v));
-    if (peak > 0.0f) {
+    const bool dynamics = s.gate.on || s.deess.on || s.comp.on || s.limit.on;
+    if (peak > 0.0f && !dynamics) {                // EQ only: as it always was
         const double gain = std::min(targetPeak / peak, kMaxMakeupGain);
         for (float& v : x) v = float(v * gain);
+    } else if (peak > 0.0f) {
+        lookaheadLevel(x, rate, float(targetPeak), float(kMaxMakeupGain));
+        peak = 0.0f;
+        for (float v : x) peak = std::max(peak, std::fabs(v));
     }
+    // Talk power: RMS over the speech blocks, each signal relative to its
+    // own peak — the crest-factor change the chain made. Both are measured
+    // about their own mean: a take with a DC offset (cheap USB mics have
+    // them) otherwise reads as "louder" before the chain's DC block / high-
+    // pass than after (live-found: Flat read -6.4 dB on an ONN take).
+    if (dryPeak > 0.0f && peak > 0.0f) {
+        double mdry = 0, mwet = 0;
+        for (size_t i = 0; i < x.size(); ++i) { mdry += dry[i]; mwet += x[i]; }
+        mdry /= double(x.size());
+        mwet /= double(x.size());
+        double sd = 0, sw = 0;
+        size_t cnt = 0;
+        for (size_t o = 0; o < x.size(); o += size_t(kBlock)) {
+            const size_t n = std::min<size_t>(size_t(kBlock), x.size() - o);
+            float inPk = 0.0f;
+            for (size_t i = 0; i < n; ++i) inPk = std::max(inPk, std::fabs(dry[o + i]));
+            if (inPk < speechFloor) continue;
+            for (size_t i = 0; i < n; ++i) {
+                const double d = dry[o + i] - mdry, w = x[o + i] - mwet;
+                sd += d * d;
+                sw += w * w;
+            }
+            cnt += n;
+        }
+        double pd = 0, pw = 0;
+        for (size_t i = 0; i < x.size(); ++i) {
+            pd = std::max(pd, std::fabs(dry[i] - mdry));
+            pw = std::max(pw, std::fabs(x[i] - mwet));
+        }
+        if (cnt > 0 && sd > 0 && sw > 0 && pd > 0 && pw > 0)
+            st.talkPowerDb = 10.0 * std::log10(sw / cnt) - 20.0 * std::log10(pw)
+                           - (10.0 * std::log10(sd / cnt) - 20.0 * std::log10(pd));
+    }
+    if (stats) *stats = st;
+
     const QString tmp = outWav + ".tmp";
     if (!ClipDeck::writeWavMono(tmp, x, rate)) {
         if (error) *error = "cannot write " + tmp;

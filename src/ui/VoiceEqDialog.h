@@ -55,6 +55,21 @@ private:
     void setActiveProfile(const QString& key);     // remembered across opens
     void refreshEnables();
 
+    QWidget* buildDynamicsPage();
+    // Dynamics controls (gate -> EQ -> de-esser -> compressor -> limiter).
+    struct Dyn {
+        QCheckBox *gateOn = nullptr, *deessOn = nullptr, *compOn = nullptr,
+                  *limOn = nullptr, *limDc = nullptr;
+        QDoubleSpinBox *gateThr = nullptr, *gateRatio = nullptr,
+                       *gateFloor = nullptr, *gateHold = nullptr,
+                       *gateRel = nullptr;
+        QDoubleSpinBox *deHz = nullptr, *deThr = nullptr, *deAmt = nullptr;
+        QDoubleSpinBox *cThr = nullptr, *cRatio = nullptr, *cAtt = nullptr,
+                       *cRel = nullptr, *cKnee = nullptr, *cDrive = nullptr;
+        QSpinBox *cPhase = nullptr;
+        QDoubleSpinBox *limCeil = nullptr;
+    } dyn_;
+    VoiceEqSettings base_;                         // carries fields not on screen
     struct Row {
         QCheckBox*      on    = nullptr;
         QSpinBox*       hz    = nullptr;

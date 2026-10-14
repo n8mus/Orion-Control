@@ -24,8 +24,48 @@ namespace ttc {
 // rolloff after this, so the EQ shapes tone; the radio sets the edges.
 struct VoiceEqSettings {
     static constexpr int kBands = 8;
-    bool enabled = false;
+    bool enabled = false;                          // the EQ stage
     std::array<ClientEq::BandParams, kBands> bands{};
+
+    // Dynamics, AetherSDR's TX chain order around the EQ:
+    //   gate -> EQ -> de-esser -> compressor (+its limiter) -> final limiter
+    // Each stage has its own on/off; values are the ported classes' own
+    // parameters. A profile carries the whole chain.
+    struct Gate {
+        bool  on = false;
+        float thresholdDb = -45.f;   // opens above this
+        float ratio = 2.f;           // 2 = gentle expander .. 10 = hard gate
+        float floorDb = -15.f;       // most it ever turns down
+        float holdMs = 60.f;
+        float releaseMs = 150.f;
+        float returnDb = 3.f;        // hysteresis
+        float lookaheadMs = 2.f;     // protects word onsets
+    } gate;
+    struct DeEss {
+        bool  on = false;
+        float freqHz = 4000.f;       // SSB's sibilance lives just under 3.9k
+        float q = 1.5f;
+        float thresholdDb = -30.f;
+        float amountDb = -6.f;       // max cut in the band
+        int   slopeStages = 2;       // x 12 dB/oct
+    } deess;
+    struct Comp {
+        bool  on = false;
+        float thresholdDb = -20.f;
+        float ratio = 3.f;
+        float attackMs = 10.f;
+        float releaseMs = 150.f;
+        float kneeDb = 6.f;
+        float driveDb = 0.f;         // pushes more into the compressor
+        int   phaseStages = 4;       // all-pass peak rotator, 0 = off
+        bool  limiterOn = true;
+        float ceilingDb = -1.f;
+    } comp;
+    struct Limit {
+        bool  on = true;             // the safety net — on by default
+        float ceilingDb = -1.f;
+        bool  dcBlock = true;
+    } limit;
 
     // Slot types never change; a stored band of the wrong type is ignored.
     static ClientEq::FilterType slotType(int i);
@@ -71,13 +111,25 @@ struct VoiceEqTarget {
 };
 const std::vector<VoiceEqTarget>& voiceEqTargets();
 
-// Render inWav (any 16-bit PCM WAV) through the EQ to outWav, then peak-
-// normalize the result to targetPeak so the EQ never changes TX drive
-// (cuts would starve the ALC, boosts would clip). With the EQ disabled the
+// What a render did, for the operator: the compressor's work shows up as
+// talk power — average (RMS) level gained at the same peak, i.e. the drop
+// in crest factor — because every message is re-peaked to the same level.
+struct VoiceRenderStats {
+    double talkPowerDb = 0;      // RMS gain vs the unprocessed take, same peak
+    double gateMaxDb = 0;        // deepest gate reduction (<= 0)
+    double deessMaxDb = 0;       // deepest de-esser reduction (<= 0)
+    double compAvgDb = 0;        // compressor GR, averaged over speech
+    double compMaxDb = 0;        // compressor GR, deepest
+    double limitPct = 0;         // share of speech blocks the final limiter touched
+};
+
+// Render inWav (any 16-bit PCM WAV) through the chain to outWav, then peak-
+// normalize the result to targetPeak so processing never changes TX drive
+// (cuts would starve the ALC, boosts would clip). With every stage off the
 // output is the input, normalized. The output is written to a temp file
 // and renamed into place, so a message is never left half-written.
 bool renderVoiceEq(const QString& inWav, const QString& outWav,
                    const VoiceEqSettings& s, double targetPeak = 0.7,
-                   QString* error = nullptr);
+                   QString* error = nullptr, VoiceRenderStats* stats = nullptr);
 
 } // namespace ttc

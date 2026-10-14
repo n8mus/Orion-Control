@@ -73,6 +73,7 @@ class SpotTableWindow;
 class TuneEntryDialog;
 class VoiceEqDialog;
 struct VoiceEqSettings;
+struct VoiceRenderStats;
 class TuneTableDialog;
 class WsjtxListener;
 struct Qso;
@@ -194,8 +195,10 @@ private:
     // Voice keyer EQ: each slot keeps its untouched take (vkN.raw.wav) and
     // the message that plays/transmits (vkN.wav) is rendered from it.
     QString vkRawPath(int slot) const;
-    bool renderVkSlot(int slot, const VoiceEqSettings& eq, QString* err);
-    int  rerenderVk(const VoiceEqSettings& eq);   // -> messages rendered
+    bool renderVkSlot(int slot, const VoiceEqSettings& eq, QString* err,
+                      struct VoiceRenderStats* stats = nullptr);
+    // -> messages rendered; a one-line talk-power summary into *summary
+    int  rerenderVk(const VoiceEqSettings& eq, QString* summary = nullptr);
     void showVoiceEq();
     bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers

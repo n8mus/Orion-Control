@@ -5,6 +5,8 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGridLayout>
+#include <QGroupBox>
+#include <QTabWidget>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -107,23 +109,11 @@ void VoiceEqCurve::paintEvent(QPaintEvent*) {
 
 VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     : QDialog(parent) {
-    setWindowTitle("Voice keyer EQ");
+    setWindowTitle("Voice keyer audio — EQ & dynamics");
     setStyleSheet(kStyle);
     auto* lay = new QVBoxLayout(this);
     lay->setContentsMargins(12, 10, 12, 10);
     lay->setSpacing(8);
-
-    auto* top = new QHBoxLayout;
-    enabled_ = new QCheckBox("EQ on for VK1-VK4 messages", this);
-    top->addWidget(enabled_);
-    top->addStretch(1);
-    top->addWidget(new QLabel("Target", this));
-    target_ = new QComboBox(this);
-    for (const VoiceEqTarget& t : voiceEqTargets()) target_->addItem(t.name);
-    target_->setToolTip("A reference curve drawn behind yours (dashed) to\n"
-                        "shape toward — display only. From AetherSDR.");
-    top->addWidget(target_);
-    lay->addLayout(top);
 
     // Profiles: the built-in starting points, then the operator's own.
     // Save as… stores the curve on screen under a name; Delete removes one
@@ -151,8 +141,29 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     syncDelete();
     connect(preset_, &QComboBox::currentIndexChanged, this, syncDelete);
 
-    curve_ = new VoiceEqCurve(this);
-    lay->addWidget(curve_);
+    // EQ tab: on/off + target, the curve, the eight bands.
+    auto* tabs = new QTabWidget(this);
+    tabs->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #2a3644; }"
+        "QTabBar::tab { background: #1c2430; color: #8fa3b8; padding: 4px 14px;"
+        " border: 1px solid #2a3644; }"
+        "QTabBar::tab:selected { background: #26303e; color: #e8b04a; }");
+    auto* eqPage = new QWidget(tabs);
+    auto* eqLay = new QVBoxLayout(eqPage);
+    eqLay->setContentsMargins(8, 8, 8, 8);
+    auto* top = new QHBoxLayout;
+    enabled_ = new QCheckBox("EQ on", eqPage);
+    top->addWidget(enabled_);
+    top->addStretch(1);
+    top->addWidget(new QLabel("Target", eqPage));
+    target_ = new QComboBox(eqPage);
+    for (const VoiceEqTarget& t : voiceEqTargets()) target_->addItem(t.name);
+    target_->setToolTip("A reference curve drawn behind yours (dashed) to\n"
+                        "shape toward — display only. From AetherSDR.");
+    top->addWidget(target_);
+    eqLay->addLayout(top);
+    curve_ = new VoiceEqCurve(eqPage);
+    eqLay->addWidget(curve_);
 
     auto* g = new QGridLayout;
     g->setHorizontalSpacing(10);
@@ -193,7 +204,10 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         }
     }
     g->setColumnStretch(4, 1);
-    lay->addLayout(g);
+    eqLay->addLayout(g);
+    tabs->addTab(eqPage, "EQ");
+    tabs->addTab(buildDynamicsPage(), "Dynamics");
+    lay->addWidget(tabs);
 
     status_ = new QLabel(this);
     status_->setWordWrap(true);
@@ -244,6 +258,14 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         applyTimer_->start();
     };
     connect(enabled_, &QCheckBox::toggled, this, edited);
+    for (QCheckBox* c : {dyn_.gateOn, dyn_.deessOn, dyn_.compOn, dyn_.limOn, dyn_.limDc})
+        connect(c, &QCheckBox::toggled, this, edited);
+    for (QDoubleSpinBox* d : {dyn_.gateThr, dyn_.gateRatio, dyn_.gateFloor,
+                              dyn_.gateHold, dyn_.gateRel, dyn_.deHz, dyn_.deThr,
+                              dyn_.deAmt, dyn_.cThr, dyn_.cRatio, dyn_.cAtt,
+                              dyn_.cRel, dyn_.cKnee, dyn_.cDrive, dyn_.limCeil})
+        connect(d, &QDoubleSpinBox::valueChanged, this, edited);
+    connect(dyn_.cPhase, &QSpinBox::valueChanged, this, edited);
     for (Row& row : rows_) {
         connect(row.on, &QCheckBox::toggled, this, edited);
         connect(row.hz, &QSpinBox::valueChanged, this, edited);
@@ -323,9 +345,126 @@ void VoiceEqDialog::setActiveProfile(const QString& key) {
     QSettings().setValue("vk/eqProfile", key);
 }
 
+namespace {
+QDoubleSpinBox* dspin(QWidget* p, double lo, double hi, double step, int dec,
+                      const QString& suffix, const QString& tip) {
+    auto* d = new QDoubleSpinBox(p);
+    d->setRange(lo, hi);
+    d->setSingleStep(step);
+    d->setDecimals(dec);
+    d->setSuffix(suffix);
+    d->setFixedWidth(100);
+    d->setToolTip(tip);
+    return d;
+}
+QGroupBox* stage(QWidget* p, const QString& title, QCheckBox*& on,
+                 const QString& tip, QGridLayout*& g) {
+    auto* box = new QGroupBox(title, p);
+    g = new QGridLayout(box);
+    g->setHorizontalSpacing(10);
+    on = new QCheckBox("On", box);
+    on->setToolTip(tip);
+    g->addWidget(on, 0, 0);
+    return box;
+}
+void field(QGridLayout* g, int row, int col, const QString& label, QWidget* w) {
+    g->addWidget(new QLabel(label, w->parentWidget()), row, col * 2);
+    g->addWidget(w, row, col * 2 + 1);
+}
+}  // namespace
+
+// Dynamics tab, in chain order. Controls are the ported AetherSDR stages'
+// own parameters; the rarely-touched ones (gate hysteresis/look-ahead,
+// de-esser Q/slope, the compressor's internal limiter) keep their values
+// from the loaded profile and are not shown.
+QWidget* VoiceEqDialog::buildDynamicsPage() {
+    auto* page = new QWidget(this);
+    auto* v = new QVBoxLayout(page);
+    v->setContentsMargins(8, 8, 8, 8);
+    QGridLayout* g = nullptr;
+
+    v->addWidget(stage(page, "NOISE GATE  (first)", dyn_.gateOn,
+        "Turns the mic down between words — fan hum and room noise\n"
+        "stay off the air. Ratio 2 = gentle expander, 10 = hard gate.", g));
+    dyn_.gateThr   = dspin(page, -80, 0, 1, 0, " dB", "Opens above this level");
+    dyn_.gateRatio = dspin(page, 1, 10, 0.5, 1, " :1", "2 = expander, 10 = gate");
+    dyn_.gateFloor = dspin(page, -80, 0, 1, 0, " dB", "Most it ever turns down");
+    dyn_.gateHold  = dspin(page, 0, 500, 10, 0, " ms", "Stays open this long after you stop");
+    dyn_.gateRel   = dspin(page, 5, 2000, 10, 0, " ms", "How gently it closes");
+    field(g, 1, 0, "Threshold", dyn_.gateThr);
+    field(g, 1, 1, "Ratio", dyn_.gateRatio);
+    field(g, 1, 2, "Floor", dyn_.gateFloor);
+    field(g, 2, 0, "Hold", dyn_.gateHold);
+    field(g, 2, 1, "Release", dyn_.gateRel);
+
+    v->addWidget(stage(page, "DE-ESSER  (after the EQ)", dyn_.deessOn,
+        "Cuts harsh 's' and 'sh' in their own band only — useful when\n"
+        "the EQ boosts presence.", g));
+    dyn_.deHz  = dspin(page, 1000, 12000, 100, 0, " Hz", "Sibilance band centre; SSB's is just under 3.9 kHz");
+    dyn_.deThr = dspin(page, -60, 0, 1, 0, " dB", "Acts above this level in the band");
+    dyn_.deAmt = dspin(page, -24, 0, 0.5, 1, " dB", "Most it cuts");
+    field(g, 1, 0, "Frequency", dyn_.deHz);
+    field(g, 1, 1, "Threshold", dyn_.deThr);
+    field(g, 1, 2, "Max cut", dyn_.deAmt);
+
+    v->addWidget(stage(page, "COMPRESSOR  (talk power)", dyn_.compOn,
+        "Brings quiet syllables up toward loud ones — more average power\n"
+        "at the same peak. Make-up gain is automatic for VK messages.", g));
+    dyn_.cThr   = dspin(page, -60, 0, 1, 0, " dB", "Compresses above this level");
+    dyn_.cRatio = dspin(page, 1, 20, 0.5, 1, " :1", "How hard (20 = limiter)");
+    dyn_.cAtt   = dspin(page, 0.1, 200, 1, 1, " ms", "How fast it grabs (2-10 ms for voice)");
+    dyn_.cRel   = dspin(page, 5, 2000, 10, 0, " ms", "How fast it lets go");
+    dyn_.cKnee  = dspin(page, 0, 24, 1, 0, " dB", "Soft knee width (gentler onset)");
+    dyn_.cDrive = dspin(page, 0, 18, 0.5, 1, " dB", "Pushes more voice into the compressor");
+    dyn_.cPhase = new QSpinBox(page);
+    dyn_.cPhase->setRange(0, 6);
+    dyn_.cPhase->setFixedWidth(100);
+    dyn_.cPhase->setToolTip("All-pass phase rotator stages (Orban/Optimod trick):\n"
+                            "evens out lopsided voice peaks for 2-3 dB more\n"
+                            "loudness, no tone change. 0 = off, 4 = broadcast");
+    field(g, 1, 0, "Threshold", dyn_.cThr);
+    field(g, 1, 1, "Ratio", dyn_.cRatio);
+    field(g, 1, 2, "Knee", dyn_.cKnee);
+    field(g, 2, 0, "Attack", dyn_.cAtt);
+    field(g, 2, 1, "Release", dyn_.cRel);
+    field(g, 2, 2, "Drive", dyn_.cDrive);
+    field(g, 3, 0, "Phase rot.", dyn_.cPhase);
+
+    v->addWidget(stage(page, "FINAL LIMITER  (last)", dyn_.limOn,
+        "The safety net: nothing leaves above this ceiling.", g));
+    dyn_.limCeil = dspin(page, -12, 0, 0.5, 1, " dB", "Absolute ceiling");
+    dyn_.limDc = new QCheckBox("Remove DC offset (25 Hz)", page);
+    field(g, 1, 0, "Ceiling", dyn_.limCeil);
+    g->addWidget(dyn_.limDc, 1, 2, 1, 3);
+    v->addStretch(1);
+    return page;
+}
+
 void VoiceEqDialog::load(const VoiceEqSettings& s) {
     loading_ = true;
+    base_ = s;
     enabled_->setChecked(s.enabled);
+    dyn_.gateOn->setChecked(s.gate.on);
+    dyn_.gateThr->setValue(s.gate.thresholdDb);
+    dyn_.gateRatio->setValue(s.gate.ratio);
+    dyn_.gateFloor->setValue(s.gate.floorDb);
+    dyn_.gateHold->setValue(s.gate.holdMs);
+    dyn_.gateRel->setValue(s.gate.releaseMs);
+    dyn_.deessOn->setChecked(s.deess.on);
+    dyn_.deHz->setValue(s.deess.freqHz);
+    dyn_.deThr->setValue(s.deess.thresholdDb);
+    dyn_.deAmt->setValue(s.deess.amountDb);
+    dyn_.compOn->setChecked(s.comp.on);
+    dyn_.cThr->setValue(s.comp.thresholdDb);
+    dyn_.cRatio->setValue(s.comp.ratio);
+    dyn_.cAtt->setValue(s.comp.attackMs);
+    dyn_.cRel->setValue(s.comp.releaseMs);
+    dyn_.cKnee->setValue(s.comp.kneeDb);
+    dyn_.cDrive->setValue(s.comp.driveDb);
+    dyn_.cPhase->setValue(s.comp.phaseStages);
+    dyn_.limOn->setChecked(s.limit.on);
+    dyn_.limCeil->setValue(s.limit.ceilingDb);
+    dyn_.limDc->setChecked(s.limit.dcBlock);
     for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
         const auto& b = s.bands[size_t(i)];
         Row& row = rows_[i];
@@ -343,6 +482,16 @@ void VoiceEqDialog::load(const VoiceEqSettings& s) {
 }
 
 void VoiceEqDialog::refreshEnables() {
+    for (QWidget* w : std::initializer_list<QWidget*>{dyn_.gateThr, dyn_.gateRatio,
+             dyn_.gateFloor, dyn_.gateHold, dyn_.gateRel})
+        w->setEnabled(dyn_.gateOn->isChecked());
+    for (QWidget* w : std::initializer_list<QWidget*>{dyn_.deHz, dyn_.deThr, dyn_.deAmt})
+        w->setEnabled(dyn_.deessOn->isChecked());
+    for (QWidget* w : std::initializer_list<QWidget*>{dyn_.cThr, dyn_.cRatio, dyn_.cAtt,
+             dyn_.cRel, dyn_.cKnee, dyn_.cDrive, dyn_.cPhase})
+        w->setEnabled(dyn_.compOn->isChecked());
+    dyn_.limCeil->setEnabled(dyn_.limOn->isChecked());
+    dyn_.limDc->setEnabled(dyn_.limOn->isChecked());
     const bool eqOn = enabled_->isChecked();
     for (Row& row : rows_) {
         row.on->setEnabled(eqOn);
@@ -355,8 +504,29 @@ void VoiceEqDialog::refreshEnables() {
 }
 
 VoiceEqSettings VoiceEqDialog::collect() const {
-    VoiceEqSettings s;
+    VoiceEqSettings s = base_;                     // hidden fields ride along
     s.enabled = enabled_->isChecked();
+    s.gate.on = dyn_.gateOn->isChecked();
+    s.gate.thresholdDb = float(dyn_.gateThr->value());
+    s.gate.ratio = float(dyn_.gateRatio->value());
+    s.gate.floorDb = float(dyn_.gateFloor->value());
+    s.gate.holdMs = float(dyn_.gateHold->value());
+    s.gate.releaseMs = float(dyn_.gateRel->value());
+    s.deess.on = dyn_.deessOn->isChecked();
+    s.deess.freqHz = float(dyn_.deHz->value());
+    s.deess.thresholdDb = float(dyn_.deThr->value());
+    s.deess.amountDb = float(dyn_.deAmt->value());
+    s.comp.on = dyn_.compOn->isChecked();
+    s.comp.thresholdDb = float(dyn_.cThr->value());
+    s.comp.ratio = float(dyn_.cRatio->value());
+    s.comp.attackMs = float(dyn_.cAtt->value());
+    s.comp.releaseMs = float(dyn_.cRel->value());
+    s.comp.kneeDb = float(dyn_.cKnee->value());
+    s.comp.driveDb = float(dyn_.cDrive->value());
+    s.comp.phaseStages = dyn_.cPhase->value();
+    s.limit.on = dyn_.limOn->isChecked();
+    s.limit.ceilingDb = float(dyn_.limCeil->value());
+    s.limit.dcBlock = dyn_.limDc->isChecked();
     for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
         const Row& row = rows_[i];
         auto& b = s.bands[size_t(i)];

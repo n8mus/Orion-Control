@@ -155,6 +155,11 @@ add_executable(tentec-console
   src/audio/ClipDeck.cpp        src/audio/ClipDeck.h
   src/audio/VoiceEq.cpp         src/audio/VoiceEq.h
   src/dsp/ClientEq.cpp          src/dsp/ClientEq.h
+  src/dsp/ClientGate.cpp        src/dsp/ClientGate.h
+  src/dsp/ClientDeEss.cpp       src/dsp/ClientDeEss.h
+  src/dsp/ClientComp.cpp        src/dsp/ClientComp.h
+  src/dsp/ClientPhaseRotator.cpp src/dsp/ClientPhaseRotator.h
+  src/dsp/ClientFinalLimiter.cpp src/dsp/ClientFinalLimiter.h
   src/ui/VoiceEqDialog.cpp      src/ui/VoiceEqDialog.h
   src/dsp/Fft.cpp               src/dsp/Fft.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
@@ -376,7 +381,9 @@ target_link_libraries(watchtest PRIVATE Qt6::Core)
 add_executable(vkeqtest EXCLUDE_FROM_ALL
   tests/vkeqtest.cpp
   src/audio/VoiceEq.cpp src/audio/ClipDeck.cpp src/audio/ClipDeck.h
-  src/dsp/ClientEq.cpp)
+  src/dsp/ClientEq.cpp src/dsp/ClientGate.cpp src/dsp/ClientDeEss.cpp
+  src/dsp/ClientComp.cpp src/dsp/ClientPhaseRotator.cpp
+  src/dsp/ClientFinalLimiter.cpp)
 target_include_directories(vkeqtest PRIVATE src)
 target_link_libraries(vkeqtest PRIVATE Qt6::Core)
 

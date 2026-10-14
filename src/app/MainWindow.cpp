@@ -842,7 +842,7 @@ MainWindow::MainWindow(QWidget* parent)
     audioAction->setDefaultWidget(audioPanel_);
     audioMenu->addAction(audioAction);
     audioMenu->addSeparator();
-    connect(audioMenu->addAction("Voice keyer EQ…"), &QAction::triggered,
+    connect(audioMenu->addAction("Voice keyer EQ & dynamics…"), &QAction::triggered,
             this, &MainWindow::showVoiceEq);
     audioBtn->setMenu(audioMenu);
     topLay->addSpacing(8);

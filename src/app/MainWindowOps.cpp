@@ -192,7 +192,7 @@ QString MainWindow::vkRawPath(int slot) const {
 // message itself as the original (once), so the first render shapes it
 // instead of skipping it. A slot with nothing usable is left alone.
 bool MainWindow::renderVkSlot(int slot, const VoiceEqSettings& eq,
-                              QString* err) {
+                              QString* err, VoiceRenderStats* stats) {
     const QString raw = vkRawPath(slot);
     if (!QFileInfo::exists(raw)) {
         if (!vkHasMessage(slot)) return false;
@@ -201,17 +201,41 @@ bool MainWindow::renderVkSlot(int slot, const VoiceEqSettings& eq,
             return false;
         }
     }
-    return renderVoiceEq(raw, vkPath(slot), eq, 0.7, err);
+    return renderVoiceEq(raw, vkPath(slot), eq, 0.7, err, stats);
 }
 
-int MainWindow::rerenderVk(const VoiceEqSettings& eq) {
+// Talk power per message, then the first message's stage-by-stage detail —
+// how hard each stage worked, so the settings can be judged by numbers as
+// well as by ear.
+int MainWindow::rerenderVk(const VoiceEqSettings& eq, QString* summary) {
     int n = 0;
+    QStringList talk;
+    QString detail;
     for (int i = 0; i < 4; ++i) {
         QString err;
-        if (renderVkSlot(i, eq, &err)) ++n;
-        else if (!err.isEmpty()) statusBar()->showMessage("VK EQ: " + err, 10000);
+        VoiceRenderStats st;
+        if (renderVkSlot(i, eq, &err, &st)) {
+            ++n;
+            talk << QString("VK%1 %2 dB").arg(i + 1)
+                        .arg(st.talkPowerDb >= 0 ? "+" + QString::number(st.talkPowerDb, 'f', 1)
+                                                 : QString::number(st.talkPowerDb, 'f', 1));
+            if (detail.isEmpty()) {
+                QStringList d;
+                if (eq.gate.on) d << QString("gate %1 dB").arg(st.gateMaxDb, 0, 'f', 0);
+                if (eq.deess.on) d << QString("de-ess %1 dB").arg(st.deessMaxDb, 0, 'f', 1);
+                if (eq.comp.on)
+                    d << QString("comp %1 avg / %2 max dB")
+                             .arg(st.compAvgDb, 0, 'f', 1).arg(st.compMaxDb, 0, 'f', 1);
+                if (eq.limit.on) d << QString("limiter %1 %").arg(st.limitPct, 0, 'f', 1);
+                if (!d.isEmpty()) detail = QString("  (VK%1: %2)").arg(i + 1).arg(d.join(", "));
+            }
+        } else if (!err.isEmpty()) {
+            statusBar()->showMessage("VK audio: " + err, 10000);
+        }
     }
     refreshVkLoaded();
+    if (summary && n > 0)
+        *summary = "Talk power " + talk.join(", ") + detail;
     return n;
 }
 
@@ -226,13 +250,13 @@ void MainWindow::showVoiceEq() {
         vkEqDlg_ = dlg;
         const auto apply = [this](const VoiceEqSettings& s) {
             s.save();
-            const int n = rerenderVk(s);
+            QString summary;
+            const int n = rerenderVk(s, &summary);
             const QString text = n == 0
                 ? QStringLiteral("Saved. No VK messages recorded yet — "
                                  "right-click a VK button to record one.")
-                : QString("Applied to %1 message%2 — EQ %3.")
-                      .arg(n).arg(n == 1 ? "" : "s")
-                      .arg(s.enabled ? "on" : "off");
+                : QString("Applied to %1 message%2. %3")
+                      .arg(n).arg(n == 1 ? "" : "s").arg(summary);
             if (vkEqDlg_) vkEqDlg_->setStatus(text);
             statusBar()->showMessage("VK EQ: " + text, 6000);
         };

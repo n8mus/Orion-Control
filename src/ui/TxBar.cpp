@@ -31,8 +31,10 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         QPushButton#prof { padding: 0 7px; font-size: 10px; border-radius: 8px; }
         QPushButton#prof:checked { background: #1f7a45; border-color: #3ecf7a; }
         QPushButton#dvr { padding: 0 7px; font-size: 10px; border-radius: 8px; }
-        QPushButton#dvr[dvrState="rec"] { background: #8a2727; color: #ffffff;
-                                          border-color: #e05d5d; }
+        QPushButton#dvr[dvrState="tx"]   { background: #8a2727; color: #ffffff;
+                                           border-color: #e05d5d; }
+        QPushButton#dvr[dvrState="rec"]  { background: #1f4f8a; color: #ffffff;
+                                           border-color: #4f8fe0; }
         QPushButton#dvr[dvrState="play"] { background: #1f7a45; color: #ffffff;
                                            border-color: #3ecf7a; }
         QPushButton#dvr[vkEmpty="true"] { color: #5c6b7a; }
@@ -190,7 +192,10 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         connect(s, &QSlider::valueChanged, this, [this] { markProfile(-1); });
 
     // DVR (Record/Playback + VKx voice keyer idea): REC/PLAY work the off-air
-    // deck, VK1-4 are canned voice messages. Buttons only emit intents —
+    // deck, VK1-4 are canned voice messages. One rule for every button:
+    // left-click TRANSMITS, right-click LISTENS on the PC speakers, Shift+
+    // click RECORDS a VK message; lights are red = on the air, blue =
+    // recording, green = speakers (operator's scheme, 2026-10-14). Buttons only emit intents —
     // MainWindow lights them back through showDvr*() once the deck confirms,
     // so a click can never show a state the audio engine isn't actually in.
     lay->addSpacing(10);
@@ -200,7 +205,7 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     recBtn_->setFocusPolicy(Qt::NoFocus);
     recBtn_->setToolTip(
         "Off-air recorder\n"
-        "click:  start recording the receiver audio (button goes red)\n"
+        "click:  start recording the receiver audio (button goes blue)\n"
         "click again:  stop and save — the take is auto-leveled for retransmit\n"
         "Each take is its own timestamped file; PLAY uses the newest one.");
     lay->addWidget(recBtn_);
@@ -212,16 +217,16 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
     playBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
     playBtn_->setToolTip(
         "Off-air playback\n"
-        "left-click:  play the newest take on the SPEAKERS (audition only,\n"
-        "    nothing is transmitted)\n"
-        "right-click:  TRANSMIT the newest take — rig switches to line-in,\n"
-        "    keys up, plays it over the air, then restores your voice setup\n"
+        "left-click:  TRANSMIT the newest take (red) — rig switches to\n"
+        "    line-in, keys up, plays it over the air, restores your voice setup\n"
+        "right-click:  LISTEN to it on the PC speakers (green, nothing\n"
+        "    transmitted)\n"
         "click while lit:  stop / abort");
     lay->addWidget(playBtn_);
     connect(playBtn_, &QPushButton::clicked, this,
-            [this] { emit dvrPlayClicked(false); });
-    connect(playBtn_, &QPushButton::customContextMenuRequested, this,
             [this] { emit dvrPlayClicked(true); });
+    connect(playBtn_, &QPushButton::customContextMenuRequested, this,
+            [this] { emit dvrPlayClicked(false); });
     for (int i = 0; i < 4; ++i) {
         auto* b = new QPushButton(QString("VK%1").arg(i + 1));
         b->setObjectName("dvr");
@@ -231,12 +236,12 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         lay->addWidget(b);
         connect(b, &QPushButton::clicked, this, [this, i] {
             if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
-                emit vkPreviewClicked(i);
+                emit vkRecordClicked(i);
             else
                 emit vkClicked(i);
         });
         connect(b, &QPushButton::customContextMenuRequested, this,
-                [this, i] { emit vkRecordClicked(i); });
+                [this, i] { emit vkPreviewClicked(i); });
     }
     lay->addStretch(1);
 }
@@ -354,9 +359,9 @@ void TxBar::showDvrRecording(int slot) {
     setDvrLight(slot < 0 ? recBtn_ : vkBtn_[slot], "rec");
 }
 
-void TxBar::showDvrPlaying(int slot) {
+void TxBar::showDvrPlaying(int slot, bool onAir) {
     showDvrIdle();
-    setDvrLight(slot < 0 ? playBtn_ : vkBtn_[slot], "play");
+    setDvrLight(slot < 0 ? playBtn_ : vkBtn_[slot], onAir ? "tx" : "play");
 }
 
 void TxBar::setVkLoaded(int slot, bool loaded) {
@@ -366,17 +371,19 @@ void TxBar::setVkLoaded(int slot, bool loaded) {
     b->style()->polish(b);
     b->setToolTip(loaded
         ? QString("Voice keyer message %1\n"
-                  "left-click:  TRANSMIT the message — rig switches to line-in,\n"
-                  "    keys up, plays it, then restores your mic/speech settings\n"
-                  "Shift+click:  LISTEN on the PC speakers (nothing transmitted)\n"
-                  "right-click:  RE-RECORD it from the mic (red while recording,\n"
-                  "    click to stop; replaces the old message only if the\n"
-                  "    new take has real audio in it)\n"
-                  "click while playing:  stop (and un-key)").arg(slot + 1)
+                  "left-click:  TRANSMIT the message (red) — rig switches to\n"
+                  "    line-in, keys up, plays it, restores your mic/speech\n"
+                  "right-click:  LISTEN on the PC speakers (green, nothing\n"
+                  "    transmitted)\n"
+                  "Shift+click:  RE-RECORD it from the mic (blue while\n"
+                  "    recording, click to stop; replaces the old message\n"
+                  "    only if the new take has real audio in it)\n"
+                  "click while lit:  stop (and un-key)").arg(slot + 1)
         : QString("Voice keyer slot %1 — EMPTY\n"
-                  "right-click:  record a message from the mic (button goes red),\n"
-                  "    click it again to stop and save\n"
-                  "left-click:  transmits the message (once one is recorded)")
+                  "Shift+click:  record a message from the mic (button goes\n"
+                  "    blue), click it again to stop and save\n"
+                  "left-click:  transmits the message (once one is recorded)\n"
+                  "right-click:  listens to it on the PC speakers")
               .arg(slot + 1));
 }
 

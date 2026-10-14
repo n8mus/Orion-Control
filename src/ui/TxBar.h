@@ -48,8 +48,8 @@ signals:
     void dvrRecordClicked();                      // off-air REC toggle
     void dvrPlayClicked(bool overAir);            // false = speakers, true = retransmit
     void vkClicked(int slot);                     // voice keyer: play (or stop)
-    void vkRecordClicked(int slot);               // right-click: record the slot
-    void vkPreviewClicked(int slot);              // Shift+click: speakers only
+    void vkRecordClicked(int slot);               // Shift+click: record the slot
+    void vkPreviewClicked(int slot);              // right-click: speakers only
 
 public slots:
     void setAmpMode(bool on, int limitPct);       // restore from settings
@@ -63,7 +63,8 @@ public slots:
     void showTuner(bool on);
     void showDvrIdle();                           // all DVR lights off
     void showDvrRecording(int slot);              // -1 = off-air deck, 0..3 = VK
-    void showDvrPlaying(int slot);
+    // onAir: the clip is TRANSMITTING (red); else speakers only (green).
+    void showDvrPlaying(int slot, bool onAir);
     void setVkLoaded(int slot, bool loaded);      // dim + tooltip empty slots
 
 private:

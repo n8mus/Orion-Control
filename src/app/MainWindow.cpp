@@ -2402,10 +2402,10 @@ MainWindow::MainWindow(QWidget* parent)
         if (overAir) {
             dvrPlayOverAir(f, -1);
         } else if (dvr_->play(f, QString())) {
-            txBar_->showDvrPlaying(-1);
+            txBar_->showDvrPlaying(-1, false);
             statusBar()->showMessage(
-                QString("DVR: playing %1 on the speakers  (right-click PLAY "
-                        "sends it over the air)").arg(QFileInfo(f).fileName()));
+                QString("DVR: playing %1 on the speakers  (left-click PLAY "
+                        "transmits it)").arg(QFileInfo(f).fileName()));
         }
     });
     connect(txBar_, &TxBar::vkClicked, this, [this, dvrBusy](int slot) {

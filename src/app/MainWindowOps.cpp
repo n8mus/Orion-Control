@@ -79,7 +79,7 @@ void MainWindow::dvrPlayOverAir(const QString& wav, int slot) {
         dvrAutoDig_ = false;                       // no line-in gain dance
         dvrTxPlayback_ = true;
         radio_->setPtt(true);                      // TRIP starts on the monitor
-        txBar_->showDvrPlaying(slot);
+        txBar_->showDvrPlaying(slot, true);
         QTimer::singleShot(300, this, [this, wav] {
             if (!dvrTxPlayback_) return;           // aborted while arming
             dvr_->play(wav, QStringLiteral("TRIP_digital"));
@@ -90,7 +90,7 @@ void MainWindow::dvrPlayOverAir(const QString& wav, int slot) {
     if (dvrAutoDig_) setDigitalMode(true);
     dvrTxPlayback_ = true;
     radio_->setPtt(true);
-    txBar_->showDvrPlaying(slot);
+    txBar_->showDvrPlaying(slot, true);
     QTimer::singleShot(300, this, [this, wav] {
         if (!dvrTxPlayback_) return;               // aborted while arming
         dvr_->play(wav, radioSink_);               // a start failure lands in
@@ -152,7 +152,7 @@ void MainWindow::dvrStopped() {
                 ClipDeck::normalizeWav(take);
                 QFile::remove(vkPath(slot));
                 QFile::rename(take, vkPath(slot));
-                msg = QString("VK%1: saved a %2 s message — Shift+click to "
+                msg = QString("VK%1: saved a %2 s message — right-click to "
                               "listen").arg(slot + 1).arg(sec, 0, 'f', 1);
             }
         } else if (sec <= 0.0) {
@@ -205,17 +205,17 @@ QString MainWindow::vkMicSource(QString* why) const {
     return found;
 }
 
-// Shift+click a VK button: audition the message on the PC speakers —
+// Right-click a VK button: audition the message on the PC speakers —
 // nothing keyed, nothing switched on the radio.
 void MainWindow::previewVoiceSlot(int slot) {
     if (!vkHasMessage(slot)) {
         statusBar()->showMessage(QString(
-            "VK%1 is empty — right-click it on the TX bar to record a "
+            "VK%1 is empty — Shift+click it on the TX bar to record a "
             "message").arg(slot + 1));
         return;
     }
     if (dvr_->play(vkPath(slot), QString())) {
-        txBar_->showDvrPlaying(slot);
+        txBar_->showDvrPlaying(slot, false);
         statusBar()->showMessage(QString(
             "VK%1: playing on the speakers (not transmitting) — click to "
             "stop").arg(slot + 1));
@@ -239,7 +239,7 @@ bool MainWindow::playVoiceSlot(int slot) {
     const QString f = vkPath(slot);
     if (!vkHasMessage(slot)) {                     // never key up on dead air
         statusBar()->showMessage(QString(
-            "VK%1 is empty — right-click it on the TX bar to record a "
+            "VK%1 is empty — Shift+click it on the TX bar to record a "
             "message").arg(slot + 1));
         return false;
     }

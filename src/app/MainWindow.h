@@ -182,7 +182,7 @@ private:
     QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
     QString vkPath(int slot) const;    // voice keyer message file for a slot
     bool playVoiceSlot(int slot);      // VK play path; false = nothing out
-    void previewVoiceSlot(int slot);   // Shift+click: VK on the speakers, no TX
+    void previewVoiceSlot(int slot);   // right-click: VK on the speakers, no TX
     bool vkHasMessage(int slot) const; // real audio in the slot (not silence)
     void refreshVkLoaded();            // dim/undim the VK buttons
     // The mic a VK take records from, resolved at record time so a USB mic

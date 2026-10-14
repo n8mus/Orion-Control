@@ -7,6 +7,7 @@
 #include "app/Bands.h"
 #include "ui/SmithChartWidget.h"
 #include "ui/SwrHistoryDialog.h"
+#include "ui/TuneDialogs.h"
 
 #include <QVBoxLayout>
 
@@ -256,16 +257,10 @@ bool MainWindow::meterConfiguredButSilent() const {
            && QSettings().value("swr/source", "meter").toString() != "radio";
 }
 
-void MainWindow::showSwrMenu(const QPoint& globalPos) {
-    auto* m = new QMenu(this);
-    m->setAttribute(Qt::WA_DeleteOnClose);
-    styleMenu(m);
-    // Antenna picker — set BEFORE sweeping so the run gets tagged right;
-    // the label always mirrors curAntenna_ so a glance at the menu
-    // confirms what the next sweep will be filed under.
-    QMenu* antMenu = m->addMenu(
-        QString("Antenna: %1")
-            .arg(curAntenna_.isEmpty() ? "(unlabeled)" : curAntenna_));
+// The antenna picker, shared by the SWR menu and the tuner box's menu:
+// one list, so an antenna added from either place shows up in both and
+// tags SWR sweeps and tuner settings alike.
+void MainWindow::fillAntennaMenu(QMenu* antMenu) {
     styleMenu(antMenu);
     auto* antGroup = new QActionGroup(antMenu);
     antGroup->setExclusive(true);
@@ -319,6 +314,19 @@ void MainWindow::showSwrMenu(const QPoint& globalPos) {
         s.setValue("swr/currentAntenna", curAntenna_);
         refreshSwrOverlay();
     });
+}
+
+void MainWindow::showSwrMenu(const QPoint& globalPos) {
+    auto* m = new QMenu(this);
+    m->setAttribute(Qt::WA_DeleteOnClose);
+    styleMenu(m);
+    // Antenna picker — set BEFORE sweeping so the run gets tagged right;
+    // the label always mirrors curAntenna_ so a glance at the menu
+    // confirms what the next sweep will be filed under.
+    QMenu* antMenu = m->addMenu(
+        QString("Antenna: %1")
+            .arg(curAntenna_.isEmpty() ? "(unlabeled)" : curAntenna_));
+    fillAntennaMenu(antMenu);
     QAction* sweep = m->addAction(
         swrSweeping_ ? QStringLiteral("Stop SWR sweep")
                      : QStringLiteral("Sweep SWR across the view"));
@@ -687,6 +695,7 @@ void MainWindow::refreshSwrOverlay() {
                               QLatin1String(kBands[curBand_].label))).mid(0, 2));
     else
         pan_->setSwrRuns({});
+    refreshTuneBox();                  // antenna or band changed under it
 }
 
 // Non-modal, single instance (like smithDlg_) — reopening just refreshes
@@ -980,6 +989,7 @@ void MainWindow::saveBandMemory() {
 // register always holds "where I last was on this band" — the same semantics
 // as the Orion's own (unreadable-over-CAT) band stack, kept in lockstep.
 void MainWindow::syncBandRegister() {
+    refreshTuneBox();                           // box follows the TX dial
     const int idx = bandIndexOf(centerHz_);
     const bool crossed = (idx != curBand_);
     if (crossed) {
@@ -1180,6 +1190,187 @@ void MainWindow::scheduleIqRecordingDialog() {
         QString("IQ recording armed for %1 UTC at %2 kHz")
             .arg(when->time().toString("HH:mm"))
             .arg(schedHz_ / 1000.0, 0, 'f', 1), 8000);
+}
+
+// ---- Tuner / amp settings box ----------------------------------------
+// The 238C and Titan III are manual: every band (and, on the wide ones,
+// every stretch of band) needs its own knob settings, per antenna. The
+// operator saves what he found as he works around; the pan's amber box
+// shows the saved point nearest the TX dial, above or below, for the
+// antenna picked in the SWR menu (whether or not the curves are shown).
+
+static QString tuneTablePath() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+           + "/tuning.json";
+}
+
+void MainWindow::loadTuneTable() {
+    const QString path = tuneTablePath();
+    if (tuneTable_.load(path)) return;
+    // Unreadable: set it aside rather than let the next save overwrite
+    // weeks of hand-entered settings with an empty table.
+    const QString aside = path + ".bad-"
+        + QDateTime::currentDateTime().toString("yyyyMMdd-HHmmss");
+    QFile::rename(path, aside);
+    statusBar()->showMessage(
+        "Tuner settings file was unreadable — kept it as " + aside, 15000);
+    fprintf(stderr, "[tune] %s unreadable, moved to %s\n",
+            path.toLocal8Bit().constData(), aside.toLocal8Bit().constData());
+}
+
+void MainWindow::saveTuneTable() {
+    if (!tuneTable_.save(tuneTablePath()))
+        statusBar()->showMessage("Tuner settings: could not write "
+                                 + tuneTablePath(), 10000);
+}
+
+void MainWindow::refreshTuneBox() {
+    if (!pan_) return;
+    PanadapterWidget::TuneBox b;
+    const uint64_t hz = txDialHz();
+    const int band = bandIndexOf(hz);
+    if (band >= 0) {
+        const QString bl = QLatin1String(kBands[band].label);
+        b.title = QString("%1 · %2 m")
+                      .arg(curAntenna_.isEmpty() ? "(unlabeled)" : curAntenna_,
+                           bl);
+        if (const TunePoint* p = tuneTable_.nearest(curAntenna_, bl,
+                                                    qint64(hz))) {
+            b.empty = false;
+            const qint64 dKhz = std::llround((p->hz - qint64(hz)) / 1000.0);
+            b.exact = std::llabs(p->hz - qint64(hz)) < 1000;
+            b.at = QString("@ %1").arg(p->hz / 1e6, 0, 'f', 3);
+            if (!b.exact)
+                b.at += QString(", %1 kHz %2").arg(std::llabs(dKhz))
+                            .arg(dKhz < 0 ? "below" : "above");
+            b.tuner = tuneTunerText(*p);
+            b.amp   = tuneAmpText(*p);
+            if (p->swr >= 1.0) b.swr = QString::number(p->swr, 'f', 2);
+            b.note = p->note;
+        }
+    }
+    pan_->setTuneBox(b);
+}
+
+// Box click: the entry at this kHz if there is one (edit), else a new
+// entry at the TX dial pre-filled from the nearest one — neighbours are
+// usually a knob-nudge apart, so that is the shortest path to the right
+// numbers. SWR and note start blank on a new point: they belong to it.
+void MainWindow::openTuneEntryHere() {
+    const uint64_t hz = txDialHz();
+    const int band = bandIndexOf(hz);
+    if (band < 0) {
+        statusBar()->showMessage("Tuner settings: the TX dial is outside "
+                                 "the ham bands", 5000);
+        return;
+    }
+    const QString bl = QLatin1String(kBands[band].label);
+    TunePoint start;
+    start.cap = start.ampTune = start.ampLoad = 5.0;
+    qint64 replaces = 0;
+    if (const TunePoint* p = tuneTable_.nearest(curAntenna_, bl, qint64(hz))) {
+        start = *p;
+        if (p->hz == TuneTable::roundKhz(qint64(hz))) {
+            replaces = p->hz;
+        } else {
+            start.swr = 0.0;
+            start.note.clear();
+        }
+    }
+    start.hz = qint64(hz);
+    openTuneEntry(curAntenna_, start, replaces);
+}
+
+void MainWindow::openTuneEntry(const QString& ant, const TunePoint& start,
+                               qint64 replacesHz) {
+    if (tuneEntryDlg_) tuneEntryDlg_->close();     // one form at a time
+    // Live SWR comes from the wattmeter when it is answering, else from
+    // the radio's own TX metering (see the two feeds in the constructor).
+    const QString meter = meterSwrReady() ? meterName_ : QStringLiteral("radio");
+    auto* dlg = new TuneEntryDialog(ant, start, replacesHz, meter, this);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    tuneEntryDlg_ = dlg;
+    connect(dlg, &TuneEntryDialog::saveRequested, this,
+            [this](const QString& a, const TunePoint& pt, qint64 replaces) {
+        const int band = bandIndexOf(uint64_t(pt.hz));
+        if (band < 0) return;
+        const QString bl = QLatin1String(kBands[band].label);
+        // Edited entry moved to another kHz: move it, don't leave a copy.
+        if (replaces && replaces != TuneTable::roundKhz(pt.hz)) {
+            const int ob = bandIndexOf(uint64_t(replaces));
+            if (ob >= 0)
+                tuneTable_.remove(a, QLatin1String(kBands[ob].label), replaces);
+        }
+        tuneTable_.upsert(a, bl, pt);
+        saveTuneTable();
+        refreshTuneBox();
+        if (tuneTableDlg_) tuneTableDlg_->refresh();
+        statusBar()->showMessage(
+            QString("Tuner settings saved: %1, %2 m @ %3 MHz%4")
+                .arg(a.isEmpty() ? "(unlabeled)" : a, bl)
+                .arg(TuneTable::roundKhz(pt.hz) / 1e6, 0, 'f', 3)
+                .arg(pt.swr >= 1.0 ? QString(", SWR %1").arg(pt.swr, 0, 'f', 2)
+                                   : QString()), 6000);
+    });
+    dlg->show();
+    dlg->raise();
+    dlg->activateWindow();
+}
+
+void MainWindow::showTuneTable() {
+    if (!tuneTableDlg_) {
+        auto* dlg = new TuneTableDialog(&tuneTable_, this);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        tuneTableDlg_ = dlg;
+        connect(dlg, &TuneTableDialog::editRequested, this,
+                [this](const QString& a, const TunePoint& p) {
+                    openTuneEntry(a, p, p.hz);
+                });
+        connect(dlg, &TuneTableDialog::addRequested, this,
+                [this](const QString& a) {
+                    TunePoint start;
+                    start.cap = start.ampTune = start.ampLoad = 5.0;
+                    start.hz = qint64(txDialHz());
+                    openTuneEntry(a, start, 0);
+                });
+        connect(dlg, &TuneTableDialog::deleteRequested, this,
+                [this](const QString& a, const QString& band, qint64 hz) {
+                    tuneTable_.remove(a, band, hz);
+                    saveTuneTable();
+                    refreshTuneBox();
+                    if (tuneTableDlg_) tuneTableDlg_->refresh();
+                });
+        connect(dlg, &TuneTableDialog::qsyRequested, this,
+                [this](qint64 hz) { tuneAbsolute(uint64_t(hz)); });
+    }
+    QStringList ants = QSettings().value("swr/antennas").toStringList();
+    for (const QString& a : tuneTable_.antennas())
+        if (!ants.contains(a)) ants << a;
+    const int band = bandIndexOf(txDialHz());
+    tuneTableDlg_->setChoices(ants, curAntenna_,
+        band >= 0 ? QString(QLatin1String(kBands[band].label)) : QString());
+    tuneTableDlg_->show();
+    tuneTableDlg_->raise();
+    tuneTableDlg_->activateWindow();
+}
+
+void MainWindow::showTuneBoxMenu(const QPoint& globalPos) {
+    auto* m = new QMenu(this);
+    m->setAttribute(Qt::WA_DeleteOnClose);
+    styleMenu(m);
+    const uint64_t hz = txDialHz();
+    QAction* here = m->addAction(
+        QString("Save settings at %1 MHz…").arg(hz / 1e6, 0, 'f', 3));
+    here->setEnabled(bandIndexOf(hz) >= 0);
+    connect(here, &QAction::triggered, this, &MainWindow::openTuneEntryHere);
+    QAction* table = m->addAction("Tuner / amp table…");
+    connect(table, &QAction::triggered, this, &MainWindow::showTuneTable);
+    m->addSeparator();
+    QMenu* antMenu = m->addMenu(
+        QString("Antenna: %1")
+            .arg(curAntenna_.isEmpty() ? "(unlabeled)" : curAntenna_));
+    fillAntennaMenu(antMenu);
+    m->popup(globalPos);
 }
 
 } // namespace ttc

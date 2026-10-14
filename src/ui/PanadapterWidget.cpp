@@ -804,7 +804,10 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
     wBox += 16;
     const int lineH = fm.height() + 1;
     const int hBox = (static_cast<int>(lines.size()) + 1) * lineH + 10;
-    const QRect box(width() - wBox - 8, hSpec - hBox - 6, wBox, hBox);
+    // The tuner box owns the corner when it is up; solar sits to its left.
+    const int right = tuneBoxRect_.isEmpty() ? width() - 8
+                                             : tuneBoxRect_.left() - 6;
+    const QRect box(right - wBox, hSpec - hBox - 6, wBox, hBox);
     p.fillRect(box, QColor(4, 12, 6, 175));
     p.setPen(QColor(30, 90, 45));
     p.drawRect(box.adjusted(0, 0, -1, -1));
@@ -816,6 +819,99 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
     }
     p.setPen(condC);
     p.drawText(box.left() + 8, y, cond);
+}
+
+void PanadapterWidget::setTuneBox(const TuneBox& b) {
+    tuneBox_ = b;
+    update();
+}
+
+// Amber tuner/amp card, bottom-right: what to set the 238C and the Titan
+// III to here, read at a glance across the shack — so a larger face than
+// the solar block's, labels dim and values bright.
+void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
+    tuneBoxRect_ = QRect();
+    if (!ds_.showTuneBox || tuneBox_.title.isEmpty() || hSpec < 110) return;
+    QFont f = p.font();
+    f.setPixelSize(13);
+    f.setBold(true);
+    p.setFont(f);
+    const QFontMetrics fm(f);
+    const QColor cTitle(255, 190, 90), cLabel(176, 140, 88),
+                 cValue(244, 232, 210), cDim(150, 128, 96),
+                 cExact(120, 230, 140);
+    const int pad = 9, gap = 18;
+    const int lineH = fm.height() + 3;
+    const int labW = std::max(fm.horizontalAdvance("TUNER"),
+                              fm.horizontalAdvance("AMP")) + 12;
+    struct Row { QString label, text; };
+    QVector<Row> rows;
+    if (tuneBox_.empty) {
+        rows.push_back({QString(), "No settings saved here yet"});
+        rows.push_back({QString(), "click to add"});
+    } else {
+        rows.push_back({"TUNER", tuneBox_.tuner});
+        rows.push_back({"AMP", tuneBox_.amp});
+        if (!tuneBox_.swr.isEmpty() || !tuneBox_.note.isEmpty())
+            rows.push_back({"SWR", QString()});    // drawn specially below
+    }
+    const int noteMax = 300;
+    int wBox = fm.horizontalAdvance(tuneBox_.title) + gap
+               + fm.horizontalAdvance(tuneBox_.at);
+    for (const Row& r : rows) {
+        if (r.label == "SWR") {
+            const int w = labW + fm.horizontalAdvance(tuneBox_.swr) + gap
+                          + std::min(noteMax, fm.horizontalAdvance(tuneBox_.note));
+            wBox = std::max(wBox, w);
+        } else {
+            wBox = std::max(wBox, (r.label.isEmpty() ? 0 : labW)
+                                      + fm.horizontalAdvance(r.text));
+        }
+    }
+    wBox = std::min(wBox + 2 * pad + 4, width() / 2);   // +4: elide rounding
+    const int hBox = (static_cast<int>(rows.size()) + 1) * lineH + 2 * pad - 4;
+    const QRect box(width() - wBox - 8, hSpec - hBox - 6, wBox, hBox);
+    tuneBoxRect_ = box;
+    p.fillRect(box, QColor(22, 15, 4, 200));
+    p.setPen(QColor(120, 86, 32));
+    p.drawRect(box.adjusted(0, 0, -1, -1));
+
+    const int x0 = box.left() + pad, x1 = box.right() - pad;
+    int y = box.top() + pad + fm.ascent() - 2;
+    p.setPen(cTitle);
+    p.drawText(x0, y, fm.elidedText(tuneBox_.title, Qt::ElideRight,
+               x1 - x0 - fm.horizontalAdvance(tuneBox_.at) - gap));
+    p.setPen(tuneBox_.exact ? cExact : cDim);
+    p.drawText(x1 - fm.horizontalAdvance(tuneBox_.at), y, tuneBox_.at);
+    y += lineH + 2;
+    for (const Row& r : rows) {
+        if (r.label.isEmpty()) {
+            p.setPen(cDim);
+            p.drawText(x0, y, r.text);
+        } else if (r.label == "SWR") {
+            int x = x0;
+            if (!tuneBox_.swr.isEmpty()) {
+                p.setPen(cLabel);
+                p.drawText(x, y, "SWR");
+                x += labW;
+                p.setPen(cValue);
+                p.drawText(x, y, tuneBox_.swr);
+                x += fm.horizontalAdvance(tuneBox_.swr) + gap;
+            }
+            if (!tuneBox_.note.isEmpty()) {
+                p.setPen(cDim);
+                p.drawText(x, y, fm.elidedText(tuneBox_.note, Qt::ElideRight,
+                                               x1 - x));
+            }
+        } else {
+            p.setPen(cLabel);
+            p.drawText(x0, y, r.label);
+            p.setPen(cValue);
+            p.drawText(x0 + labW, y, fm.elidedText(r.text, Qt::ElideRight,
+                                                   x1 - x0 - labW));
+        }
+        y += lineH;
+    }
 }
 
 void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
@@ -1994,9 +2090,11 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
         drawCursor(p, hSpec);                      // hover line + zap preview
-        drawSolarPanel(p, hSpec);                  // space-weather corner box
+        drawTuneBox(p, hSpec);                     // tuner/amp settings, corner
+        drawSolarPanel(p, hSpec);                  // space weather, left of it
         drawCompassRose(p, hSpec);                 // bearing rose, bottom-left
     } else {
+        tuneBoxRect_ = QRect();
         p.setPen(QColor(120, 220, 140));
         p.drawText(QRect(0, 0, width(), hSpec), Qt::AlignCenter,
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
@@ -2064,6 +2162,10 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
                     QUrl("https://www.qrz.com/db/" + h.call));
                 return;
             }
+        if (tuneBoxRect_.contains(e->pos())) {     // tuner box: its own menu
+            emit tuneBoxMenuRequested(e->globalPosition().toPoint());
+            return;
+        }
         if (overRose(x, y)) {                      // right-click rose = clear
             roseBearing_ = -1.0;
             roseLabel_.clear();
@@ -2093,6 +2195,12 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             wheelVfo_ = 'B';                        // wheel now nudges B
             emit vfoBTuneRequested(xToHz(x));
         }
+        return;
+    }
+    // The tuner/amp box is a button, never a tune target.
+    if (tuneBoxRect_.contains(e->pos())) {
+        drag_ = Drag::None;
+        emit tuneBoxClicked();
         return;
     }
     // The frequency-scale band IS the split handle (KE9NS-style) — or, if
@@ -2246,7 +2354,8 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
             setCursor(dividerPan_ ? Qt::SizeHorCursor : Qt::SizeVerCursor);
         else if (inDbAxis(hx, hy) || inWfDbAxis(hx, hy))
             setCursor(Qt::SizeVerCursor);
-        else if (onSpot)                         setCursor(Qt::PointingHandCursor);
+        else if (onSpot || tuneBoxRect_.contains(e->pos()))
+            setCursor(Qt::PointingHandCursor);
         else if (overVfoB(hx) || onAEdge
                  || std::abs(hx - hzToX(0)) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();
@@ -2404,6 +2513,7 @@ void PanadapterWidget::mouseDoubleClickEvent(QMouseEvent* e) {
     // else fired. A's edges win when the passbands overlap.
     const int x = e->pos().x();
     const int edgeTol = 6;
+    if (tuneBoxRect_.contains(e->pos())) return;   // box clicks only open it
     if (overNotch(x)) return;
     if (std::abs(x - hzToX(pbLoHz_)) <= edgeTol
         || std::abs(x - hzToX(pbHiHz_)) <= edgeTol) {

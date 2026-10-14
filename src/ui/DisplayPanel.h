@@ -55,6 +55,7 @@ private:
     QCheckBox* peak_   = nullptr;
     QCheckBox* grid_   = nullptr;
     QCheckBox* solar_  = nullptr;
+    QCheckBox* tuneBox_ = nullptr;  // tuner/amp settings box
     QCheckBox* rose_   = nullptr;
     QCheckBox* voacap_ = nullptr;  // VOACAP contours on map backdrops
     QCheckBox* plan_   = nullptr;

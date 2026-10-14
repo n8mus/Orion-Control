@@ -125,6 +125,7 @@ add_executable(tentec-console
   src/util/CtyLookup.cpp        src/util/CtyLookup.h
   src/util/LogbookIndex.cpp     src/util/LogbookIndex.h
   src/util/WatchList.cpp        src/util/WatchList.h
+  src/util/TuneTable.cpp        src/util/TuneTable.h
   src/cw/WinKeyer.cpp           src/cw/WinKeyer.h
                                 src/cw/CwKeyer.h
   src/cw/OrionKeyer.cpp         src/cw/OrionKeyer.h
@@ -141,6 +142,7 @@ add_executable(tentec-console
   src/ui/PanadapterWidget.cpp   src/ui/PanadapterWidget.h
   src/ui/SmithChartWidget.cpp   src/ui/SmithChartWidget.h
   src/ui/SwrHistoryDialog.cpp   src/ui/SwrHistoryDialog.h
+  src/ui/TuneDialogs.cpp        src/ui/TuneDialogs.h
   src/ui/WinKeyerPanel.cpp      src/ui/WinKeyerPanel.h
   src/ui/DisplayPanel.cpp       src/ui/DisplayPanel.h
   src/ui/SetupDialog.cpp        src/ui/SetupDialog.h
@@ -365,6 +367,14 @@ add_executable(watchtest EXCLUDE_FROM_ALL
   src/util/WatchList.cpp)
 target_include_directories(watchtest PRIVATE src)
 target_link_libraries(watchtest PRIVATE Qt6::Core)
+
+# Tuner/amp settings table behind the pan's tuner box: nearest-point
+# lookup, same-kHz overwrite, clamping, JSON round trip. Pure logic.
+add_executable(tunetest EXCLUDE_FROM_ALL
+  tests/tunetest.cpp
+  src/util/TuneTable.cpp)
+target_include_directories(tunetest PRIVATE src)
+target_link_libraries(tunetest PRIVATE Qt6::Core)
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

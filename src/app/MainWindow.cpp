@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/MainWindow.h"
+#include "ui/TuneDialogs.h"
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
 #include "contest/ContestDeck.h"
@@ -509,6 +510,7 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/grid",       d.showGrid);
         s.setValue("display/callsign",   d.showCall);
         s.setValue("display/solar",      d.showSolar);
+        s.setValue("display/tunebox",    d.showTuneBox);
         s.setValue("display/rose",       d.showRose);
         s.setValue("display/roseR",      d.roseR);
         s.setValue("display/voacap",     d.showVoacap);
@@ -584,6 +586,7 @@ MainWindow::MainWindow(QWidget* parent)
         d.showGrid   = s.value("display/grid",       d.showGrid).toBool();
         d.showCall   = s.value("display/callsign",   d.showCall).toBool();
         d.showSolar  = s.value("display/solar",      d.showSolar).toBool();
+        d.showTuneBox = s.value("display/tunebox",   d.showTuneBox).toBool();
         d.showRose   = s.value("display/rose",       d.showRose).toBool();
         d.roseR      = std::clamp(
             s.value("display/roseR", d.roseR).toInt(), 64, 160);
@@ -2236,8 +2239,16 @@ MainWindow::MainWindow(QWidget* parent)
             [this](double, double, double swr) {
                 lastSwr_ = swr;
                 lastSwrMs_ = QDateTime::currentMSecsSinceEpoch();
+                // Tuner form's live SWR, when no wattmeter is answering.
+                if (tuneEntryDlg_ && radioTx_ && !meterSwrReady())
+                    tuneEntryDlg_->setLiveSwr(swr);
             });
     curAntenna_ = QSettings().value("swr/currentAntenna").toString();
+    loadTuneTable();                               // tuner/amp settings box
+    connect(pan_, &PanadapterWidget::tuneBoxClicked, this,
+            &MainWindow::openTuneEntryHere);
+    connect(pan_, &PanadapterWidget::tuneBoxMenuRequested, this,
+            &MainWindow::showTuneBoxMenu);
     loadSwrRuns();                                 // antenna+band curves from disk
     pan_->setShowSwr(QSettings().value("swr/show", true).toBool());
     refreshSwrOverlay();
@@ -3187,6 +3198,7 @@ MainWindow::MainWindow(QWidget* parent)
                     fLoOff = int(fCenter - fDial);
             }
             centerHz_ = uint64_t(fCenter) - fLoOff;
+            refreshTuneBox();
             sdrLoHz_ = uint64_t(fCenter);       // replay LO is frozen classic
             freqDisp_->setFrequency(centerHz_);
             pan_->setCenterHz(centerHz_);
@@ -3593,6 +3605,12 @@ MainWindow::MainWindow(QWidget* parent)
                 txMeter_ = new ttc::PmMeter(this);
             else
                 txMeter_ = new ttc::LpMeter(this);
+            // Tuner form: SWR follows the meter only while it sees a
+            // carrier (valid), so the field holds at key-up.
+            connect(txMeter_, &ttc::TxMeter::reading, this,
+                    [this](const ttc::TxMeter::Reading& r) {
+                if (tuneEntryDlg_ && r.valid) tuneEntryDlg_->setLiveSwr(r.swr);
+            });
             connect(txMeter_, &ttc::TxMeter::aliveChanged, this,
                     [this, name](bool up) {
                 statusBar()->showMessage(

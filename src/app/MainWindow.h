@@ -29,6 +29,7 @@ class QVBoxLayout;
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "util/WatchList.h"
+#include "util/TuneTable.h"
 #include <QHash>
 #include <QPointer>
 #include "cw/CwWindow.h"
@@ -55,6 +56,7 @@ namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
 #include <QMultiHash>
 #include <atomic>
 class QThread;
+class QMenu;
 
 namespace ttc {
 
@@ -68,6 +70,8 @@ class LogbookWindow;
 class QrzLookup;
 class QslUploader;
 class SpotTableWindow;
+class TuneEntryDialog;
+class TuneTableDialog;
 class WsjtxListener;
 struct Qso;
 
@@ -148,6 +152,17 @@ private:
     void swrTickStep();                // sweep state machine (150 ms timer)
     void refreshSwrOverlay();          // push current antenna+band's runs to the pan
     void showSwrHistory();             // browse/delete every saved sweep
+    void fillAntennaMenu(QMenu* m);    // the SWR antenna picker (shared)
+    // Tuner/amp box (238C + Titan III settings by antenna/band/frequency).
+    uint64_t txDialHz() const { return txVfo_ == 'B' ? vfoBHz_ : centerHz_; }
+    void refreshTuneBox();             // nearest saved point -> the pan's box
+    void openTuneEntry(const QString& ant, const TunePoint& start,
+                       qint64 replacesHz);
+    void openTuneEntryHere();          // box click: edit/add at the TX dial
+    void showTuneTable();
+    void showTuneBoxMenu(const QPoint& globalPos);
+    void saveTuneTable();              // JSON in AppDataLocation/tuning.json
+    void loadTuneTable();
     void saveSwrRuns() const;          // JSON in AppDataLocation/swr.json
     void loadSwrRuns();
     static QString swrKey(const QString& ant, const QString& band);  // composite hash key
@@ -260,6 +275,9 @@ private:
     QPointer<QDialog> smithDlg_;               // non-modal Smith chart
     QPointer<QDialog> swrHistDlg_;             // non-modal SWR history browser
     QPointer<QDialog> wkPanel_;                // non-modal WinKeyer control box
+    TuneTable tuneTable_;                      // operator's tuner/amp settings
+    QPointer<TuneEntryDialog> tuneEntryDlg_;   // one entry form at a time
+    QPointer<TuneTableDialog> tuneTableDlg_;   // non-modal table editor
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing

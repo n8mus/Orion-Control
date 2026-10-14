@@ -505,6 +505,7 @@ void MainWindow::pushVfoB() {
     edgesFromRig(rigMode_, subBwHz_, subPbtHz_, lo, hi);
     const char role = txVfo_ == 'B' ? 'T' : (rxVfo_ == 'B' ? 'R' : 'N');
     pan_->setVfoB(vfoBHz_, role, lo, hi);
+    refreshTuneBox();                  // split: the box follows B's TX dial
 }
 
 void MainWindow::refreshPassbandOverlay() {

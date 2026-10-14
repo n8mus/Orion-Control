@@ -32,6 +32,8 @@ struct DisplaySettings {
     bool  showGrid   = true;    // freq/dB gridlines on or off
     bool  showCall   = true;    // subtle callsign watermark in the spectrum
     bool  showSolar  = true;    // space-weather panel in the spectrum corner
+    bool  showTuneBox = true;   // tuner/amp settings box (owns that corner;
+                                // the solar panel moves to its left)
     bool  showRose   = true;    // compass rose (azimuthal world + bearing)
     int   roseR      = 96;      // rose disc radius, px (was fixed at 64)
     bool  showVoacap = true;    // VOACAP contours on the map backdrops
@@ -192,6 +194,21 @@ public:
     // corner panel (ds_.showSolar). Values < 0 / empty = unknown, not drawn.
     void setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
                       const QString& xray);
+    // Tuner/amp settings box, bottom-right of the spectrum (ds_.showTuneBox):
+    // the owner's saved 238C + Titan III settings nearest the TX frequency
+    // for the current antenna, pre-formatted. title empty = box hidden
+    // (outside the ham bands). empty = nothing saved yet for this antenna
+    // on this band; the box then invites a click. Clicks on the box never
+    // tune: left = tuneBoxClicked, right = tuneBoxMenuRequested.
+    struct TuneBox {
+        QString title;          // "40m DIPOLE · 40 m"
+        QString at;             // "@ 7.030  +5 kHz"
+        bool    exact = false;  // TX dial sits on the saved kHz
+        bool    empty = true;
+        QString tuner, amp;     // value lines (no TUNER/AMP label)
+        QString swr, note;      // optional bottom line
+    };
+    void setTuneBox(const TuneBox& b);
     // Station location (from the grid square) — centers the compass rose.
     void setQth(double latDeg, double lonDeg);
     // Swing the rose to a target (spot clicks use this internally; public
@@ -241,6 +258,8 @@ signals:
     // The rose pointer moved (spot click or manual heading; -1 = cleared).
     // The ROT panel uses this as its turn target.
     void roseBearingChanged(double bearingDeg, const QString& label);
+    void tuneBoxClicked();                         // open the entry form
+    void tuneBoxMenuRequested(const QPoint& globalPos);
     void tuneStepRequested(int steps, bool fine);  // wheel tune A; fine = Shift held
     void vfoBStepRequested(int steps, bool fine);  // wheel tune B (B touched last)
     void passbandEditBegan(int loHz, int hiHz);    // edge grabbed: anchor radio state
@@ -384,6 +403,10 @@ private:
     double  solK_ = -1.0;
     QString solXray_;
     void drawSolarPanel(QPainter& p, int hSpec);   // green corner readout
+    // Tuner/amp box: drawn first so the solar panel can sit to its left.
+    TuneBox tuneBox_;
+    QRect   tuneBoxRect_;                          // last painted; empty = none
+    void drawTuneBox(QPainter& p, int hSpec);
 
     // Compass rose: azimuthal-equidistant world disc centered on the QTH,
     // bottom-left of the spectrum. Clicking a located spot label points it;

@@ -49,6 +49,7 @@ signals:
     void dvrPlayClicked(bool overAir);            // false = speakers, true = retransmit
     void vkClicked(int slot);                     // voice keyer: play (or stop)
     void vkRecordClicked(int slot);               // right-click: record the slot
+    void vkPreviewClicked(int slot);              // Shift+click: speakers only
 
 public slots:
     void setAmpMode(bool on, int limitPct);       // restore from settings

@@ -2,6 +2,9 @@
 #include "audio/ClipDeck.h"
 
 #include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
@@ -218,12 +221,16 @@ void ClipDeck::stop() {
 // speakers silent) while the pulse layer — the road every desktop app
 // takes — keeps working. s16le forced so normalizeWav's 16-bit PCM
 // expectation holds; parecord finalizes a valid WAV on SIGINT (verified).
+// pw-record, not parecord: parecord writes in 65536-frame (~1.37 s) blocks
+// and drops the unfinished one on SIGINT, so every take lost up to 1.4 s
+// off its END (measured 2026-10-14: 3 s -> 1.37 s, 6 s -> 4.10 s; pw-record
+// 2.73 / 5.99 s). A voice-keyer message shorter than that saved empty.
 bool ClipDeck::record(const QString& wavPath, const QString& targetNode) {
     if (state_ != State::Idle) return false;
-    QStringList args{"--format=s16le", "--rate=48000", "--channels=1"};
-    if (!targetNode.isEmpty()) args << "-d" << targetNode;
+    QStringList args{"--format=s16", "--rate=48000", "--channels=1"};
+    if (!targetNode.isEmpty()) args << "--target" << targetNode;
     args << wavPath;
-    return launch("parecord", args, State::Recording);
+    return launch("pw-record", args, State::Recording);
 }
 
 bool ClipDeck::play(const QString& wavPath, const QString& targetNode) {
@@ -282,6 +289,12 @@ QString ClipDeck::findSourceExcluding(const QString& avoid) {
     return candidates.isEmpty() ? QString() : candidates.first();
 }
 
+QVector<ClipDeck::Source> ClipDeck::sources() {
+    QVector<Source> out;
+    for (const QString& d : AudioCapture::inputDescriptions()) out.push_back({d, d});
+    return out;
+}
+
 #else // Linux ------------------------------------------------------------
 
 static QString findNode(const char* kind, const QString& match) {
@@ -318,15 +331,36 @@ QString ClipDeck::findSourceExcluding(const QString& avoid) {
     return candidates.isEmpty() ? QString() : candidates.first();
 }
 
+QVector<ClipDeck::Source> ClipDeck::sources() {
+    QProcess p;
+    p.start("pactl", {"--format=json", "list", "sources"});
+    if (!p.waitForFinished(3000)) return {};
+    QVector<Source> out;
+    for (const QJsonValue& v :
+         QJsonDocument::fromJson(p.readAllStandardOutput()).array()) {
+        const QJsonObject o = v.toObject();
+        const QString node = o.value("name").toString();
+        if (node.isEmpty() || node.endsWith(".monitor")) continue;
+        const QString label = o.value("description").toString();
+        out.push_back({node, label.isEmpty() ? node : label});
+    }
+    return out;
+}
+
 #endif // TTC_CLIPDECK_QTMM
+
+QString ClipDeck::sourceLabel(const QString& node) {
+    for (const Source& src : sources())
+        if (src.node == node) return src.label;
+    return node;
+}
 
 // Minimal RIFF walker: find the fmt/data chunks of the PCM WAVs pw-record
 // writes, scale the samples, rewrite the file.
-bool ClipDeck::normalizeWav(const QString& wavPath, double targetPeak,
-                            double maxGain) {
-    QFile file(wavPath);
-    if (!file.open(QIODevice::ReadWrite)) return false;
-    QByteArray b = file.readAll();
+namespace {
+// Locate the 16-bit PCM data chunk of a WAV held in memory.
+bool findPcm16(const QByteArray& b, qsizetype& dataOff, qsizetype& dataLen,
+               int& rate, int& channels) {
     if (b.size() < 44 || !b.startsWith("RIFF") || b.mid(8, 4) != "WAVE")
         return false;
     const auto u16 = [&](qsizetype o) {
@@ -335,21 +369,55 @@ bool ClipDeck::normalizeWav(const QString& wavPath, double targetPeak,
     const auto u32 = [&](qsizetype o) {
         return quint32(u16(o)) | quint32(u16(o + 2)) << 16;
     };
-    qsizetype dataOff = -1, dataLen = 0;
+    dataOff = -1;
+    dataLen = 0;
     bool pcm16 = false;
     for (qsizetype o = 12; o + 8 <= b.size();) {
         const QByteArray id = b.mid(o, 4);
         const qsizetype len = u32(o + 4);
-        if (id == "fmt " && len >= 16)
+        if (id == "fmt " && len >= 16) {
             pcm16 = u16(o + 8) == 1 && u16(o + 22) == 16;  // PCM, 16-bit
+            channels = std::max(1, int(u16(o + 10)));
+            rate = int(u32(o + 12));
+        }
         if (id == "data") {
             dataOff = o + 8;
+            // pw-record leaves the size field huge until it finalizes; the
+            // file length is the truth either way.
             dataLen = std::min<qsizetype>(len, b.size() - dataOff);
             break;
         }
         o += 8 + len + (len & 1);                  // chunks are word-aligned
     }
-    if (!pcm16 || dataOff < 0 || dataLen < 2) return false;
+    return pcm16 && dataOff >= 0;
+}
+}  // namespace
+
+bool ClipDeck::wavStats(const QString& wavPath, double& seconds, double& peak) {
+    seconds = peak = 0.0;
+    QFile file(wavPath);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    const QByteArray b = file.readAll();
+    qsizetype off = 0, len = 0;
+    int rate = 48000, ch = 1;
+    if (!findPcm16(b, off, len, rate, ch)) return false;
+    const auto* s = reinterpret_cast<const qint16*>(b.constData() + off);
+    const qsizetype n = len / 2;
+    int pk = 0;
+    for (qsizetype i = 0; i < n; ++i) pk = std::max(pk, std::abs(int(s[i])));
+    seconds = rate > 0 ? double(n) / ch / rate : 0.0;
+    peak = pk / 32768.0;
+    return true;
+}
+
+bool ClipDeck::normalizeWav(const QString& wavPath, double targetPeak,
+                            double maxGain) {
+    QFile file(wavPath);
+    if (!file.open(QIODevice::ReadWrite)) return false;
+    QByteArray b = file.readAll();
+    qsizetype dataOff = 0, dataLen = 0;
+    int rate = 0, ch = 0;
+    if (!findPcm16(b, dataOff, dataLen, rate, ch) || dataLen < 2) return false;
     auto* s = reinterpret_cast<qint16*>(b.data() + dataOff);
     const qsizetype n = dataLen / 2;
     int peak = 0;

@@ -2349,16 +2349,10 @@ MainWindow::MainWindow(QWidget* parent)
                     ).toString();
         radioSink_   = ClipDeck::findSink(radioMatch);
         radioSource_ = ClipDeck::findSource(radioMatch);
-        micSource_   = s.value("dvr/micSource").toString();
-        // No mic configured: never fall back to the system default source —
-        // on a SignaLink station that IS the radio codec, and the voice keyer
-        // would record the receiver instead of the operator.
-        if (micSource_.isEmpty())
-            micSource_ = ClipDeck::findSourceExcluding(radioMatch);
+        radioAudioMatch_ = radioMatch;             // VK mic: resolved per take
     }
     QDir().mkpath(dvrDir());
-    for (int i = 0; i < 4; ++i)
-        txBar_->setVkLoaded(i, QFileInfo::exists(vkPath(i)));
+    refreshVkLoaded();
     // Any DVR click while the deck runs means "stop that" — the finished()
     // handler clears the lights and drops PTT, so just stop and swallow. A
     // keyed-but-not-yet-playing state is the arming window (line-in switch
@@ -2418,13 +2412,30 @@ MainWindow::MainWindow(QWidget* parent)
         if (dvrBusy()) return;
         playVoiceSlot(slot);
     });
+    connect(txBar_, &TxBar::vkPreviewClicked, this, [this, dvrBusy](int slot) {
+        if (dvrBusy()) return;
+        previewVoiceSlot(slot);
+    });
+    // A take records to a side file and only replaces the slot's message
+    // once dvrStopped has checked it holds real audio (live-found: two VK
+    // slots sat full of silence for weeks, transmitting dead air).
     connect(txBar_, &TxBar::vkRecordClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
-        if (dvr_->record(vkPath(slot), micSource_)) {
-            dvrJustRecorded_ = vkPath(slot);
+        QString why;
+        const QString mic = vkMicSource(&why);
+        if (mic.isEmpty()) {
+            statusBar()->showMessage("VK: " + why, 10000);
+            return;
+        }
+        const QString take = vkTakePath(slot);
+        QFile::remove(take);
+        if (dvr_->record(take, mic)) {
+            dvrJustRecorded_ = take;
+            vkTakeSlot_ = slot;
             txBar_->showDvrRecording(slot);
             statusBar()->showMessage(QString(
-                "VK%1: recording from the mic — click it to stop").arg(slot + 1));
+                "VK%1: recording from %2 — click it to stop")
+                .arg(slot + 1).arg(ClipDeck::sourceLabel(mic)));
         }
     });
     connect(dvr_, &ClipDeck::finished, this, &MainWindow::dvrStopped);

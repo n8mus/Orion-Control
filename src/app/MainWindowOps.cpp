@@ -37,6 +37,12 @@
 
 namespace ttc {
 
+// A voice-keyer take counts as a message only above these: header-only
+// or digital-zero files are a dead/absent mic, not a quiet operator (a
+// live USB mic in a quiet room reads ~4 % peak; silence reads 0).
+static constexpr double kVkMinSeconds = 0.5;
+static constexpr double kVkMinPeak    = 0.005;
+
 // Manual tune: the CAT set has no "tune button" command (*TTT needs the
 // internal tuner enabled), so reproduce it: steady carrier at the set watts
 // via FM mode + key, with the previous power/mode restored afterwards.
@@ -120,14 +126,100 @@ void MainWindow::dvrStopped() {
     // and a mic both record tens of dB below full scale, which played back
     // as almost no TX drive. Normalizing the file (not the playback) means
     // what you audition on the speakers is exactly what goes over the air.
+    QString msg = QStringLiteral("DVR: stopped");
     if (!dvrJustRecorded_.isEmpty()) {
-        ClipDeck::normalizeWav(dvrJustRecorded_);
+        const QString take = dvrJustRecorded_;
         dvrJustRecorded_.clear();
+        double sec = 0.0, peak = 0.0;
+        ClipDeck::wavStats(take, sec, peak);
+        if (vkTakeSlot_ >= 0) {
+            // A VK take must hold real audio before it may replace the
+            // slot's message — a dead mic otherwise overwrites a good
+            // message with silence that then goes out on the air.
+            const int slot = vkTakeSlot_;
+            vkTakeSlot_ = -1;
+            if (sec < kVkMinSeconds || peak < kVkMinPeak) {
+                QFile::remove(take);
+                msg = QString("VK%1: NOT saved — the take was %2. Kept the "
+                              "previous message; check the mic (Setup ▸ "
+                              "Voice keyer mic)")
+                          .arg(slot + 1)
+                          .arg(sec < kVkMinSeconds
+                                   ? QString("empty (%1 s)").arg(sec, 0, 'f', 1)
+                                   : QString("silent (peak %1 %)")
+                                         .arg(peak * 100.0, 0, 'f', 1));
+            } else {
+                ClipDeck::normalizeWav(take);
+                QFile::remove(vkPath(slot));
+                QFile::rename(take, vkPath(slot));
+                msg = QString("VK%1: saved a %2 s message — Shift+click to "
+                              "listen").arg(slot + 1).arg(sec, 0, 'f', 1);
+            }
+        } else if (sec <= 0.0) {
+            // Off-air take with no audio at all (header only): nothing to
+            // keep. A quiet-but-real take stays — a dead band is real audio.
+            QFile::remove(take);
+            if (dvrLastRx_ == take) dvrLastRx_.clear();
+            msg = QStringLiteral("DVR: the take was empty — discarded");
+        } else {
+            ClipDeck::normalizeWav(take);
+        }
     }
     txBar_->showDvrIdle();
-    for (int i = 0; i < 4; ++i)                    // a VK record may have landed
-        txBar_->setVkLoaded(i, QFileInfo::exists(vkPath(i)));
-    statusBar()->showMessage("DVR: stopped");
+    refreshVkLoaded();                             // a VK record may have landed
+    statusBar()->showMessage(msg, 10000);
+}
+
+QString MainWindow::vkTakePath(int slot) const {
+    return dvrDir() + QString("/vk%1.take.wav").arg(slot + 1);
+}
+
+bool MainWindow::vkHasMessage(int slot) const {
+    double sec = 0.0, peak = 0.0;
+    return ClipDeck::wavStats(vkPath(slot), sec, peak)
+           && sec >= kVkMinSeconds && peak >= kVkMinPeak;
+}
+
+void MainWindow::refreshVkLoaded() {
+    for (int i = 0; i < 4; ++i) txBar_->setVkLoaded(i, vkHasMessage(i));
+}
+
+// dvr/micSource (Setup ▸ Voice keyer mic) wins when that device is
+// plugged in; empty = auto. Auto never takes the system default source —
+// on a SignaLink station that IS the radio codec, and the voice keyer
+// would record the receiver instead of the operator.
+QString MainWindow::vkMicSource(QString* why) const {
+    const QString chosen = QSettings().value("dvr/micSource").toString();
+    if (!chosen.isEmpty()) {
+        for (const ClipDeck::Source& s : ClipDeck::sources())
+            if (s.node == chosen) return chosen;
+        if (why) *why = "the voice keyer mic (" + chosen + ") is not plugged "
+                        "in — connect it, or pick another in Setup ▸ Voice "
+                        "keyer mic";
+        return {};
+    }
+    const QString found = ClipDeck::findSourceExcluding(radioAudioMatch_);
+    if (found.isEmpty() && why)
+        *why = "no microphone found — plug one in, or pick it in Setup ▸ "
+               "Voice keyer mic";
+    return found;
+}
+
+// Shift+click a VK button: audition the message on the PC speakers —
+// nothing keyed, nothing switched on the radio.
+void MainWindow::previewVoiceSlot(int slot) {
+    if (!vkHasMessage(slot)) {
+        statusBar()->showMessage(QString(
+            "VK%1 is empty — right-click it on the TX bar to record a "
+            "message").arg(slot + 1));
+        return;
+    }
+    if (dvr_->play(vkPath(slot), QString())) {
+        txBar_->showDvrPlaying(slot);
+        statusBar()->showMessage(QString(
+            "VK%1: playing on the speakers (not transmitting) — click to "
+            "stop").arg(slot + 1));
+    }
 }
 
 QString MainWindow::dvrDir() const {
@@ -145,7 +237,7 @@ QString MainWindow::vkPath(int slot) const {
 // only advance on real transmissions.
 bool MainWindow::playVoiceSlot(int slot) {
     const QString f = vkPath(slot);
-    if (!QFileInfo::exists(f)) {
+    if (!vkHasMessage(slot)) {                     // never key up on dead air
         statusBar()->showMessage(QString(
             "VK%1 is empty — right-click it on the TX bar to record a "
             "message").arg(slot + 1));

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui/TxBar.h"
 
+#include <QApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
@@ -228,7 +229,12 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         b->setContextMenuPolicy(Qt::CustomContextMenu);
         vkBtn_[i] = b;
         lay->addWidget(b);
-        connect(b, &QPushButton::clicked, this, [this, i] { emit vkClicked(i); });
+        connect(b, &QPushButton::clicked, this, [this, i] {
+            if (QApplication::keyboardModifiers() & Qt::ShiftModifier)
+                emit vkPreviewClicked(i);
+            else
+                emit vkClicked(i);
+        });
         connect(b, &QPushButton::customContextMenuRequested, this,
                 [this, i] { emit vkRecordClicked(i); });
     }
@@ -362,9 +368,11 @@ void TxBar::setVkLoaded(int slot, bool loaded) {
         ? QString("Voice keyer message %1\n"
                   "left-click:  TRANSMIT the message — rig switches to line-in,\n"
                   "    keys up, plays it, then restores your mic/speech settings\n"
+                  "Shift+click:  LISTEN on the PC speakers (nothing transmitted)\n"
                   "right-click:  RE-RECORD it from the mic (red while recording,\n"
-                  "    click to stop; the old message is replaced)\n"
-                  "click while on the air:  abort and un-key").arg(slot + 1)
+                  "    click to stop; replaces the old message only if the\n"
+                  "    new take has real audio in it)\n"
+                  "click while playing:  stop (and un-key)").arg(slot + 1)
         : QString("Voice keyer slot %1 — EMPTY\n"
                   "right-click:  record a message from the mic (button goes red),\n"
                   "    click it again to stop and save\n"

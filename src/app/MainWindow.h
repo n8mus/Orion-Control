@@ -182,6 +182,13 @@ private:
     QString dvrDir() const;            // ~/.local/share/n8mus/tentec-console/dvr
     QString vkPath(int slot) const;    // voice keyer message file for a slot
     bool playVoiceSlot(int slot);      // VK play path; false = nothing out
+    void previewVoiceSlot(int slot);   // Shift+click: VK on the speakers, no TX
+    bool vkHasMessage(int slot) const; // real audio in the slot (not silence)
+    void refreshVkLoaded();            // dim/undim the VK buttons
+    // The mic a VK take records from, resolved at record time so a USB mic
+    // plugged in after launch is found. Empty = none; *why says so.
+    QString vkMicSource(QString* why) const;
+    QString vkTakePath(int slot) const;
     bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers
     void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
@@ -306,7 +313,8 @@ private:
     QString dvrLastRx_;                // newest off-air take this session
     QString dvrJustRecorded_;          // take to peak-normalize when it lands
     QString radioSink_, radioSource_;  // SignaLink playback/capture node names
-    QString micSource_;                // VK record source ("" = default mic)
+    QString radioAudioMatch_;          // node-name match for the SignaLink codec
+    int     vkTakeSlot_ = -1;          // VK slot whose take is landing (-1 = none)
     int curBand_ = -1;                         // index into kBands, -1 = none
     int curReg_  = 0;                          // active stack register (0..3 = A..D)
     int lastBandPress_ = -1;                   // band button last pressed (for cycling)

@@ -32,6 +32,7 @@
 #if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
 #include "audio/AudioIo.h"
 #endif
+#include "audio/ClipDeck.h"
 
 namespace ttc {
 
@@ -273,6 +274,25 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
 #endif
                 ).toString());
     form->addRow("Radio audio in", audioDev_);
+
+    // Voice keyer mic: the operator's station mic is on the RADIO, so the
+    // PC only hears him through a mic of its own. Auto picks the first USB
+    // input that isn't the radio codec, at record time (a mic plugged in
+    // after launch is found); naming one pins it.
+    vkMic_ = new QComboBox(this);
+    vkMic_->addItem("Auto — first USB mic that isn't the radio", QString());
+    const QString curMic = s.value("dvr/micSource").toString();
+    bool curListed = curMic.isEmpty();
+    for (const ttc::ClipDeck::Source& src : ttc::ClipDeck::sources()) {
+        vkMic_->addItem(src.label, src.node);
+        curListed |= src.node == curMic;
+    }
+    if (!curListed)                                // chosen mic unplugged now
+        vkMic_->addItem(curMic + "  (not plugged in)", curMic);
+    vkMic_->setCurrentIndex(std::max(0, vkMic_->findData(curMic)));
+    vkMic_->setToolTip("Where VK1-VK4 messages are recorded from (right-click\n"
+                       "a VK button). Takes effect on the next recording.");
+    form->addRow("Voice keyer mic", vkMic_);
 
     form->addRow(section("DX CLUSTER", this));
     // Editable combo: pick a node and the port follows, or type any host.
@@ -811,6 +831,7 @@ void SetupDialog::accept() {
     s.setValue("cw/port", keyerDev_->currentText().trimmed());
     s.setValue("cw/keyer", keyerSel_->currentData().toString());
     s.setValue("cw/audioDev", audioDev_->currentText().trimmed());
+    s.setValue("dvr/micSource", vkMic_->currentData().toString());
     s.setValue("spots/host", spotHost_->currentText().trimmed());
     s.setValue("spots/port", spotPort_->value());
     s.setValue("spots/login", spotLogin_->text().trimmed().toUpper());

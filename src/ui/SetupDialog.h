@@ -60,6 +60,7 @@ private:
     QComboBox* keyerDev_ = nullptr;
     QLabel*    keyerTest_ = nullptr;
     QComboBox* audioDev_ = nullptr;
+    QComboBox* vkMic_ = nullptr;      // voice keyer record source (dvr/micSource)
     QComboBox* spotHost_ = nullptr;   // editable: presets + any node
     QSpinBox*  spotPort_ = nullptr;
     QLineEdit* spotLogin_ = nullptr;

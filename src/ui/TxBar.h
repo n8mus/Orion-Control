@@ -50,6 +50,8 @@ signals:
     void vkClicked(int slot);                     // voice keyer: play (or stop)
     void vkRecordClicked(int slot);               // right-click: record the slot
     void vkPreviewClicked(int slot);              // Shift+either click: speakers
+    void liveMicToggled(bool on);                 // LIVE: PC mic chain on/off
+    void liveMicMenuRequested();                  // right-click LIVE: settings
 
 public slots:
     void setAmpMode(bool on, int limitPct);       // restore from settings
@@ -62,6 +64,7 @@ public slots:
     void showSpeechProc(int level);
     void showTuner(bool on);
     void showDvrIdle();                           // all DVR lights off
+    void showLiveMic(bool on);                    // LIVE button state
     void showDvrRecording(int slot);              // -1 = off-air deck, 0..3 = VK
     // onAir: the clip is TRANSMITTING (red); else speakers only (green).
     void showDvrPlaying(int slot, bool onAir);
@@ -81,6 +84,7 @@ private:
     QPushButton* recBtn_ = nullptr;    // DVR off-air record
     QPushButton* playBtn_ = nullptr;   // DVR off-air playback
     QPushButton* vkBtn_[4] = {};       // voice keyer slots
+    QPushButton* liveBtn_ = nullptr;   // live PC mic chain
     QPushButton* ampBtn_   = nullptr;
     QSpinBox*    ampLimit_ = nullptr;
     QPushButton* tuneBtn_  = nullptr;

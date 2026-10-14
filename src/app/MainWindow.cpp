@@ -2405,6 +2405,8 @@ MainWindow::MainWindow(QWidget* parent)
         if (dvrBusy()) return;
         playVoiceSlot(slot);
     });
+    connect(txBar_, &TxBar::liveMicToggled, this, &MainWindow::setLiveMic);
+    connect(txBar_, &TxBar::liveMicMenuRequested, this, &MainWindow::showVoiceEq);
     connect(txBar_, &TxBar::vkPreviewClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
         previewVoiceSlot(slot);
@@ -3713,6 +3715,7 @@ void MainWindow::openSetup() {
 
 MainWindow::~MainWindow() {
     stopManualTune();                            // never leave a carrier up
+    if (liveMic_) setLiveMic(false);             // front mic back for next time
     dvr_->stop();                                // finalize an in-flight take
     if (dvrTxPlayback_) {
         radio_->setPtt(false);                   // never leave the rig keyed

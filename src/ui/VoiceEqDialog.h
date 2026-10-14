@@ -65,7 +65,8 @@ private:
                        *gateRel = nullptr;
         QDoubleSpinBox *deHz = nullptr, *deThr = nullptr, *deAmt = nullptr;
         QDoubleSpinBox *cThr = nullptr, *cRatio = nullptr, *cAtt = nullptr,
-                       *cRel = nullptr, *cKnee = nullptr, *cDrive = nullptr;
+                       *cRel = nullptr, *cKnee = nullptr, *cDrive = nullptr,
+                       *cMakeup = nullptr;
         QSpinBox *cPhase = nullptr;
         QDoubleSpinBox *limCeil = nullptr;
     } dyn_;

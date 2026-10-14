@@ -6,7 +6,11 @@
 #include <array>
 #include <vector>
 
+#include "dsp/ClientComp.h"
+#include "dsp/ClientDeEss.h"
 #include "dsp/ClientEq.h"
+#include "dsp/ClientFinalLimiter.h"
+#include "dsp/ClientGate.h"
 
 namespace ttc {
 
@@ -60,6 +64,7 @@ struct VoiceEqSettings {
         int   phaseStages = 4;       // all-pass peak rotator, 0 = off
         bool  limiterOn = true;
         float ceilingDb = -1.f;
+        float makeupDb = 6.f;        // LIVE mic only: VK renders measure it
     } comp;
     struct Limit {
         bool  on = true;             // the safety net — on by default
@@ -110,6 +115,35 @@ struct VoiceEqTarget {
     float dbAt(float hz) const;                    // log-frequency interpolation
 };
 const std::vector<VoiceEqTarget>& voiceEqTargets();
+
+// The chain itself — gate -> EQ -> de-esser -> compressor -> final limiter —
+// shared by the offline VK renders and the live mic so both sound
+// identical for one profile. configure() may be called again at any time
+// (live edits from the EQ window); the ported stages pick new parameters
+// up at the next block. Not thread-safe: one owner thread.
+class VoiceChain {
+public:
+    void prepare(int rate, const VoiceEqSettings& s, float makeupDb);
+    void configure(const VoiceEqSettings& s, float makeupDb);
+    void process(float* mono, int n);              // in place, any n
+    void reset();                                  // flush envelopes
+
+    // Last block's meters (dB, <= 0), for stats and live readouts.
+    float gateGrDb() const { return s_.gate.on ? gate_.gainReductionDb() : 0.f; }
+    float deessGrDb() const { return s_.deess.on ? deess_.gainReductionDb() : 0.f; }
+    float compGrDb() const { return s_.comp.on ? comp_.gainReductionDb() : 0.f; }
+    bool  limitActive() const { return s_.limit.on && limit_.active(); }
+
+private:
+    VoiceEqSettings s_;
+    int   rate_ = 48000;
+    bool  eqDirty_ = true;
+    ClientGate gate_;
+    ClientEq eq_;
+    ClientDeEss deess_;
+    ClientComp comp_;
+    ClientFinalLimiter limit_;
+};
 
 // What a render did, for the operator: the compressor's work shows up as
 // talk power — average (RMS) level gained at the same peak, i.e. the drop

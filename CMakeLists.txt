@@ -154,6 +154,7 @@ add_executable(tentec-console
   src/ui/TxBar.cpp              src/ui/TxBar.h
   src/audio/ClipDeck.cpp        src/audio/ClipDeck.h
   src/audio/VoiceEq.cpp         src/audio/VoiceEq.h
+  src/audio/LiveVoice.cpp       src/audio/LiveVoice.h
   src/dsp/ClientEq.cpp          src/dsp/ClientEq.h
   src/dsp/ClientGate.cpp        src/dsp/ClientGate.h
   src/dsp/ClientDeEss.cpp       src/dsp/ClientDeEss.h

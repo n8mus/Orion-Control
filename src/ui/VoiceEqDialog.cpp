@@ -270,7 +270,8 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     for (QDoubleSpinBox* d : {dyn_.gateThr, dyn_.gateRatio, dyn_.gateFloor,
                               dyn_.gateHold, dyn_.gateRel, dyn_.deHz, dyn_.deThr,
                               dyn_.deAmt, dyn_.cThr, dyn_.cRatio, dyn_.cAtt,
-                              dyn_.cRel, dyn_.cKnee, dyn_.cDrive, dyn_.limCeil})
+                              dyn_.cRel, dyn_.cKnee, dyn_.cDrive, dyn_.cMakeup,
+                              dyn_.limCeil})
         connect(d, &QDoubleSpinBox::valueChanged, this, edited);
     connect(dyn_.cPhase, &QSpinBox::valueChanged, this, edited);
     for (Row& row : rows_) {
@@ -435,7 +436,12 @@ QWidget* VoiceEqDialog::buildDynamicsPage() {
     field(g, 2, 0, "Attack", dyn_.cAtt);
     field(g, 2, 1, "Release", dyn_.cRel);
     field(g, 2, 2, "Drive", dyn_.cDrive);
+    dyn_.cMakeup = dspin(page, 0, 24, 0.5, 1, " dB",
+        "LIVE mic only: gain after compression (VK messages measure\n"
+        "their own). Raise until the voice sits just under the limiter\n"
+        "— watch the Orion's ALC on peaks.");
     field(g, 3, 0, "Phase rot.", dyn_.cPhase);
+    field(g, 3, 1, "Make-up (live)", dyn_.cMakeup);
 
     v->addWidget(stage(page, "FINAL LIMITER  (last)", dyn_.limOn,
         "The safety net: nothing leaves above this ceiling.", g));
@@ -469,6 +475,7 @@ void VoiceEqDialog::load(const VoiceEqSettings& s) {
     dyn_.cKnee->setValue(s.comp.kneeDb);
     dyn_.cDrive->setValue(s.comp.driveDb);
     dyn_.cPhase->setValue(s.comp.phaseStages);
+    dyn_.cMakeup->setValue(s.comp.makeupDb);
     dyn_.limOn->setChecked(s.limit.on);
     dyn_.limCeil->setValue(s.limit.ceilingDb);
     dyn_.limDc->setChecked(s.limit.dcBlock);
@@ -495,7 +502,7 @@ void VoiceEqDialog::refreshEnables() {
     for (QWidget* w : std::initializer_list<QWidget*>{dyn_.deHz, dyn_.deThr, dyn_.deAmt})
         w->setEnabled(dyn_.deessOn->isChecked());
     for (QWidget* w : std::initializer_list<QWidget*>{dyn_.cThr, dyn_.cRatio, dyn_.cAtt,
-             dyn_.cRel, dyn_.cKnee, dyn_.cDrive, dyn_.cPhase})
+             dyn_.cRel, dyn_.cKnee, dyn_.cDrive, dyn_.cPhase, dyn_.cMakeup})
         w->setEnabled(dyn_.compOn->isChecked());
     dyn_.limCeil->setEnabled(dyn_.limOn->isChecked());
     dyn_.limDc->setEnabled(dyn_.limOn->isChecked());
@@ -531,6 +538,7 @@ VoiceEqSettings VoiceEqDialog::collect() const {
     s.comp.kneeDb = float(dyn_.cKnee->value());
     s.comp.driveDb = float(dyn_.cDrive->value());
     s.comp.phaseStages = dyn_.cPhase->value();
+    s.comp.makeupDb = float(dyn_.cMakeup->value());
     s.limit.on = dyn_.limOn->isChecked();
     s.limit.ceilingDb = float(dyn_.limCeil->value());
     s.limit.dcBlock = dyn_.limDc->isChecked();

@@ -38,6 +38,8 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
         QPushButton#dvr[dvrState="play"] { background: #1f7a45; color: #ffffff;
                                            border-color: #3ecf7a; }
         QPushButton#dvr[vkEmpty="true"] { color: #5c6b7a; }
+        QPushButton#live:checked { background: #8a5c2b; color: #ffffff;
+                                   border-color: #e8b04a; }
         QSpinBox { background: #1c2430; color: #c8d4e0; border: 1px solid #2a3644;
                    font-size: 11px; }
         QSlider::groove:horizontal { height: 4px; background: #2a3644; border-radius: 2px; }
@@ -247,7 +249,33 @@ TxBar::TxBar(QWidget* parent) : QWidget(parent) {
                 emit vkRecordClicked(i);
         });
     }
+    // LIVE: the PC mic through the voice chain into the SignaLink, the
+    // radio on its line input; the operator keys with his own PTT.
+    lay->addSpacing(6);
+    liveBtn_ = new QPushButton("LIVE");
+    liveBtn_->setObjectName("live");
+    liveBtn_->setCheckable(true);
+    liveBtn_->setFocusPolicy(Qt::NoFocus);
+    liveBtn_->setContextMenuPolicy(Qt::CustomContextMenu);
+    liveBtn_->setToolTip(
+        "Live mic through the PC (amber while on)\n"
+        "click:  your PC mic (Setup ▸ Voice keyer mic) goes through the\n"
+        "    voice EQ & dynamics into the SignaLink; the radio switches\n"
+        "    to its rear line input (DIG lights). Key with your own PTT.\n"
+        "    Needs the SignaLink's PTT jumper OUT.\n"
+        "click again:  front mic and your voice settings come back\n"
+        "right-click:  the EQ & dynamics window");
+    lay->addWidget(liveBtn_);
+    connect(liveBtn_, &QPushButton::toggled, this,
+            [this](bool on) { emit liveMicToggled(on); });
+    connect(liveBtn_, &QPushButton::customContextMenuRequested, this,
+            [this] { emit liveMicMenuRequested(); });
     lay->addStretch(1);
+}
+
+void TxBar::showLiveMic(bool on) {
+    const QSignalBlocker b(liveBtn_);
+    liveBtn_->setChecked(on);
 }
 
 void TxBar::markProfile(int slot) {

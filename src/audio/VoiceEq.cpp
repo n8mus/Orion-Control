@@ -195,7 +195,8 @@ QJsonObject VoiceEqSettings::toJson() const {
                              {"ratio", comp.ratio}, {"att", comp.attackMs},
                              {"rel", comp.releaseMs}, {"knee", comp.kneeDb},
                              {"drive", comp.driveDb}, {"phase", comp.phaseStages},
-                             {"lim", comp.limiterOn}, {"ceil", comp.ceilingDb}}},
+                             {"lim", comp.limiterOn}, {"ceil", comp.ceilingDb},
+                             {"mk", comp.makeupDb}}},
         {"limit", QJsonObject{{"on", limit.on}, {"ceil", limit.ceilingDb},
                               {"dc", limit.dcBlock}}},
     };
@@ -248,6 +249,7 @@ VoiceEqSettings VoiceEqSettings::fromJson(const QJsonObject& o) {
     s.comp.phaseStages = std::clamp(c.value("phase").toInt(s.comp.phaseStages), 0, 6);
     s.comp.limiterOn = c.value("lim").toBool(true);
     s.comp.ceilingDb = f(c, "ceil", s.comp.ceilingDb, -12, 0);
+    s.comp.makeupDb = f(c, "mk", s.comp.makeupDb, 0, 24);
     const QJsonObject l = o.value("limit").toObject();
     s.limit.on = l.value("on").toBool(false);
     s.limit.ceilingDb = f(l, "ceil", s.limit.ceilingDb, -12, 0);
@@ -355,6 +357,75 @@ const std::vector<VoiceEqTarget>& voiceEqTargets() {
     return t;
 }
 
+void VoiceChain::prepare(int rate, const VoiceEqSettings& s, float makeupDb) {
+    rate_ = rate;
+    gate_.prepare(rate);
+    eq_.prepare(rate);
+    deess_.prepare(rate);
+    comp_.prepare(rate);
+    limit_.prepare(rate);
+    configure(s, makeupDb);
+    eq_.snapToTargets();                           // start on the curve
+}
+
+void VoiceChain::configure(const VoiceEqSettings& s, float makeupDb) {
+    s_ = s;
+    gate_.setEnabled(s.gate.on);
+    gate_.setThresholdDb(s.gate.thresholdDb);
+    gate_.setRatio(s.gate.ratio);
+    gate_.setFloorDb(s.gate.floorDb);
+    gate_.setHoldMs(s.gate.holdMs);
+    gate_.setReleaseMs(s.gate.releaseMs);
+    gate_.setReturnDb(s.gate.returnDb);
+    gate_.setLookaheadMs(s.gate.lookaheadMs);
+    eq_.setEnabled(s.enabled);
+    eq_.setActiveBandCount(VoiceEqSettings::kBands);
+    for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
+        ClientEq::BandParams b = s.bands[size_t(i)];
+        b.type = VoiceEqSettings::slotType(i);
+        eq_.setBand(i, b);                         // smoothed in live use
+    }
+    deess_.setEnabled(s.deess.on);
+    deess_.setFrequencyHz(s.deess.freqHz);
+    deess_.setQ(s.deess.q);
+    deess_.setThresholdDb(s.deess.thresholdDb);
+    deess_.setAmountDb(s.deess.amountDb);
+    deess_.setSlopeStages(s.deess.slopeStages);
+    comp_.setEnabled(s.comp.on);
+    comp_.setThresholdDb(s.comp.thresholdDb);
+    comp_.setRatio(s.comp.ratio);
+    comp_.setAttackMs(s.comp.attackMs);
+    comp_.setReleaseMs(s.comp.releaseMs);
+    comp_.setKneeDb(s.comp.kneeDb);
+    comp_.setDriveDb(s.comp.driveDb);
+    comp_.setMakeupDb(makeupDb);
+    comp_.setPhaseRotatorStages(s.comp.phaseStages);
+    comp_.setLimiterEnabled(s.comp.limiterOn);
+    comp_.setLimiterCeilingDb(s.comp.ceilingDb);
+    limit_.setEnabled(s.limit.on);
+    limit_.setCeilingDb(s.limit.ceilingDb);
+    limit_.setDcBlockEnabled(s.limit.dcBlock);
+}
+
+void VoiceChain::process(float* x, int n) {
+    if (n <= 0) return;
+    // Stages that are off are skipped outright — the final limiter's DC
+    // block would otherwise run even with the limiter disabled.
+    if (s_.gate.on) gate_.process(x, n, 1);
+    if (s_.enabled) eq_.process(x, n, 1);
+    if (s_.deess.on) deess_.process(x, n, 1);
+    if (s_.comp.on) comp_.process(x, n, 1);
+    if (s_.limit.on) limit_.process(x, n, 1);
+}
+
+void VoiceChain::reset() {
+    gate_.reset();
+    eq_.reset();
+    deess_.reset();
+    comp_.reset();
+    limit_.reset();
+}
+
 // Offline level stage for processed messages (a ttc addition, not
 // AetherSDR's): peak-normalize by the message's sustained level, not by
 // the few word onsets a compressor's attack lets through, then hold those
@@ -433,84 +504,23 @@ bool renderVoiceEq(const QString& inWav, const QString& outWav,
                               VoiceRenderStats& st) {
         y = dry;
         st = VoiceRenderStats{};
-        ClientGate gate;
-        ClientEq eq;
-        ClientDeEss deess;
-        ClientComp comp;
-        ClientFinalLimiter limit;
-        if (s.gate.on) {
-            gate.prepare(rate);
-            gate.setEnabled(true);
-            gate.setThresholdDb(s.gate.thresholdDb);
-            gate.setRatio(s.gate.ratio);
-            gate.setFloorDb(s.gate.floorDb);
-            gate.setHoldMs(s.gate.holdMs);
-            gate.setReleaseMs(s.gate.releaseMs);
-            gate.setReturnDb(s.gate.returnDb);
-            gate.setLookaheadMs(s.gate.lookaheadMs);
-        }
-        if (s.enabled) {
-            eq.prepare(rate);
-            eq.setEnabled(true);
-            eq.setActiveBandCount(VoiceEqSettings::kBands);
-            for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
-                ClientEq::BandParams b = s.bands[size_t(i)];
-                b.type = VoiceEqSettings::slotType(i);
-                eq.setBand(i, b);
-            }
-            eq.snapToTargets();                    // whole message on the curve
-        }
-        if (s.deess.on) {
-            deess.prepare(rate);
-            deess.setEnabled(true);
-            deess.setFrequencyHz(s.deess.freqHz);
-            deess.setQ(s.deess.q);
-            deess.setThresholdDb(s.deess.thresholdDb);
-            deess.setAmountDb(s.deess.amountDb);
-            deess.setSlopeStages(s.deess.slopeStages);
-        }
-        if (s.comp.on) {
-            comp.prepare(rate);
-            comp.setEnabled(true);
-            comp.setThresholdDb(s.comp.thresholdDb);
-            comp.setRatio(s.comp.ratio);
-            comp.setAttackMs(s.comp.attackMs);
-            comp.setReleaseMs(s.comp.releaseMs);
-            comp.setKneeDb(s.comp.kneeDb);
-            comp.setDriveDb(s.comp.driveDb);
-            comp.setMakeupDb(makeupDb);
-            comp.setPhaseRotatorStages(s.comp.phaseStages);
-            comp.setLimiterEnabled(s.comp.limiterOn);
-            comp.setLimiterCeilingDb(s.comp.ceilingDb);
-        }
-        if (s.limit.on) {                          // off = not even its DC block
-            limit.prepare(rate);
-            limit.setEnabled(true);
-            limit.setCeilingDb(s.limit.ceilingDb);
-            limit.setDcBlockEnabled(s.limit.dcBlock);
-        }
+        VoiceChain chain;                          // fresh envelopes per pass
+        chain.prepare(rate, s, makeupDb);
         double compSum = 0;
         int speechBlocks = 0, limitBlocks = 0;
         for (size_t o = 0; o < y.size(); o += size_t(kBlock)) {
             const int n = int(std::min<size_t>(size_t(kBlock), y.size() - o));
-            float* blk = y.data() + o;
             float inPk = 0.0f;
             for (int i = 0; i < n; ++i) inPk = std::max(inPk, std::fabs(dry[o + size_t(i)]));
-            if (s.gate.on) gate.process(blk, n, 1);
-            if (s.enabled) eq.process(blk, n, 1);
-            if (s.deess.on) deess.process(blk, n, 1);
-            if (s.comp.on) comp.process(blk, n, 1);
-            if (s.limit.on) limit.process(blk, n, 1);
-            if (s.gate.on) st.gateMaxDb = std::min(st.gateMaxDb, double(gate.gainReductionDb()));
-            if (s.deess.on) st.deessMaxDb = std::min(st.deessMaxDb, double(deess.gainReductionDb()));
+            chain.process(y.data() + o, n);
+            st.gateMaxDb = std::min(st.gateMaxDb, double(chain.gateGrDb()));
+            st.deessMaxDb = std::min(st.deessMaxDb, double(chain.deessGrDb()));
             if (inPk >= speechFloor) {
                 ++speechBlocks;
-                if (s.comp.on) {
-                    const double gr = comp.gainReductionDb();
-                    compSum += gr;
-                    st.compMaxDb = std::min(st.compMaxDb, gr);
-                }
-                if (s.limit.on && limit.active()) ++limitBlocks;
+                const double gr = chain.compGrDb();
+                compSum += gr;
+                st.compMaxDb = std::min(st.compMaxDb, gr);
+                if (chain.limitActive()) ++limitBlocks;
             }
         }
         if (speechBlocks > 0) {

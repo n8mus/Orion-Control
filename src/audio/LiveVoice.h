@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#pragma once
+#include <QByteArray>
+#include <QObject>
+#include <QString>
+#include <vector>
+
+#include "audio/VoiceEq.h"
+
+class QProcess;
+
+namespace ttc {
+
+// LIVE MIC (PC voice chain phase 2): the operator's mic, through the same
+// gate -> EQ -> de-esser -> compressor -> limiter chain as the VK
+// messages, streamed into the radio's sound device (SignaLink) the whole
+// time it is on. Keying is NOT ours: the operator keys the radio with his
+// own PTT and the radio sends whatever is on its line input — so the
+// SignaLink's own Auto-PTT must not be wired (its PTT jumper out), or this
+// stream would key the transmitter by itself.
+//
+// Rides the pulse layer like the console's other live audio (AudioCwSource,
+// RipAudio): parec captures 48 kHz s16 mono, pacat plays. Small latency
+// targets keep the operator's ear (Orion MON) and mouth together.
+class LiveVoice : public QObject {
+    Q_OBJECT
+public:
+    explicit LiveVoice(QObject* parent = nullptr);
+    ~LiveVoice() override;
+
+    bool start(const QString& sourceNode, const QString& sinkNode,
+               const VoiceEqSettings& s);
+    void stop();
+    bool running() const;
+
+    void setSettings(const VoiceEqSettings& s);    // live edits
+    // Muted = silence out, stream kept up (VK playback owns the SignaLink
+    // meanwhile; the two must not mix).
+    void setMuted(bool m) { muted_ = m; }
+
+    // Meters of the last processed block, for the UI.
+    float inputPeakDb() const { return inPeakDb_; }
+    float compGrDb() const { return chain_.compGrDb(); }
+    float gateGrDb() const { return chain_.gateGrDb(); }
+
+signals:
+    void failed(const QString& why);
+
+private:
+    void onCaptured();
+
+    QProcess* rec_ = nullptr;
+    QProcess* play_ = nullptr;
+    VoiceChain chain_;
+    QByteArray carry_;                             // partial sample bytes
+    std::vector<float> buf_;
+    bool muted_ = false;
+    bool stopping_ = false;
+    float inPeakDb_ = -120.f;
+};
+
+} // namespace ttc

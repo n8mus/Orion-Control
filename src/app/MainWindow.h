@@ -72,6 +72,7 @@ class QslUploader;
 class SpotTableWindow;
 class TuneEntryDialog;
 class VoiceEqDialog;
+class LiveVoice;
 struct VoiceEqSettings;
 struct VoiceRenderStats;
 class TuneTableDialog;
@@ -200,6 +201,7 @@ private:
     // -> messages rendered; a one-line talk-power summary into *summary
     int  rerenderVk(const VoiceEqSettings& eq, QString* summary = nullptr);
     void showVoiceEq();
+    void setLiveMic(bool on);          // LIVE: PC mic chain -> SignaLink
     bool stopVoicePlayback();          // true = something got aborted
     void saveMarkers();                // persist + repaint pinned freq markers
     void scheduleIqRecordingDialog();  // arm/cancel a timed IQ recording
@@ -297,6 +299,9 @@ private:
     QPointer<TuneEntryDialog> tuneEntryDlg_;   // one entry form at a time
     QPointer<TuneTableDialog> tuneTableDlg_;   // non-modal table editor
     QPointer<VoiceEqDialog> vkEqDlg_;          // non-modal voice keyer EQ
+    LiveVoice* live_ = nullptr;          // live mic chain (LIVE button)
+    bool liveMic_ = false;
+    bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing

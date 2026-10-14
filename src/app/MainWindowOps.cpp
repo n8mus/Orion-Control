@@ -10,6 +10,7 @@
 #include "ui/TuneDialogs.h"
 #include "ui/VoiceEqDialog.h"
 #include "audio/VoiceEq.h"
+#include "audio/LiveVoice.h"
 
 #include <QVBoxLayout>
 
@@ -90,6 +91,7 @@ void MainWindow::dvrPlayOverAir(const QString& wav, int slot) {
     }
     dvrAutoDig_ = !digital_;                       // already in DIG (FT8)? leave it
     if (dvrAutoDig_) setDigitalMode(true);
+    if (live_) live_->setMuted(true);              // VK owns the SignaLink now
     dvrTxPlayback_ = true;
     radio_->setPtt(true);
     txBar_->showDvrPlaying(slot, true);
@@ -114,6 +116,7 @@ void MainWindow::dvrStopped() {
         const int drainMs = radioDevUsed_.startsWith("udp:") ? 1200 : 250;
         QTimer::singleShot(drainMs, this, [this] {
             radio_->setPtt(false);                 // un-key BEFORE the mic is hot
+            if (live_) live_->setMuted(false);     // live mic back on the line
             if (dvrAutoDig_) {
                 dvrAutoDig_ = false;
                 setDigitalMode(false);             // voice mic/proc come back
@@ -261,6 +264,10 @@ void MainWindow::showVoiceEq() {
             statusBar()->showMessage("VK EQ: " + text, 6000);
         };
         connect(dlg, &VoiceEqDialog::applyRequested, this, apply);
+        connect(dlg, &VoiceEqDialog::applyRequested, this,
+                [this](const VoiceEqSettings& s) {
+                    if (live_ && liveMic_) live_->setSettings(s);   // as you talk
+                });
         connect(dlg, &VoiceEqDialog::listenRequested, this,
                 [this, apply](int slot, const VoiceEqSettings& s) {
                     stopVoicePlayback();           // never re-render under TX
@@ -1062,6 +1069,14 @@ void MainWindow::loadSwrRuns() {
 // whatever you actually run for SSB is what comes back.
 void MainWindow::setDigitalMode(bool on) {
     if (on == digital_) return;
+    if (!on && liveMic_) {
+        // DIG off takes the line input away from under LIVE: stop the live
+        // stream too, or the mic chain would feed a radio listening to its
+        // front mic. (We are restoring the voice setup right here.)
+        liveOwnsLineIn_ = false;
+        setLiveMic(false);
+        statusBar()->showMessage("LIVE MIC off — DIG was turned off", 6000);
+    }
     if (on) {
         if (lastMicGain_ > 0) {                     // remember the voice setup
             QSettings s;                            // (never persist the zeros
@@ -1562,6 +1577,58 @@ void MainWindow::showTuneBoxMenu(const QPoint& globalPos) {
             .arg(curAntenna_.isEmpty() ? "(unlabeled)" : curAntenna_));
     fillAntennaMenu(antMenu);
     m->popup(globalPos);
+}
+
+// LIVE (TX bar): the PC mic (the voice keyer's mic, Setup ▸ Voice keyer
+// mic) through the voice chain into the SignaLink, continuously, with the
+// radio on its rear line input via the same switch DIG uses. The operator
+// keys with his own PTT; the console never keys for LIVE. LIVE only
+// restores the front mic if it was the one that turned DIG on (FT8 may
+// have had DIG up first).
+void MainWindow::setLiveMic(bool on) {
+    if (on == liveMic_) { txBar_->showLiveMic(on); return; }
+    if (on) {
+        const auto refuse = [this](const QString& why) {
+            txBar_->showLiveMic(false);
+            statusBar()->showMessage("LIVE MIC: " + why, 10000);
+        };
+        if (radioDevUsed_.startsWith("udp:"))
+            return refuse("not on the Ethernet (remote) connection yet — the "
+                          "radio takes TX audio from the network there");
+        if (radioSink_.isEmpty())
+            return refuse("radio sound device (SignaLink) not found");
+        QString why;
+        const QString mic = vkMicSource(&why);
+        if (mic.isEmpty()) return refuse(why);
+        if (!live_) {
+            live_ = new LiveVoice(this);
+            connect(live_, &LiveVoice::failed, this, [this](const QString& why) {
+                if (!liveMic_) return;
+                setLiveMic(false);
+                statusBar()->showMessage("LIVE MIC stopped: " + why, 10000);
+            });
+        }
+        if (!live_->start(mic, radioSink_, VoiceEqSettings::load()))
+            return refuse("could not start the audio stream");
+        liveMic_ = true;
+        liveOwnsLineIn_ = !digital_;
+        if (liveOwnsLineIn_) setDigitalMode(true);
+        txBar_->showLiveMic(true);
+        statusBar()->showMessage(
+            QString("LIVE MIC on: %1 -> EQ & dynamics -> SignaLink; radio on its "
+                    "rear line input (DIG). Key with your PTT.")
+                .arg(ClipDeck::sourceLabel(mic)), 10000);
+    } else {
+        liveMic_ = false;
+        if (live_) live_->stop();
+        if (liveOwnsLineIn_) {
+            liveOwnsLineIn_ = false;
+            setDigitalMode(false);                 // front mic + voice setup
+        }
+        txBar_->showLiveMic(false);
+        statusBar()->showMessage("LIVE MIC off — front mic and your voice "
+                                 "settings are back", 6000);
+    }
 }
 
 } // namespace ttc

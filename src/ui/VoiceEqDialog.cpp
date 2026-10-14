@@ -20,6 +20,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace ttc {
 
@@ -44,6 +45,7 @@ const char* kStyle =
     "QPushButton:default { border-color: #3ecf7a; }"
     // Colors only on the spin boxes: a border rule drops the arrows.
     "QSpinBox, QDoubleSpinBox { background: #1c2430; color: #c8d4e0; }"
+    "QPushButton:disabled { color: #4a5868; border-color: #222b36; }"
     "QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled"
     " { color: #4a5868; }";
 }  // namespace
@@ -112,6 +114,102 @@ void VoiceEqCurve::paintEvent(QPaintEvent*) {
     }
     p.setPen(QPen(s_.enabled ? QColor(80, 230, 120) : QColor(90, 100, 110), 2));
     p.drawPath(path);
+}
+
+LiveMeter::LiveMeter(QWidget* parent) : QWidget(parent) {
+    setMinimumHeight(112);
+}
+
+void LiveMeter::setMarks(float thresholdDb, float ceilingDb) {
+    thrDb_ = thresholdDb;
+    ceilDb_ = ceilingDb;
+    update();
+}
+
+void LiveMeter::setLevels(const LiveLevels& l) {
+    // Peak hold with a ~20 dB/s fall (called every ~100 ms).
+    const auto fall = [](float shown, float now) {
+        return now >= shown ? now : std::max(now, shown - 2.0f);
+    };
+    inShown_ = l.live ? fall(inShown_, l.inDb) : -120.f;
+    outShown_ = l.live ? fall(outShown_, l.outDb) : -120.f;
+    compShown_ = l.live ? (l.compDb <= compShown_ ? l.compDb
+                                                  : std::min(0.f, compShown_ + 2.0f))
+                        : 0.f;
+    l_ = l;
+    update();
+}
+
+void LiveMeter::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), QColor(11, 16, 22));
+    QFont f = p.font();
+    f.setPixelSize(11);
+    p.setFont(f);
+    constexpr float kLo = -60.f;                   // bar scale: -60 .. 0 dBFS
+    const int labelW = 92, valueW = 64;
+    const QRectF barArea(labelW, 0, width() - labelW - valueW - 8, height());
+    const auto xOf = [&](float db) {
+        return barArea.left() + barArea.width() * (std::clamp(db, kLo, 0.f) - kLo) / -kLo;
+    };
+    const auto row = [&](int i) { return 8.0 + i * 20.0; };
+    const QColor lbl(143, 163, 184), val(200, 212, 224), dim(90, 104, 120);
+    const auto label = [&](int i, const QString& t) {
+        p.setPen(lbl);
+        p.drawText(QRectF(8, row(i), labelW - 12, 14), Qt::AlignVCenter, t);
+    };
+    const auto value = [&](int i, const QString& t) {
+        p.setPen(val);
+        p.drawText(QRectF(width() - valueW - 4, row(i), valueW, 14),
+                   Qt::AlignRight | Qt::AlignVCenter, t);
+    };
+    const auto bar = [&](int i, float db, QColor c) {
+        const QRectF track(barArea.left(), row(i) + 2, barArea.width(), 10);
+        p.fillRect(track, QColor(28, 36, 48));
+        if (db > kLo) p.fillRect(QRectF(track.left(), track.top(), xOf(db) - track.left(), 10), c);
+    };
+    if (!l_.live) {
+        p.setPen(dim);
+        p.drawText(rect(), Qt::AlignCenter, "LIVE is off — turn it on (TX bar) to see live levels");
+        return;
+    }
+    const QColor green(29, 158, 117), amber(232, 176, 74), red(226, 75, 74), purple(127, 119, 221);
+    label(0, "Mic in");
+    bar(0, inShown_, green);
+    value(0, QString("%1 dB").arg(inShown_, 0, 'f', 0));
+    label(1, "To SignaLink");
+    // Under the SignaLink's pickup threshold it mutes its TX audio: show
+    // the bar amber below it, green above.
+    const bool knownThr = !std::isnan(thrDb_);
+    bar(1, outShown_, knownThr && outShown_ < thrDb_ ? amber : green);
+    value(1, QString("%1 dB").arg(outShown_, 0, 'f', 0));
+    const auto mark = [&](float db, QColor c) {
+        const double x = xOf(db);
+        p.fillRect(QRectF(x - 1, row(1) - 2, 2, 18), c);
+    };
+    if (knownThr) mark(thrDb_, amber);
+    mark(ceilDb_, red);
+    label(2, "Compressor");
+    {
+        const QRectF track(barArea.left(), row(2) + 3, barArea.width(), 8);
+        p.fillRect(track, QColor(28, 36, 48));
+        const double w = track.width() * std::clamp(-compShown_, 0.f, 20.f) / 20.f;
+        p.fillRect(QRectF(track.right() - w, track.top(), w, 8), purple);  // GR grows leftward
+    }
+    value(2, QString("%1 dB").arg(compShown_, 0, 'f', 0));
+    label(3, "Gate");
+    p.setPen(!l_.gateOn ? dim : (l_.gateOpen ? green : amber));
+    p.drawText(QRectF(barArea.left(), row(3), 200, 14), Qt::AlignVCenter,
+               !l_.gateOn ? "off" : (l_.gateOpen ? "open — passing audio" : "closed — between words"));
+    label(4, "Delay");
+    p.setPen(val);
+    p.drawText(QRectF(barArea.left(), row(4), 200, 14), Qt::AlignVCenter,
+               QString("%1 ms queued").arg(l_.delayMs, 0, 'f', 0));
+    p.setPen(dim);
+    p.drawText(QRectF(barArea.left() + 210, row(4), barArea.width() - 210, 14),
+               Qt::AlignRight | Qt::AlignVCenter,
+               knownThr ? "amber = SignaLink pickup  ·  red = ceiling"
+                        : "red = ceiling  ·  pickup not measured yet");
 }
 
 VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
@@ -215,6 +313,28 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     tabs->addTab(eqPage, "EQ");
     tabs->addTab(buildDynamicsPage(), "Dynamics");
     lay->addWidget(tabs);
+
+    // Live levels + the SignaLink pickup finder.
+    meter_ = new LiveMeter(this);
+    lay->addWidget(meter_);
+    auto* calRow = new QHBoxLayout;
+    calBtn_ = new QPushButton("Find SignaLink pickup…", this);
+    calBtn_->setToolTip("Plays a slowly rising 1 kHz tone into the SignaLink.\n"
+                        "Click \"Light is on\" the moment its PTT light comes\n"
+                        "on — that level becomes the amber mark. Don't key\n"
+                        "the radio while it runs (the tone would go out).");
+    calMark_ = new QPushButton("Light is on", this);
+    calMark_->setEnabled(false);
+    calText_ = new QLabel(this);
+    calRow->addWidget(calBtn_);
+    calRow->addWidget(calMark_);
+    calRow->addWidget(calText_, 1);
+    lay->addLayout(calRow);
+    connect(calBtn_, &QPushButton::clicked, this, [this] {
+        if (calRunning_) emit calibrateCancelRequested();
+        else emit calibrateStartRequested();
+    });
+    connect(calMark_, &QPushButton::clicked, this, [this] { emit calibrateMarkRequested(); });
 
     status_ = new QLabel(this);
     status_->setWordWrap(true);
@@ -333,6 +453,19 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
 }
 
 void VoiceEqDialog::setStatus(const QString& text) { status_->setText(text); }
+
+void VoiceEqDialog::setLiveLevels(const LiveLevels& l) { meter_->setLevels(l); }
+
+void VoiceEqDialog::setPickupThreshold(float db) {
+    meter_->setMarks(db, collect().limit.on ? collect().limit.ceilingDb : 0.f);
+}
+
+void VoiceEqDialog::setCalibration(bool running, const QString& text) {
+    calRunning_ = running;
+    calBtn_->setText(running ? "Stop" : "Find SignaLink pickup…");
+    calMark_->setEnabled(running);
+    calText_->setText(text);
+}
 
 // Item data: "" = none/edited, "b:<n>" = built-in preset n, "u:<name>" =
 // the operator's profile.

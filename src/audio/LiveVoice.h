@@ -46,6 +46,9 @@ public:
     int droppedBlocks() const { return dropped_; }
     float compGrDb() const { return chain_.compGrDb(); }
     float gateGrDb() const { return chain_.gateGrDb(); }
+    float outputPeakDb() const { return outPeakDb_; }  // what goes to the SignaLink
+    bool  gateOn() const { return chain_.gateOn(); }
+    bool  gateOpen() const { return chain_.gateOpen(); }
 
 signals:
     void failed(const QString& why);
@@ -62,6 +65,7 @@ private:
     bool muted_ = false;
     bool stopping_ = false;
     float inPeakDb_ = -120.f;
+    float outPeakDb_ = -120.f;
     int probeFd_ = -1;                             // read end of pacat's stdin,
                                                    // opened only to measure it
     int dropped_ = 0;

@@ -57,6 +57,7 @@ namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
 #include <atomic>
 class QThread;
 class QMenu;
+class QProcess;
 
 namespace ttc {
 
@@ -302,6 +303,10 @@ private:
     LiveVoice* live_ = nullptr;          // live mic chain (LIVE button)
     bool liveMic_ = false;
     bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
+    // SignaLink pickup finder (EQ window): a rising tone into the SignaLink.
+    QPointer<QProcess> calProc_;
+    QElapsedTimer calClock_;
+    void stopPickupCal(const QString& text);
     void setLoOff(int off);                   // pan + CW decoder follow
     void retuneSdrFor(uint64_t dial, uint64_t prevDial);  // CTUN-aware LO policy
     void frameBand(uint64_t bandLo, uint64_t bandHi);     // band-overview landing

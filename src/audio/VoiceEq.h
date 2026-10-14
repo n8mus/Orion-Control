@@ -133,6 +133,8 @@ public:
     float deessGrDb() const { return s_.deess.on ? deess_.gainReductionDb() : 0.f; }
     float compGrDb() const { return s_.comp.on ? comp_.gainReductionDb() : 0.f; }
     bool  limitActive() const { return s_.limit.on && limit_.active(); }
+    bool  gateOn() const { return s_.gate.on; }
+    bool  gateOpen() const { return !s_.gate.on || gate_.gateOpen(); }
 
 private:
     VoiceEqSettings s_;

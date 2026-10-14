@@ -130,6 +130,9 @@ void LiveVoice::onCaptured() {
     for (int o = 0; o < take; o += kBlock) chain_.process(buf_.data() + o, kBlock);
     // Write block by block, dropping whole 10 ms blocks while the queue is
     // over target — quiet ones only, unless it is far over.
+    float opk = 0.f;
+    for (int i = 0; i < take; ++i) opk = std::max(opk, std::fabs(buf_[size_t(i)]));
+    outPeakDb_ = muted_ ? -120.f : 20.f * std::log10(std::max(opk, 1e-6f));
     QByteArray out;
     out.reserve(qsizetype(take) * 2);
     qint64 queued = backlogBytes();

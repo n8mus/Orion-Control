@@ -2,6 +2,7 @@
 #pragma once
 #include <QDialog>
 #include <QWidget>
+#include <limits>
 
 #include "audio/VoiceEq.h"
 
@@ -31,6 +32,36 @@ private:
     int target_ = 0;
 };
 
+// Live mic levels, pushed ~10x a second by MainWindow while LIVE runs.
+struct LiveLevels {
+    bool   live = false;
+    float  inDb = -120.f, outDb = -120.f;          // block peaks, dBFS
+    float  compDb = 0.f;                           // compressor GR (<= 0)
+    bool   gateOn = false, gateOpen = true;
+    double delayMs = 0;                            // queued toward the SignaLink
+};
+
+// The meter panel: mic in, level to the SignaLink with its pickup
+// threshold (amber, once measured) and the limiter ceiling (red),
+// compressor reduction, gate state, queue delay. Bars hold their peak
+// and fall back ~20 dB/s so speech reads as a level, not a flicker.
+class LiveMeter : public QWidget {
+public:
+    explicit LiveMeter(QWidget* parent = nullptr);
+    void setLevels(const LiveLevels& l);
+    void setMarks(float thresholdDb, float ceilingDb);   // NaN = not known
+    QSize sizeHint() const override { return {560, 112}; }
+
+protected:
+    void paintEvent(QPaintEvent*) override;
+
+private:
+    LiveLevels l_;
+    float inShown_ = -120.f, outShown_ = -120.f, compShown_ = 0.f;
+    float thrDb_ = std::numeric_limits<float>::quiet_NaN();
+    float ceilDb_ = -1.f;
+};
+
 // Voice keyer EQ editor (AUDIO ▾ → Voice keyer EQ…). Non-modal and LIVE:
 // every edit (preset, checkbox, number) re-renders the VK messages from
 // their untouched takes ~0.4 s after the last change — no Apply step
@@ -42,11 +73,18 @@ class VoiceEqDialog : public QDialog {
 public:
     explicit VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent = nullptr);
     void setStatus(const QString& text);
+    void setLiveLevels(const LiveLevels& l);
+    void setPickupThreshold(float db);             // NaN = not measured
+    // Threshold finder progress: running + the tone level now, or done.
+    void setCalibration(bool running, const QString& text);
 
 signals:
     void applyRequested(const ttc::VoiceEqSettings& s);
     // Apply first, then play this slot on the PC speakers (nothing keyed).
     void listenRequested(int slot, const ttc::VoiceEqSettings& s);
+    void calibrateStartRequested();                // play the rising tone
+    void calibrateMarkRequested();                 // "the light just came on"
+    void calibrateCancelRequested();
 
 private:
     VoiceEqSettings collect() const;
@@ -85,6 +123,11 @@ private:
     QComboBox*   target_  = nullptr;
     VoiceEqCurve* curve_  = nullptr;
     QLabel*      status_  = nullptr;
+    LiveMeter*   meter_   = nullptr;
+    QPushButton* calBtn_  = nullptr;
+    QPushButton* calMark_ = nullptr;
+    QLabel*      calText_ = nullptr;
+    bool         calRunning_ = false;
     QTimer*      applyTimer_ = nullptr;           // debounces live apply
     bool         loading_ = false;
 };

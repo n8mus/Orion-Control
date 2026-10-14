@@ -25,6 +25,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMenu>
+#include <QProcess>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QLabel>
@@ -37,6 +38,7 @@
 #include <QTimer>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace ttc {
 
@@ -45,6 +47,8 @@ namespace ttc {
 // live USB mic in a quiet room reads ~4 % peak; silence reads 0).
 static constexpr double kVkMinSeconds = 0.5;
 static constexpr double kVkMinPeak    = 0.005;
+// SignaLink pickup finder: tone from -60 dBFS rising 2 dB/s to -6 dBFS.
+static constexpr double kCalStartDb = -60.0, kCalDbPerSec = 2.0, kCalEndDb = -6.0;
 
 // Manual tune: the CAT set has no "tune button" command (*TTT needs the
 // internal tuner enabled), so reproduce it: steady carrier at the set watts
@@ -268,6 +272,86 @@ void MainWindow::showVoiceEq() {
                 [this](const VoiceEqSettings& s) {
                     if (live_ && liveMic_) live_->setSettings(s);   // as you talk
                 });
+        // Live meter: ~10 updates a second while the window is open.
+        auto* meterTick = new QTimer(dlg);
+        meterTick->setInterval(100);
+        connect(meterTick, &QTimer::timeout, this, [this] {
+            if (!vkEqDlg_) return;
+            LiveLevels l;
+            l.live = liveMic_ && live_ && live_->running();
+            if (l.live) {
+                l.inDb = live_->inputPeakDb();
+                l.outDb = live_->outputPeakDb();
+                l.compDb = live_->compGrDb();
+                l.gateOn = live_->gateOn();
+                l.gateOpen = live_->gateOpen();
+                l.delayMs = live_->backlogMs();
+            }
+            vkEqDlg_->setLiveLevels(l);
+            if (calProc_) {                        // pickup finder's tone level
+                const double db = kCalStartDb + kCalDbPerSec * calClock_.elapsed() / 1000.0;
+                if (db > kCalEndDb)
+                    stopPickupCal("No light by -6 dBFS — check the SignaLink's TX "
+                                  "knob is not at zero, then try again.");
+                else
+                    vkEqDlg_->setCalibration(true, QString("Tone now %1 dBFS — click "
+                        "\"Light is on\" the moment the PTT light comes on")
+                        .arg(db, 0, 'f', 0));
+            }
+        });
+        meterTick->start();
+        const QVariant thr = QSettings().value("live/pickupDb");
+        dlg->setPickupThreshold(thr.isValid() ? thr.toFloat()
+                                              : std::numeric_limits<float>::quiet_NaN());
+        connect(dlg, &VoiceEqDialog::calibrateStartRequested, this, [this] {
+            if (radioSink_.isEmpty()) {
+                vkEqDlg_->setCalibration(false, "SignaLink not found");
+                return;
+            }
+            if (dvrTxPlayback_ || radioTx_) {
+                vkEqDlg_->setCalibration(false, "Unkey the radio first — the tone "
+                                                "would go out on the air");
+                return;
+            }
+            // 1 kHz, rising kCalDbPerSec from kCalStartDb; written whole and
+            // played in real time, so the level at any moment is a straight
+            // line from when pacat started.
+            const int secs = int((kCalEndDb - kCalStartDb) / kCalDbPerSec) + 1;
+            QByteArray pcm(qsizetype(48000) * secs * 2, Qt::Uninitialized);
+            auto* d = reinterpret_cast<qint16*>(pcm.data());
+            for (int i = 0; i < 48000 * secs; ++i) {
+                const double t = i / 48000.0;
+                const double amp = std::pow(10.0, (kCalStartDb + kCalDbPerSec * t) / 20.0);
+                d[i] = qint16(std::lround(std::min(amp, 1.0) * 32000.0
+                                          * std::sin(2 * M_PI * 1000.0 * t)));
+            }
+            if (live_) live_->setMuted(true);       // only the tone meanwhile
+            auto* p = new QProcess(this);
+            calProc_ = p;
+            p->start("pacat", {"--playback", "--raw", "--format=s16le",
+                               "--rate=48000", "--channels=1",
+                               "--latency-msec=30", "--device=" + radioSink_});
+            if (!p->waitForStarted(2000)) {
+                stopPickupCal("could not start the tone");
+                return;
+            }
+            p->write(pcm);
+            calClock_.start();
+            vkEqDlg_->setCalibration(true, "Tone starting…");
+        });
+        connect(dlg, &VoiceEqDialog::calibrateMarkRequested, this, [this] {
+            if (!calProc_) return;
+            // Back off ~0.3 s for the reaction time; 2 dB/s makes that 0.6 dB.
+            const double db = kCalStartDb
+                + kCalDbPerSec * std::max(0.0, calClock_.elapsed() / 1000.0 - 0.3);
+            QSettings().setValue("live/pickupDb", db);
+            if (vkEqDlg_) vkEqDlg_->setPickupThreshold(float(db));
+            stopPickupCal(QString("SignaLink picks up at about %1 dBFS — the amber "
+                                  "mark. Keep your voice above it.").arg(db, 0, 'f', 0));
+        });
+        connect(dlg, &VoiceEqDialog::calibrateCancelRequested, this,
+                [this] { stopPickupCal("Stopped."); });
+        connect(dlg, &QObject::destroyed, this, [this] { stopPickupCal(QString()); });
         connect(dlg, &VoiceEqDialog::listenRequested, this,
                 [this, apply](int slot, const VoiceEqSettings& s) {
                     stopVoicePlayback();           // never re-render under TX
@@ -1629,6 +1713,17 @@ void MainWindow::setLiveMic(bool on) {
         statusBar()->showMessage("LIVE MIC off — front mic and your voice "
                                  "settings are back", 6000);
     }
+}
+
+void MainWindow::stopPickupCal(const QString& text) {
+    if (calProc_) {
+        calProc_->kill();
+        calProc_->waitForFinished(500);
+        calProc_->deleteLater();
+        calProc_ = nullptr;
+    }
+    if (live_) live_->setMuted(false);
+    if (vkEqDlg_) vkEqDlg_->setCalibration(false, text);
 }
 
 } // namespace ttc

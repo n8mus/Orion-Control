@@ -20,6 +20,7 @@ class VoiceEqCurve : public QWidget {
 public:
     explicit VoiceEqCurve(QWidget* parent = nullptr);
     void setSettings(const VoiceEqSettings& s) { s_ = s; update(); }
+    void setTarget(int idx) { target_ = idx; update(); }   // voiceEqTargets()
     QSize sizeHint() const override { return {560, 200}; }
 
 protected:
@@ -27,6 +28,7 @@ protected:
 
 private:
     VoiceEqSettings s_;
+    int target_ = 0;
 };
 
 // Voice keyer EQ editor (AUDIO ▾ → Voice keyer EQ…). Non-modal and LIVE:
@@ -62,6 +64,7 @@ private:
     QCheckBox*   enabled_ = nullptr;
     QComboBox*   preset_  = nullptr;
     QComboBox*   slot_    = nullptr;
+    QComboBox*   target_  = nullptr;
     VoiceEqCurve* curve_  = nullptr;
     QLabel*      status_  = nullptr;
     QTimer*      applyTimer_ = nullptr;           // debounces live apply

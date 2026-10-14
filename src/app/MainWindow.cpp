@@ -1106,7 +1106,7 @@ MainWindow::MainWindow(QWidget* parent)
             });
     connect(skimEnable_, &QAction::toggled, this, [this, pushSpots](bool on) {
         QSettings().setValue("skim/enabled", on);
-        skim_->setEnabled(on);
+        applySkimGate();
         const quint16 sp =
             quint16(QSettings().value("skim/telnetPort", 7300).toUInt());
         if (on) skimSrv_->start(sp);
@@ -2103,6 +2103,7 @@ MainWindow::MainWindow(QWidget* parent)
             panel_->showMode(m);                    // sidebar mirrors the front panel
         if (m != rigMode_) {
             rigMode_ = m;
+            applySkimGate();                        // CW-only skimmer follows
             refreshPassbandOverlay();
             refreshNotchOverlay();                  // marker side flips with sideband
             if (bandStamp_) bandStamp_->start();    // keep the stack register current

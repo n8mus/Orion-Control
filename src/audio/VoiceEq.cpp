@@ -51,7 +51,8 @@ QString VoiceEqSettings::slotName(int i) {
 }
 
 QStringList VoiceEqSettings::presetNames() {
-    return {"Flat", "SSB voice", "Wide SSB"};
+    return {"Flat", "SSB voice", "Wide SSB", "DX punch (2.4 kHz)",
+            "ESSB smooth"};
 }
 
 // SSB voice: the usual broadcast-voice moves for a dynamic mic on SSB —
@@ -60,6 +61,37 @@ QStringList VoiceEqSettings::presetNames() {
 // gentle low shelf) for the Orion's 3.9 kHz TX filter.
 VoiceEqSettings VoiceEqSettings::preset(Preset p) {
     VoiceEqSettings s;
+    if (p == Preset::DxPunch) {
+        // Heil DX target, fitted inside a 300-2700 Hz (2.4 kHz) TX filter:
+        // within ~1-2 dB of it across the passband, steep outside so the
+        // ALC/processor never spend drive on audio the filter removes.
+        // Pair with TX BW 2400 on the TX bar.
+        s.enabled = true;
+        s.bands[0] = band(230.f, 0, 0.707f, true, FT::HighPass, 24);
+        s.bands[1] = band(120.f, 0, 0.707f, false, FT::LowShelf);
+        s.bands[2] = band(450.f, -2.f, 1.0f, true, FT::Peak);
+        s.bands[3] = band(800.f, 0, 1.0f, false, FT::Peak);
+        s.bands[4] = band(1600.f, 2.f, 1.0f, true, FT::Peak);
+        s.bands[5] = band(2600.f, 6.f, 1.3f, true, FT::Peak);
+        s.bands[6] = band(3000.f, 0, 0.707f, false, FT::HighShelf);
+        s.bands[7] = band(2900.f, 0, 0.707f, true, FT::LowPass, 24);
+        return s;
+    }
+    if (p == Preset::EssbSmooth) {
+        // Full, smooth bottom (flat to 60 Hz, gentle shelf) with the mud
+        // trimmed around 300 Hz and a broad +3..4.5 dB lift from 2 to
+        // 3.8 kHz — for the Orion's 50-3900 Hz TX filter.
+        s.enabled = true;
+        s.bands[0] = band(40.f, 0, 0.707f, true, FT::HighPass, 12);
+        s.bands[1] = band(110.f, 2.f, 0.6f, true, FT::LowShelf);
+        s.bands[2] = band(300.f, -2.5f, 0.8f, true, FT::Peak);
+        s.bands[3] = band(800.f, 0, 1.0f, false, FT::Peak);
+        s.bands[4] = band(1800.f, 1.5f, 0.7f, true, FT::Peak);
+        s.bands[5] = band(3000.f, 3.f, 0.9f, true, FT::Peak);
+        s.bands[6] = band(3400.f, 1.5f, 0.707f, true, FT::HighShelf);
+        s.bands[7] = band(3800.f, 0, 0.707f, false, FT::LowPass, 24);
+        return s;
+    }
     s.enabled = p != Preset::Flat;
     const bool wide = p == Preset::WideSsb;
     const bool on = p != Preset::Flat;
@@ -126,6 +158,42 @@ float VoiceEqSettings::responseDb(float hz) const {
     for (const auto& b : bands)
         db += ClientEq::bandMagnitudeDb(b, hz, 48000.0);
     return db;
+}
+
+float VoiceEqTarget::dbAt(float hz) const {
+    if (pts.empty()) return 0.0f;
+    if (hz <= pts.front().hz) return pts.front().db;
+    if (hz >= pts.back().hz) return pts.back().db;
+    for (size_t i = 1; i < pts.size(); ++i)
+        if (hz <= pts[i].hz) {
+            const float t = std::log(hz / pts[i - 1].hz)
+                          / std::log(pts[i].hz / pts[i - 1].hz);
+            return pts[i - 1].db + t * (pts[i].db - pts[i - 1].db);
+        }
+    return pts.back().db;
+}
+
+const std::vector<VoiceEqTarget>& voiceEqTargets() {
+    static const std::vector<VoiceEqTarget> t = {
+        {"None", {}},
+        {"AT&T 1959", {{50, -20}, {100, -12}, {200, -6}, {300, -2}, {500, 0},
+                       {1000, 0}, {1500, 1}, {2000, 3}, {2500, 5}, {3000, 4},
+                       {3400, 0}, {4000, -6}, {5000, -12}}},
+        {"Heil DX", {{50, -25}, {100, -18}, {200, -10}, {300, -4}, {500, -1},
+                     {1000, 0}, {1500, 2}, {2000, 4}, {2500, 6}, {2700, 6},
+                     {3000, 5}, {3400, -2}, {4000, -10}, {5000, -18}}},
+        {"Astatic D-104", {{50, -32}, {100, -22}, {200, -14}, {300, -8},
+                           {500, -4}, {1000, 0}, {1500, 2}, {2000, 5},
+                           {2500, 8}, {3000, 10}, {3500, 7}, {4000, 2},
+                           {5000, -10}, {7000, -22}}},
+        {"Shure 444", {{50, -15}, {100, -10}, {200, -4}, {300, -1}, {500, 0},
+                       {1000, 1}, {1500, 2}, {2000, 3}, {2500, 4}, {3000, 4},
+                       {3500, 3}, {4000, 1}, {5000, -3}, {7000, -10}}},
+        {"Heil HC-5", {{50, -28}, {100, -18}, {200, -8}, {300, -3}, {500, 0},
+                       {1000, 0}, {1500, 2}, {2000, 4}, {2500, 6}, {3000, 5},
+                       {3500, 1}, {4000, -5}, {5000, -15}}},
+    };
+    return t;
 }
 
 bool renderVoiceEq(const QString& inWav, const QString& outWav,

@@ -485,6 +485,7 @@ void MainWindow::exitBandFrame(int reapplySpanHz) {
 void MainWindow::applyMode(Mode m) {
     radio_->setMode(Rx::Main, m);
     rigMode_ = m;
+    applySkimGate();
     // Prime the poll debounce with the TARGET: steady-state polls keep
     // pendingPolledMode_ equal to the old mode, so a stale report already
     // in flight would count as "seen twice" and revert this set on the

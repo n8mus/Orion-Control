@@ -10,9 +10,11 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPushButton>
+#include <QSettings>
 #include <QSpinBox>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace ttc {
@@ -76,8 +78,22 @@ void VoiceEqCurve::paintEvent(QPaintEvent*) {
         p.drawText(QRectF(0, y - 7, 30, 14), Qt::AlignRight | Qt::AlignVCenter,
                    QString::number(db));
     }
-    QPainterPath path;
     constexpr int kPts = 240;
+    const auto& targets = voiceEqTargets();
+    if (target_ > 0 && target_ < int(targets.size())) {
+        const VoiceEqTarget& t = targets[size_t(target_)];
+        QPainterPath tp;
+        for (int i = 0; i <= kPts; ++i) {
+            const float hz = kLoHz * std::pow(kHiHz / kLoHz, float(i) / kPts);
+            const QPointF pt(xOf(hz), yOf(t.dbAt(hz)));
+            if (i == 0) tp.moveTo(pt); else tp.lineTo(pt);
+        }
+        p.setPen(QPen(QColor(232, 176, 74, 200), 1.5, Qt::DashLine));
+        p.drawPath(tp);
+        p.drawText(QRectF(r.left() + 4, r.top() + 1, 200, 14),
+                   Qt::AlignLeft | Qt::AlignVCenter, "target: " + t.name);
+    }
+    QPainterPath path;
     for (int i = 0; i <= kPts; ++i) {
         const float hz = kLoHz * std::pow(kHiHz / kLoHz, float(i) / kPts);
         const QPointF pt(xOf(hz), yOf(s_.responseDb(hz)));
@@ -107,6 +123,12 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
                         "on the Orion's MON while transmitting into a\n"
                         "dummy load or at low power)");
     top->addWidget(preset_);
+    top->addWidget(new QLabel("Target", this));
+    target_ = new QComboBox(this);
+    for (const VoiceEqTarget& t : voiceEqTargets()) target_->addItem(t.name);
+    target_->setToolTip("A reference curve drawn behind yours (dashed) to\n"
+                        "shape toward — display only. From AetherSDR.");
+    top->addWidget(target_);
     lay->addLayout(top);
 
     curve_ = new VoiceEqCurve(this);
@@ -173,6 +195,14 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     auto* close = new QPushButton("Close", this);
     bRow->addWidget(close);
     lay->addLayout(bRow);
+
+    target_->setCurrentIndex(std::clamp(
+        QSettings().value("vk/eqTarget", 0).toInt(), 0, target_->count() - 1));
+    curve_->setTarget(target_->currentIndex());
+    connect(target_, &QComboBox::currentIndexChanged, this, [this](int i) {
+        curve_->setTarget(i);
+        QSettings().setValue("vk/eqTarget", i);
+    });
 
     applyTimer_ = new QTimer(this);
     applyTimer_->setSingleShot(true);

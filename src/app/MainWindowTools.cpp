@@ -900,7 +900,20 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
                 "band.\nCalls are validated against the country file and "
                 "must repeat (or follow DE)\nbefore they're spotted.")
             .arg(skim_->channelCount()));
-    skim_->setEnabled(skimEnable_->isChecked());
+    // Pause outside CW (operator's call, 2026-10-14): on SSB/AM/FM/digital
+    // nobody reads the skimmer, so its 24 channels stop decoding until the
+    // rig is back in CWU/CWL. "Skim the CW segment" stays ON meanwhile and
+    // the spot server keeps its clients — the decoders just idle.
+    skimCwOnly_ = skimMenu->addAction("Pause outside CW");
+    skimCwOnly_->setCheckable(true);
+    skimCwOnly_->setChecked(QSettings().value("skim/cwOnly", true).toBool());
+    skimCwOnly_->setToolTip("Stop decoding while the radio is in SSB, AM, FM\n"
+                            "or digital; resume as soon as it is back in CW");
+    connect(skimCwOnly_, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("skim/cwOnly", on);
+        applySkimGate();
+    });
+    applySkimGate();
     // Bayes brain A/B: matrix-verified, but defaults only flip after the
     // operator's on-air verdict (house rule) — so it's a plain toggle.
     auto* skimBayes = skimMenu->addAction("Bayes decoder (experimental)");
@@ -1236,6 +1249,26 @@ void MainWindow::setupRotorUi() {
     });
     connect(rotMenu, &QMenu::aboutToShow, this, rotRefresh);
 
+}
+
+} // namespace ttc
+
+namespace ttc {
+
+// The skimmer decodes when it is switched on AND (if "Pause outside CW" is
+// set) the radio is in a CW mode. Called on every mode change.
+void MainWindow::applySkimGate() {
+    if (!skim_ || !skimEnable_) return;
+    const bool cw = rigMode_ == Mode::CWU || rigMode_ == Mode::CWL;
+    const bool cwOnly = skimCwOnly_ && skimCwOnly_->isChecked();
+    const bool run = skimEnable_->isChecked() && (cw || !cwOnly);
+    if (int(run) == skimRunning_) return;
+    const bool first = skimRunning_ < 0;
+    skimRunning_ = int(run);
+    skim_->setEnabled(run);
+    if (!first && skimEnable_->isChecked() && cwOnly)
+        statusBar()->showMessage(run ? "CW skimmer running (CW mode)"
+                                     : "CW skimmer paused — not in CW", 4000);
 }
 
 } // namespace ttc

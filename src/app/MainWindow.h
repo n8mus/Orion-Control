@@ -488,6 +488,9 @@ private:
     bool rxRadio_ = false;                     // source: radio audio vs SDR
     SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank
     QAction* skimEnable_ = nullptr;            // SKIM menu on/off toggle
+    QAction* skimCwOnly_ = nullptr;            // SKIM: pause outside CW modes
+    int      skimRunning_ = -1;                // decoders on (1/0), -1 = not yet set
+    void     applySkimGate();                  // skimmer on AND (CW or not CW-only)
     QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
     SkimServer* skimSrv_ = nullptr;            // local RBN telnet (:7300)
     SkimmerWindow* skimWin_ = nullptr;         // band map (lazy)

@@ -4,6 +4,7 @@
 #include <QString>
 #include <QStringList>
 #include <array>
+#include <vector>
 
 #include "dsp/ClientEq.h"
 
@@ -31,7 +32,10 @@ struct VoiceEqSettings {
     static QString slotName(int i);                // "High-pass", "Peak 1" …
 
     // Starting points to tune by ear on the MON, not measured answers.
-    enum class Preset { Flat = 0, SsbVoice = 1, WideSsb = 2 };
+    // DxPunch is fitted to the Heil DX target inside a 2.4 kHz TX filter;
+    // EssbSmooth keeps flat lows and a broad high lift for 50-3900 Hz.
+    enum class Preset { Flat = 0, SsbVoice = 1, WideSsb = 2, DxPunch = 3,
+                        EssbSmooth = 4 };
     static QStringList presetNames();
     static VoiceEqSettings preset(Preset p);
 
@@ -42,6 +46,20 @@ struct VoiceEqSettings {
 
     float responseDb(float hz) const;              // whole curve, for the plot
 };
+
+// Reference mic/speech target curves drawn behind the EQ plot as a shape
+// to steer toward (display only — never applied). Data from AetherSDR's
+// src/gui/ClientEqCurveWidget.cpp (GPL-3, KK7GWY and contributors), which
+// digitised them from their sources: AT&T 1959 speech-transmission
+// optimum, Heil's DX/contest target, and the Astatic D-104, Shure 444 and
+// Heil HC-5 responses. Index 0 = none.
+struct VoiceEqTarget {
+    struct Pt { float hz, db; };
+    QString name;
+    std::vector<Pt> pts;
+    float dbAt(float hz) const;                    // log-frequency interpolation
+};
+const std::vector<VoiceEqTarget>& voiceEqTargets();
 
 // Render inWav (any 16-bit PCM WAV) through the EQ to outWav, then peak-
 // normalize the result to targetPeak so the EQ never changes TX drive

@@ -2,6 +2,7 @@
 #pragma once
 #include <QDialog>
 #include <QWidget>
+#include <functional>
 #include <limits>
 
 #include "audio/VoiceEq.h"
@@ -17,19 +18,42 @@ namespace ttc {
 
 // The EQ response, drawn over the voice range with the Orion's own TX
 // passband edge marked: what the PC shapes inside, what the radio cuts.
+// Drag a band's handle to shape the curve — the interaction model of
+// AetherSDR's ClientEqEditorCanvas: left/right = frequency, up/down =
+// gain (peaks and shelves), Shift+drag or the wheel = Q; high/low-pass
+// handles move in frequency only (their slope is the dB/oct box).
+// Grabbing a band that is off turns it on. Every change goes out through
+// onBandEdited so the band rows — and everything they drive — follow.
 class VoiceEqCurve : public QWidget {
 public:
     explicit VoiceEqCurve(QWidget* parent = nullptr);
     void setSettings(const VoiceEqSettings& s) { s_ = s; update(); }
     void setTarget(int idx) { target_ = idx; update(); }   // voiceEqTargets()
     QSize sizeHint() const override { return {560, 200}; }
+    std::function<void(int band, const ClientEq::BandParams& p)> onBandEdited;
+    std::function<void()> onDragFinished;
 
 protected:
     void paintEvent(QPaintEvent*) override;
+    void mousePressEvent(QMouseEvent*) override;
+    void mouseMoveEvent(QMouseEvent*) override;
+    void mouseReleaseEvent(QMouseEvent*) override;
+    void wheelEvent(QWheelEvent*) override;
 
 private:
+    QRectF plot() const;
+    QPointF handlePos(int band) const;
+    int hitTest(const QPointF& p) const;           // band index or -1
+    float hzAt(double x) const;
+    float dbAt(double y) const;
+    void emitBand(int band, ClientEq::BandParams p);
+
     VoiceEqSettings s_;
     int target_ = 0;
+    int drag_ = -1, hover_ = -1;
+    bool dragQ_ = false;                           // Shift held at grab
+    QPointF dragStart_;
+    float dragStartQ_ = 1.f;
 };
 
 // Live mic levels, pushed ~10x a second by MainWindow while LIVE runs.

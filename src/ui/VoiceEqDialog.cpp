@@ -13,7 +13,9 @@
 #include <QPainterPath>
 #include <QInputDialog>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPushButton>
+#include <QWheelEvent>
 #include <QSettings>
 #include <QSpinBox>
 #include <QTimer>
@@ -52,6 +54,112 @@ const char* kStyle =
 
 VoiceEqCurve::VoiceEqCurve(QWidget* parent) : QWidget(parent) {
     setMinimumHeight(170);
+    setMouseTracking(true);                        // hover highlight + cursor
+}
+
+QRectF VoiceEqCurve::plot() const { return QRectF(rect()).adjusted(34, 8, -8, -20); }
+
+float VoiceEqCurve::hzAt(double x) const {
+    const QRectF r = plot();
+    const double t = std::clamp((x - r.left()) / r.width(), 0.0, 1.0);
+    return float(kLoHz * std::pow(double(kHiHz / kLoHz), t));
+}
+
+float VoiceEqCurve::dbAt(double y) const {
+    const QRectF r = plot();
+    return float((r.center().y() - y) / (r.height() / 2) * kDbSpan);
+}
+
+// Peaks and shelves sit at their gain; high/low-pass sit on the total
+// curve at their corner, where the eye looks for them.
+QPointF VoiceEqCurve::handlePos(int i) const {
+    const QRectF r = plot();
+    const auto& b = s_.bands[size_t(i)];
+    const double x = r.left() + r.width() * std::log(std::clamp(b.freqHz, kLoHz, kHiHz) / kLoHz)
+                                / std::log(kHiHz / kLoHz);
+    const auto t = VoiceEqSettings::slotType(i);
+    const bool slope = t == ClientEq::FilterType::HighPass || t == ClientEq::FilterType::LowPass;
+    VoiceEqSettings on = s_;
+    on.enabled = true;
+    const float db = slope ? on.responseDb(b.freqHz) : (b.enabled ? b.gainDb : 0.f);
+    const double y = r.center().y() - std::clamp(db, -kDbSpan, kDbSpan) / kDbSpan * r.height() / 2;
+    return {x, y};
+}
+
+int VoiceEqCurve::hitTest(const QPointF& p) const {
+    int best = -1;
+    double bestD = 10.0;                           // px grab radius
+    for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
+        const double d = std::hypot(handlePos(i).x() - p.x(), handlePos(i).y() - p.y());
+        if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+}
+
+void VoiceEqCurve::emitBand(int band, ClientEq::BandParams p) {
+    // The band rows' own limits, so the spin boxes never clamp under us.
+    p.freqHz = std::clamp(std::round(p.freqHz / 5.f) * 5.f, 20.f, 8000.f);
+    p.gainDb = std::clamp(std::round(p.gainDb * 2.f) / 2.f, -15.f, 15.f);
+    p.q = std::clamp(std::round(p.q * 100.f) / 100.f, 0.3f, 8.f);
+    s_.bands[size_t(band)] = p;
+    if (onBandEdited) onBandEdited(band, p);
+    update();
+}
+
+void VoiceEqCurve::mousePressEvent(QMouseEvent* e) {
+    if (e->button() != Qt::LeftButton) return;
+    drag_ = hitTest(e->position());
+    if (drag_ < 0) return;
+    dragQ_ = e->modifiers() & Qt::ShiftModifier;
+    dragStart_ = e->position();
+    dragStartQ_ = s_.bands[size_t(drag_)].q;
+    ClientEq::BandParams b = s_.bands[size_t(drag_)];
+    if (!b.enabled || !s_.enabled) {               // grabbing it means using it
+        b.enabled = true;
+        s_.enabled = true;
+        emitBand(drag_, b);
+    }
+    setCursor(Qt::ClosedHandCursor);
+}
+
+void VoiceEqCurve::mouseMoveEvent(QMouseEvent* e) {
+    if (drag_ < 0) {
+        const int h = hitTest(e->position());
+        if (h != hover_) { hover_ = h; update(); }
+        setCursor(h >= 0 ? Qt::OpenHandCursor : Qt::ArrowCursor);
+        return;
+    }
+    ClientEq::BandParams b = s_.bands[size_t(drag_)];
+    const auto t = VoiceEqSettings::slotType(drag_);
+    const bool slope = t == ClientEq::FilterType::HighPass || t == ClientEq::FilterType::LowPass;
+    if (dragQ_ && !slope) {
+        // Shift-drag: Q, exponential so half the height spans a decade.
+        const double dy = dragStart_.y() - e->position().y();
+        b.q = float(dragStartQ_ * std::pow(10.0, dy / std::max(1.0, plot().height() / 2)));
+    } else {
+        b.freqHz = hzAt(e->position().x());
+        if (!slope) b.gainDb = dbAt(e->position().y());
+    }
+    emitBand(drag_, b);
+}
+
+void VoiceEqCurve::mouseReleaseEvent(QMouseEvent*) {
+    if (drag_ < 0) return;
+    drag_ = -1;
+    setCursor(Qt::OpenHandCursor);
+    update();
+    if (onDragFinished) onDragFinished();
+}
+
+void VoiceEqCurve::wheelEvent(QWheelEvent* e) {
+    const int band = drag_ >= 0 ? drag_ : hitTest(e->position());
+    const auto t = band >= 0 ? VoiceEqSettings::slotType(band) : ClientEq::FilterType::Peak;
+    if (band < 0 || t == ClientEq::FilterType::HighPass || t == ClientEq::FilterType::LowPass)
+        return;
+    ClientEq::BandParams b = s_.bands[size_t(band)];
+    b.q *= float(std::pow(1.1, e->angleDelta().y() / 120.0));   // ~10 % a notch
+    emitBand(band, b);
+    e->accept();
 }
 
 void VoiceEqCurve::paintEvent(QPaintEvent*) {
@@ -114,6 +222,46 @@ void VoiceEqCurve::paintEvent(QPaintEvent*) {
     }
     p.setPen(QPen(s_.enabled ? QColor(80, 230, 120) : QColor(90, 100, 110), 2));
     p.drawPath(path);
+
+    // Band handles: numbered dots, filled when the band is on, hollow when
+    // off; the one under the mouse or in hand is ringed, with a readout.
+    QFont hf = p.font();
+    hf.setPixelSize(10);
+    hf.setBold(true);
+    p.setFont(hf);
+    for (int i = 0; i < VoiceEqSettings::kBands; ++i) {
+        const auto& b = s_.bands[size_t(i)];
+        const QPointF c = handlePos(i);
+        const bool live = s_.enabled && b.enabled;
+        const bool hot = i == drag_ || i == hover_;
+        p.setPen(QPen(live ? QColor(232, 176, 74) : QColor(110, 125, 140), hot ? 2.5 : 1.5));
+        p.setBrush(live ? QColor(232, 176, 74, hot ? 255 : 190) : QColor(20, 27, 36));
+        p.drawEllipse(c, hot ? 8.5 : 7.0, hot ? 8.5 : 7.0);
+        p.setPen(live ? QColor(20, 27, 36) : QColor(150, 165, 180));
+        // Labelled like the band rows: HP, LS, peaks 1-4, HS, LP.
+        static const char* kTag[VoiceEqSettings::kBands] =
+            {"HP", "LS", "1", "2", "3", "4", "HS", "LP"};
+        QFont tf = hf;
+        tf.setPixelSize(i == 0 || i == 1 || i >= 6 ? 8 : 10);
+        p.setFont(tf);
+        p.drawText(QRectF(c.x() - 7, c.y() - 7, 14, 14), Qt::AlignCenter, kTag[i]);
+        p.setFont(hf);
+        if (hot) {
+            const auto t = VoiceEqSettings::slotType(i);
+            const bool slope = t == ClientEq::FilterType::HighPass
+                            || t == ClientEq::FilterType::LowPass;
+            const QString txt = slope
+                ? QString("%1  %2 Hz").arg(VoiceEqSettings::slotName(i)).arg(b.freqHz, 0, 'f', 0)
+                : QString("%1  %2 Hz  %3 dB  Q %4").arg(VoiceEqSettings::slotName(i))
+                      .arg(b.freqHz, 0, 'f', 0).arg(b.gainDb, 0, 'f', 1).arg(b.q, 0, 'f', 2);
+            const QRectF box(std::min(c.x() + 10, r.right() - 210.0), std::max(c.y() - 22, r.top()), 210, 15);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(11, 16, 22, 220));
+            p.drawRect(box);
+            p.setPen(QColor(232, 176, 74));
+            p.drawText(box.adjusted(4, 0, 0, 0), Qt::AlignVCenter, txt);
+        }
+    }
 }
 
 LiveMeter::LiveMeter(QWidget* parent) : QWidget(parent) {
@@ -247,8 +395,9 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
     fillProfiles(QSettings().value("vk/eqProfile").toString());
     // Edits keep the profile's name, marked "(modified)" until saved
     // (operator's ask: tweak the profile he is on, not a nameless curve).
-    modified_ = QSettings().value("vk/eqProfileModified", false).toBool();
-    setModified(modified_);
+    const bool wasModified = QSettings().value("vk/eqProfileModified", false).toBool();
+    modified_ = false;                             // so the mark is drawn now
+    setModified(wasModified);
     const auto syncDelete = [this, del] {
         del->setEnabled(preset_->currentData().toString().startsWith("u:"));
     };
@@ -394,6 +543,19 @@ VoiceEqDialog::VoiceEqDialog(const VoiceEqSettings& s, QWidget* parent)
         applyTimer_->start();                      // VK messages: when settled
     };
     connect(enabled_, &QCheckBox::toggled, this, edited);
+    // Curve drags write the band rows (quietly) and run one edit — the
+    // same path as typing the numbers.
+    curve_->onBandEdited = [this, edited](int i, const ClientEq::BandParams& b) {
+        loading_ = true;
+        enabled_->setChecked(enabled_->isChecked() || b.enabled);
+        Row& row = rows_[i];
+        row.on->setChecked(b.enabled);
+        row.hz->setValue(int(std::lround(b.freqHz)));
+        if (row.db) row.db->setValue(b.gainDb);
+        if (row.q) row.q->setValue(b.q);
+        loading_ = false;
+        edited();
+    };
     for (QCheckBox* c : {dyn_.gateOn, dyn_.deessOn, dyn_.compOn, dyn_.limOn, dyn_.limDc})
         connect(c, &QCheckBox::toggled, this, edited);
     for (QDoubleSpinBox* d : {dyn_.gateThr, dyn_.gateRatio, dyn_.gateFloor,
@@ -493,6 +655,7 @@ void VoiceEqDialog::setActiveProfile(const QString& key) {
 // The shown profile's name gets " (modified)" while the settings on screen
 // differ from what it holds; the item's real name is restored by refilling.
 void VoiceEqDialog::setModified(bool m) {
+    if (m && modified_) return;                    // already marked (drags fire a lot)
     modified_ = m;
     QSettings().setValue("vk/eqProfileModified", m);
     const int idx = preset_->currentIndex();

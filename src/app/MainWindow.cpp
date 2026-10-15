@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/MainWindow.h"
+#include "audio/LiveVoice.h"
 #include "ui/TuneDialogs.h"
 #ifdef HAVE_WDSP
 #include "sdr/SdrRx.h"
@@ -861,6 +862,17 @@ MainWindow::MainWindow(QWidget* parent)
     audioMenu->addSeparator();
     connect(audioMenu->addAction("Voice keyer EQ & dynamics…"), &QAction::triggered,
             this, &MainWindow::showVoiceEq);
+#ifdef HAVE_RADE
+    radeTxAct_ = audioMenu->addAction("FreeDV RADE transmit (key with MOX / space)");
+    radeTxAct_->setCheckable(true);
+    radeTxAct_->setToolTip(
+        "Your mic -> RADE digital voice -> SignaLink (the LIVE path). Key with\n"
+        "MOX or the space bar: on release the console sends the end-of-over\n"
+        "with your callsign, THEN drops PTT. Radio: USB, speech processor OFF,\n"
+        "TX filter wide enough for ~700-2300 Hz; set drive with the SignaLink\n"
+        "TX knob so ALC just moves. Off again at every start.");
+    connect(radeTxAct_, &QAction::toggled, this, &MainWindow::setRadeTx);
+#endif
     audioBtn->setMenu(audioMenu);
     topLay->addSpacing(8);
     topLay->addWidget(audioBtn);
@@ -2380,10 +2392,29 @@ MainWindow::MainWindow(QWidget* parent)
             txBar_->showTuneActive(false);
             stopManualTune();
         }
+        // RADE: the end of over (callsign) must be on the air before PTT
+        // drops — hold the key until LiveVoice says it has played out
+        // (~0.5-0.9 s), with a 2 s backstop.
+        if (!on && radeTxOn_ && live_ && live_->rade()) {
+            radeUnkeyPending_ = true;
+            moxFailsafe_->stop();
+            live_->endOverRade();
+            statusBar()->showMessage("RADE: sending the end of over with your call…");
+            QTimer::singleShot(2000, this, [this] {
+                if (!radeUnkeyPending_) return;
+                radeUnkeyPending_ = false;
+                radio_->setPtt(false);
+                statusBar()->showMessage("RADE: un-keyed (end-of-over backstop)", 4000);
+            });
+            return;
+        }
+        radeUnkeyPending_ = false;
         radio_->setPtt(on);
         if (on) {
             moxFailsafe_->start();
-            statusBar()->showMessage("MOX: transmitting — click MOX to un-key");
+            statusBar()->showMessage(radeTxOn_
+                ? QStringLiteral("MOX: transmitting RADE — talk; MOX / space again to end the over")
+                : QStringLiteral("MOX: transmitting — click MOX to un-key"));
         } else {
             moxFailsafe_->stop();
             statusBar()->showMessage("MOX: un-keyed", 3000);

@@ -11,6 +11,8 @@ class QProcess;
 
 namespace ttc {
 
+class RadeTx;
+
 // LIVE MIC (PC voice chain phase 2): the operator's mic, through the same
 // gate -> EQ -> de-esser -> compressor -> limiter chain as the VK
 // messages, streamed into the radio's sound device (SignaLink) the whole
@@ -38,6 +40,16 @@ public:
     // meanwhile; the two must not mix).
     void setMuted(bool m) { muted_ = m; }
 
+    // FreeDV RADE transmit: the mic is encoded to RADE modem audio instead
+    // of going through the voice chain (false = no RADE in this build).
+    bool setRade(bool on, const QString& callsign);
+    bool rade() const { return radeTx_ != nullptr; }
+    // MOX released: the end-of-over frame (callsign) + 200 ms silence go
+    // out, then silence; radeOverSent() once it has all played into the
+    // SignaLink — only then may PTT drop.
+    void endOverRade();
+    bool radeEnding() const { return radeEnding_; }
+
     // Meters of the last processed block, for the UI.
     float inputPeakDb() const { return inPeakDb_; }
     // Audio queued between us and the SignaLink, ms (what the operator
@@ -52,6 +64,7 @@ public:
 
 signals:
     void failed(const QString& why);
+    void radeOverSent();
 
 private:
     void onCaptured();
@@ -69,6 +82,9 @@ private:
     int probeFd_ = -1;                             // read end of pacat's stdin,
                                                    // opened only to measure it
     int dropped_ = 0;
+    RadeTx* radeTx_ = nullptr;
+    bool radeEnding_ = false, radeDrainArmed_ = false;
+    void onCapturedRade(int take);
 };
 
 } // namespace ttc

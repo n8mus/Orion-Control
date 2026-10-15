@@ -11,6 +11,7 @@
 #include "ui/VoiceEqDialog.h"
 #include "audio/VoiceEq.h"
 #include "audio/LiveVoice.h"
+#include <QSignalBlocker>
 
 #include <QVBoxLayout>
 
@@ -1767,6 +1768,12 @@ void MainWindow::setLiveMic(bool on) {
                 setLiveMic(false);
                 statusBar()->showMessage("LIVE MIC stopped: " + why, 10000);
             });
+            connect(live_, &LiveVoice::radeOverSent, this, [this] {
+                if (!radeUnkeyPending_) return;
+                radeUnkeyPending_ = false;
+                radio_->setPtt(false);
+                statusBar()->showMessage("RADE: end of over sent — un-keyed", 3000);
+            });
         }
         if (!live_->start(mic, radioSink_, VoiceEqSettings::load()))
             return refuse("could not start the audio stream");
@@ -1779,6 +1786,11 @@ void MainWindow::setLiveMic(bool on) {
                     "rear line input (DIG). Key with your PTT.")
                 .arg(ClipDeck::sourceLabel(mic)), 10000);
     } else {
+        if (radeTxOn_) {                           // RADE rides LIVE: it goes too
+            radeTxOn_ = radeOwnsLive_ = false;
+            if (radeTxAct_) { const QSignalBlocker b(radeTxAct_); radeTxAct_->setChecked(false); }
+            if (live_) live_->setRade(false, QString());
+        }
         liveMic_ = false;
         if (live_) live_->stop();
         if (liveOwnsLineIn_) {
@@ -1788,6 +1800,40 @@ void MainWindow::setLiveMic(bool on) {
         txBar_->showLiveMic(false);
         statusBar()->showMessage("LIVE MIC off — front mic and your voice "
                                  "settings are back", 6000);
+    }
+}
+
+// AUDIO ▾ → FreeDV RADE transmit: LIVE's mic -> SignaLink path, but the
+// mic is RADE-encoded (RadeTx) instead of voice-processed. Turns LIVE on
+// if it was off (and off again with it). Never on at start-up.
+void MainWindow::setRadeTx(bool on) {
+    if (on == radeTxOn_) return;
+    const auto undo = [this](const QString& why) {
+        if (radeTxAct_) { const QSignalBlocker b(radeTxAct_); radeTxAct_->setChecked(false); }
+        statusBar()->showMessage("RADE TX: " + why, 10000);
+    };
+    if (on) {
+        const bool wasLive = liveMic_;
+        if (!liveMic_) setLiveMic(true);
+        if (!liveMic_ || !live_) return undo("the LIVE mic path would not start");
+        const QString call = QSettings().value("station/callsign", "N8EM").toString().toUpper();
+        if (!live_->setRade(true, call)) {
+            if (!wasLive) setLiveMic(false);
+            return undo("not in this build");
+        }
+        radeTxOn_ = true;
+        radeOwnsLive_ = !wasLive;
+        statusBar()->showMessage(QString("RADE TX armed: mic -> RADE -> SignaLink. Key with MOX / "
+                                         "space; un-key sends the end of over (%1). Processor OFF, "
+                                         "ALC just moving.").arg(call), 15000);
+    } else {
+        radeTxOn_ = false;
+        if (live_) live_->setRade(false, QString());
+        if (radeOwnsLive_) {
+            radeOwnsLive_ = false;
+            setLiveMic(false);
+        }
+        statusBar()->showMessage("RADE TX off — LIVE is normal voice again", 5000);
     }
 }
 

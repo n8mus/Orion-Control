@@ -2,6 +2,10 @@
 #include "audio/LiveVoice.h"
 
 #include <QProcess>
+#include <QTimer>
+#ifdef HAVE_RADE
+#include "sdr/RadeTx.h"
+#endif
 #include <algorithm>
 #include <cmath>
 
@@ -27,11 +31,57 @@ constexpr qint64 kBytesPerMs = 96;                 // 48 kHz s16 mono
 constexpr qint64 kTargetBytes = 40 * kBytesPerMs;
 constexpr qint64 kHardBytes = 120 * kBytesPerMs;
 constexpr float kQuiet = 0.01f;                    // -40 dBFS block peak
+// RADE: the modem comes in 120 ms bursts and must never lose a sample
+// (OFDM), so hold ~130-360 ms queued: prime with silence when it runs low,
+// and absorb the mic-vs-SignaLink clock drift by dropping MIC blocks
+// (before the encoder — a 10 ms speech gap every few seconds) when high.
+constexpr qint64 kRadeLowBytes = 40 * kBytesPerMs;
+constexpr qint64 kRadePrimeBytes = 130 * kBytesPerMs;
+constexpr qint64 kRadeHighBytes = 360 * kBytesPerMs;
+constexpr qint64 kRadeDrainedBytes = 10 * kBytesPerMs;
+constexpr int kRadeDeviceTailMs = 150;             // pacat + SignaLink latency
 }
 
 LiveVoice::LiveVoice(QObject* parent) : QObject(parent) {}
 
-LiveVoice::~LiveVoice() { stop(); }
+LiveVoice::~LiveVoice() {
+    stop();
+#ifdef HAVE_RADE
+    delete radeTx_;
+#endif
+}
+
+bool LiveVoice::setRade(bool on, const QString& callsign) {
+#ifdef HAVE_RADE
+    if (on && !radeTx_) radeTx_ = new RadeTx(callsign.toStdString());
+    else if (on) radeTx_->setCallsign(callsign.toStdString());
+    if (!on) { delete radeTx_; radeTx_ = nullptr; }
+    radeEnding_ = radeDrainArmed_ = false;
+    return on == (radeTx_ != nullptr);
+#else
+    (void)callsign;
+    return !on;
+#endif
+}
+
+void LiveVoice::endOverRade() {
+#ifdef HAVE_RADE
+    if (!radeTx_ || !play_ || radeEnding_) { emit radeOverSent(); return; }
+    std::vector<float> m;
+    radeTx_->endOver(m);
+    QByteArray out;
+    out.reserve(qsizetype(m.size()) * 2);
+    for (float v : m) {
+        const qint16 q = qint16(std::clamp(int(std::lround((muted_ ? 0.f : v) * 32767.f)), -32768, 32767));
+        out.append(reinterpret_cast<const char*>(&q), 2);
+    }
+    play_->write(out);
+    radeEnding_ = true;
+    radeDrainArmed_ = false;
+#else
+    emit radeOverSent();
+#endif
+}
 
 bool LiveVoice::running() const {
     return rec_ && rec_->state() != QProcess::NotRunning
@@ -127,6 +177,7 @@ void LiveVoice::onCaptured() {
     }
     carry_.remove(0, qsizetype(take) * 2);
     inPeakDb_ = 20.f * std::log10(std::max(pk, 1e-6f));
+    if (radeTx_) { onCapturedRade(take); return; }
     for (int o = 0; o < take; o += kBlock) chain_.process(buf_.data() + o, kBlock);
     // Write block by block, dropping whole 10 ms blocks while the queue is
     // over target — quiet ones only, unless it is far over.
@@ -154,6 +205,47 @@ void LiveVoice::onCaptured() {
         queued += kBlock * 2;
     }
     if (!out.isEmpty()) play_->write(out);
+}
+
+void LiveVoice::onCapturedRade(int take) {
+#ifdef HAVE_RADE
+    const qint64 queued = backlogBytes();
+    if (radeEnding_) {
+        // The end of over is in the queue: send nothing more (the mic is
+        // not encoded), and once it has played out into the SignaLink —
+        // plus the device's own latency — PTT may drop.
+        if (queued <= kRadeDrainedBytes && !radeDrainArmed_) {
+            radeDrainArmed_ = true;
+            QTimer::singleShot(kRadeDeviceTailMs, this, [this] {
+                if (!radeEnding_) return;
+                radeEnding_ = radeDrainArmed_ = false;
+                emit radeOverSent();
+            });
+        }
+        outPeakDb_ = -120.f;
+        return;
+    }
+    QByteArray out;
+    if (queued < kRadeLowBytes)                    // starved: prime with silence
+        out.fill('\0', qsizetype(kRadePrimeBytes - queued) & ~qsizetype(1));
+    std::vector<float> m;
+    if (queued > kRadeHighBytes) {
+        ++dropped_;                                // drift: skip this mic chunk
+    } else {
+        radeTx_->process(buf_.data(), take, m);
+    }
+    float opk = 0.f;
+    for (float v : m) opk = std::max(opk, std::fabs(v));
+    if (!m.empty()) outPeakDb_ = muted_ ? -120.f : 20.f * std::log10(std::max(opk, 1e-6f));
+    out.reserve(out.size() + qsizetype(m.size()) * 2);
+    for (float v : m) {
+        const qint16 q = qint16(std::clamp(int(std::lround((muted_ ? 0.f : v) * 32767.f)), -32768, 32767));
+        out.append(reinterpret_cast<const char*>(&q), 2);
+    }
+    if (!out.isEmpty()) play_->write(out);
+#else
+    (void)take;
+#endif
 }
 
 } // namespace ttc

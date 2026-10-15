@@ -47,7 +47,7 @@ jobs:
         run: |
           cmake --build build -j"$(nproc)" --target tentec-console \
             cwtest autogaintest trimtest skimtest watchtest sdrrxtest \
-            raderxtest freedvtest not1mmtest
+            raderxtest radetxtest freedvtest not1mmtest
 
       - name: Quick test tier
         run: |
@@ -57,6 +57,7 @@ jobs:
           ./build/watchtest
           ./build/sdrrxtest      # SDR receive: WDSP chain on synthetic IQ (+ RADE)
           ./build/raderxtest     # RADE on rade_c's off-air recording
+          ./build/radetxtest     # RADE transmit -> receive loopback (offline)
           ./build/freedvtest     # FreeDV Reporter frames, offline
           ./build/not1mmtest     # Not1MM dupe sheet, synthetic log
           TTC_CWLEGACY=1 ./build/cwtest --quick | tee cw.out

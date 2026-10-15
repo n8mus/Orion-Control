@@ -324,6 +324,11 @@ private:
     void setupCopyAssistUi(QMenu* sdrMenu);
     bool liveMic_ = false;
     bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
+    // FreeDV RADE transmit (AUDIO ▾): LIVE in RADE mode; MOX-off waits for
+    // the end-of-over to play out before PTT drops.
+    QAction* radeTxAct_ = nullptr;
+    bool radeTxOn_ = false, radeOwnsLive_ = false, radeUnkeyPending_ = false;
+    void setRadeTx(bool on);
     bool vkRenderBusy_ = false;                // a background VK render runs
     bool vkRenderHasPending_ = false;          // edits arrived meanwhile
     VoiceEqSettings vkRenderPending_;

@@ -461,7 +461,8 @@ if(HAVE_WDSP)
     message(STATUS "Copy Assist: no whisper (pkg-config whisper) — building without")
   endif()
   if(HAVE_RADE)
-    target_sources(tentec-console PRIVATE src/sdr/RadeRx.cpp src/sdr/RadeRx.h)
+    target_sources(tentec-console PRIVATE src/sdr/RadeRx.cpp src/sdr/RadeRx.h
+      src/sdr/RadeTx.cpp src/sdr/RadeTx.h)
     target_compile_definitions(tentec-console PRIVATE HAVE_RADE)
     target_link_libraries(tentec-console PRIVATE ttc::rade)
   endif()
@@ -476,6 +477,13 @@ if(HAVE_RADE)
   target_include_directories(raderxtest PRIVATE src)
   target_compile_definitions(raderxtest PRIVATE RADE_WAV_DIR="${RADE_WAV_DIR}")
   target_link_libraries(raderxtest PRIVATE ttc::rade)
+  # RADE transmit, offline loopback through RadeRx (EOO callsign, band,
+  # level) — never near the radio.
+  add_executable(radetxtest EXCLUDE_FROM_ALL tests/radetxtest.cpp
+    src/sdr/RadeTx.cpp src/sdr/RadeTx.h src/sdr/RadeRx.cpp src/sdr/RadeRx.h)
+  target_include_directories(radetxtest PRIVATE src)
+  target_compile_definitions(radetxtest PRIVATE RADE_WAV_DIR="${RADE_WAV_DIR}")
+  target_link_libraries(radetxtest PRIVATE ttc::rade)
 endif()
 
 if(HAVE_WDSP)

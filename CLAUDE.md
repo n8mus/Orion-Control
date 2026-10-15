@@ -83,6 +83,7 @@ senders and weak-signal cases are the hard set.
 | `vkeqtest` | voice keyer audio chain (AetherSDR-ported gate → EQ → de-esser → compressor → final limiter, src/dsp): EQ vs its analytic curve, `snapToTargets()`, fitted presets on their targets, gate/comp/limiter/de-esser behaviour, look-ahead leveling, profiles + settings JSON (old curves load with dynamics off) | — |
 | `sdrrxtest` | SDR receive chain end to end on synthetic IQ (WDSP via the decimator + resampler, audio tapped, no device): USB tone, LSB rejection, CW carrier at the pitch, AM, RX EQ peak/bypass, limiter/MUTE/BOOST/compressor/gate, NR2 on noise, and (with RADE) rade_c's off-air recording on the dial through WDSP USB -> RADE sync + speech (~70 s). Needs WDSP (FFTW3) | — |
 | `asrtest` | Copy Assist: callsign extraction (one word / letter runs / hyphens / phonetics / trailing number words / non-calls), and with `~/.local/share/n8mus/tentec-console/models/ggml-base.en.bin`: G8SEZ's recording through the 48 kHz feed + VAD + whisper as ONE utterance, faster than real time, and the band-map hint turning "G-I-D-S-E-Z" into G8SEZ. Needs `pkg-config whisper` (Arch `whisper-cpp`); `TTC_ASRDBG=1` logs segments | — |
+| `radetxtest` | FreeDV RADE transmit (`RadeTx`) OFFLINE loopback into RadeRx: G8SEZ's speech -> modem -> sync 97%, speech back, end-of-over decodes N8EM, 98.6% of power in 300-3000 Hz, peaks -4 dBFS, 200 ms silent tail. Never near the radio | — |
 | `raderxtest` | FreeDV RADE receive (`RadeRx`) on rade_c's own 5½-min off-air recording: sync (97%), speech, end-of-over callsigns (4, last VK5KVA), noise never syncs; ~6% of a core | — |
 | `tunetest` | tuner/amp settings table behind the pan's amber tuner box (238C + Titan III, per antenna/band, `tuning.json`): nearest-point lookup, same-kHz overwrite, knob clamping, file round trip | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
@@ -205,6 +206,11 @@ that night's own capture).
   limiter. `third_party/rade` FETCHES rade_c + Opus (SHA-pinned; Arch's
   opus lacks the LPCNet/FARGAN symbols) and commits only the small EOO
   callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
+  **RADE transmit** (AUDIO ▾ → FreeDV RADE transmit): LIVE in RADE mode —
+  mic -> `RadeTx` -> SignaLink, buffer held 130-360 ms (drift drops MIC
+  blocks, never modem). Keyed by MOX/space: MOX-off sends the EOO
+  (callsign, rade_text) + 200 ms, waits for `radeOverSent()` (2 s
+  backstop), THEN drops PTT. Never armed at start-up.
   **Copy Assist** (SDR ▾ → Copy Assist, `src/asr`, AetherSDR's design):
   SdrRx's asr tap (pre gate/EQ/MUTE) -> 16 kHz, noise-floor-tracking VAD
   (quietest-frame-of-2-s floor; pieces 3-7 s: 600 ms quiet, a 250 ms

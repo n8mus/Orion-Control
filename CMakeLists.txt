@@ -413,7 +413,8 @@ target_include_directories(tunetest PRIVATE src)
 target_link_libraries(tunetest PRIVATE Qt6::Core)
 
 if(HAVE_WDSP)
-  target_sources(tentec-console PRIVATE src/sdr/SdrRx.cpp src/sdr/SdrRx.h)
+  target_sources(tentec-console PRIVATE src/sdr/SdrRx.cpp src/sdr/SdrRx.h
+    src/ui/SdrRxDialog.cpp src/ui/SdrRxDialog.h)
   target_compile_definitions(tentec-console PRIVATE HAVE_WDSP)
   target_link_libraries(tentec-console PRIVATE aether::wdsp)
 endif()

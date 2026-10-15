@@ -76,6 +76,7 @@ class TuneEntryDialog;
 class VoiceEqDialog;
 class LiveVoice;
 class SdrRx;
+class SdrRxDialog;
 struct VoiceEqSettings;
 struct VoiceRenderStats;
 class TuneTableDialog;
@@ -308,6 +309,7 @@ private:
     QPointer<VoiceEqDialog> vkEqDlg_;          // non-modal voice keyer EQ
     LiveVoice* live_ = nullptr;          // live mic chain (LIVE button)
     SdrRx* sdrRx_ = nullptr;             // SDR receive audio (null = no WDSP)
+    QPointer<SdrRxDialog> sdrRxDlg_;     // its controls window
     bool liveMic_ = false;
     bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
     bool vkRenderBusy_ = false;                // a background VK render runs

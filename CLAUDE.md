@@ -75,7 +75,7 @@ senders and weak-signal cases are the hard set.
 | `skimtest` | 10-station synthetic segment through the skimmer | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `not1mmtest` | Not1MM contest dupe sheet (`Not1mmLog`) vs a synthetic not1mm.json + ham.db + plugin: dupe_type 1/2/3/4, other contests ignored, Band fallback, inert while Not1MM isn't running; `--real` reads this station's Not1MM read-only | — |
-| `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, station table, tx/rx_report spots, bulk_update replay, clamps); `--live N` watches qso.freedv.org for N s | — |
+| `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, the connect snapshot as the station table: ON AIR / TX n min ago / hours / listening / RX only, band-map vs table-only, rx_report heard spots, clamps); `--live N` watches qso.freedv.org for N s | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `dcutest` | DCU-3 frame parser (streams-while-turning captures) + the rotctld server we put in front of it | — |
@@ -130,7 +130,10 @@ that night's own capture).
 - **Spot pipeline**: sources (cluster telnet, POTA API, own skimmer) →
   `pushSpots` lambda in MainWindow.cpp → `PanadapterWidget::setSpots`.
   Kinds: 'D' DX yellow, 'P' POTA green, 'F' FT8 cyan, 'S' skimmer violet,
-  'V' FreeDV orange (`FreeDvReporter`, qso.freedv.org view-only, Qt WebSockets);
+  'V' FreeDV orange (`FreeDvReporter`, qso.freedv.org view-only, Qt WebSockets:
+  every online station, every band, in the spot table — ON AIR / TX n min
+  ago / listening; only on-air or TX < 20 min reach the band map via
+  `SpotLabel::mapHidden`);
   call text is colored by cqrlog worked-before status (LogbookIndex),
   watch-list hits get an orange ring. While Not1MM runs, its current
   contest's dupes draw gray (`Not1mmLog`: reads not1mm.json + its SQLite

@@ -1088,10 +1088,12 @@ void PanadapterWidget::drawSpots(QPainter& p, int hSpec) {
     struct Vis { int x; const SpotLabel* s; bool lsb; };
     std::vector<Vis> vis;
     for (const SpotLabel& s : spots_) {
+        if (s.mapHidden) continue;
         const qint64 off = s.hz - static_cast<qint64>(centerHz_);
         if (off < viewShiftHz_ - half || off > viewShiftHz_ + half) continue;
-        const bool lsb = s.hz < 5250000                  // voice below 10 MHz is
-                      || (s.hz > 6000000 && s.hz < 8000000); // LSB (60 m excepted)
+        const bool lsb = s.kind != 'V'                   // FreeDV is USB everywhere
+                      && (s.hz < 5250000                 // voice below 10 MHz is
+                          || (s.hz > 6000000 && s.hz < 8000000)); // LSB (60 m excepted)
         vis.push_back({hzToX(static_cast<int>(off)), &s, lsb});
     }
     if (vis.empty()) return;

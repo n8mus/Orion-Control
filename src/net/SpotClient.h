@@ -22,6 +22,7 @@ struct Spot {
     QString grid;            // park grid6 from the POTA API; empty otherwise
     QString spotter;         // who spotted it (cluster lines); empty otherwise
     QString comment;         // the line's comment text, original case
+    bool    mapHidden = false; // spot table only, not drawn on the band map
 };
 
 // Minimal DX-cluster telnet client (the same feed KE9NS PowerSDR's Spotter

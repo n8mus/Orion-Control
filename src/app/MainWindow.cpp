@@ -973,6 +973,7 @@ MainWindow::MainWindow(QWidget* parent)
                     l.status = logStatus(l);
                     l.spotter = s.spotter;
                     l.comment = s.comment;
+                    l.mapHidden = s.mapHidden;
                     needFill(l);
                     labels.push_back(l);
                 }

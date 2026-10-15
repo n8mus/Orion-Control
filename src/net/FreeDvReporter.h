@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 #include <QHash>
+#include <QJsonValue>
+#include <functional>
 #include <QObject>
 #include <QTimer>
 #include <QVector>
@@ -20,12 +22,18 @@ namespace ttc {
 //                                        the server's, the client only answers
 //   server '42["event",{...}]'        -> station table / spots
 // A station table keyed by sid follows new_connection / freq_change /
-// remove_connection (frequency in Hz). Spots, AetherSDR's rules:
-//   tx_report transmitting=true -> the station itself, at its frequency
-//   rx_report with a callsign   -> the HEARD station, at the receiver's
-//                                  frequency, with the SNR
-// freq_change alone never spots (people scan), nor does a bulk_update
-// replay of old tx_reports. Kind 'V'; spots age out after 20 minutes.
+// tx_report / remove_connection (frequency in Hz, last_tx ISO time).
+// Every online station with a callsign and an HF/6 m frequency is a spot
+// (kind 'V') — the spot table's "where is FreeDV right now", every band:
+//   ON AIR          tx_report transmitting=true      (band map too)
+//   TX n min ago    last_tx within 20 min            (band map too)
+//   listening       on a frequency, quiet longer     (spot table only —
+//                   a dozen of them parked on 14.236 would bury the map)
+// plus, AetherSDR's rule, rx_report with a decoded callsign -> the HEARD
+// station at the receiver's frequency with the SNR (20 min). Unlike
+// AetherSDR the snapshot on connect counts too: last_tx carries the real
+// time, so the table is full the moment it connects (measured: 33
+// stations with a frequency on a weekday morning, two on the air).
 class FreeDvReporter : public QObject {
     Q_OBJECT
 public:
@@ -42,7 +50,9 @@ public:
     void handleFrame(const QString& frame);
     std::function<void(const QString&)> send;      // default: the socket
 
-    static constexpr qint64 kSpotLifeSecs = 1200;
+    static constexpr qint64 kSpotLifeSecs = 1200;  // heard spots; "lately" on the map
+    // Test clock (epoch secs); null = the real one.
+    std::function<qint64()> now;
 
 signals:
     void spotsChanged();
@@ -52,11 +62,13 @@ private:
     struct Station {
         QString call, grid, mode;
         qint64 hz = 0;
+        qint64 lastTx = 0, lastUpdate = 0;         // epoch secs, 0 = never
+        bool transmitting = false, rxOnly = false;
     };
     void connectNow();
     void handleEvent(const QString& name, const QJsonObject& o, bool replay);
-    void addSpot(const QString& call, qint64 hz, const QString& comment,
-                 const QString& grid);
+    void addHeard(const QString& call, qint64 hz, const QString& comment);
+    static qint64 isoSecs(const QJsonValue& v);
     void expire();
 
     QWebSocket* ws_ = nullptr;
@@ -64,7 +76,7 @@ private:
     int backoffS_ = 5;
     bool enabled_ = false;
     QHash<QString, Station> stations_;             // by sid
-    QHash<QString, Spot> spots_;                   // by call
+    QHash<QString, Spot> heard_;                   // rx_report finds, by call
 };
 
 } // namespace ttc

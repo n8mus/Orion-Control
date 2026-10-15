@@ -58,6 +58,7 @@ private:
     QPushButton* fPota_ = nullptr;
     QPushButton* fFt8_ = nullptr;
     QPushButton* fSkim_ = nullptr;
+    QPushButton* fFdv_ = nullptr;
     QPushButton* fNeed_ = nullptr;
     QTimer* refresh_ = nullptr;
     bool dirty_ = false;

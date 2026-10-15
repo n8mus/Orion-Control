@@ -107,6 +107,9 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
     chip(&fPota_, "POTA", "Park activations", true);
     chip(&fFt8_, "FT8", "FT8/FT4 skimmer spots", true);
     chip(&fSkim_, "SKIM", "This station's own CW skimmer", true);
+    chip(&fFdv_, "FreeDV", "FreeDV / RADE stations online now, every band "
+                           "(SPOTS ▾ → FreeDV Reporter spots): who is ON AIR, "
+                           "who transmitted lately, who is listening", true);
     chip(&fNeed_, "NEED ONLY",
          "Only rows where the country, this band, or this mode is still "
          "needed", false);
@@ -221,6 +224,7 @@ void SpotTableWindow::rebuild() {
         if (l.kind == 'P' && !fPota_->isChecked()) continue;
         if (l.kind == 'F' && !fFt8_->isChecked()) continue;
         if (l.kind == 'S' && !fSkim_->isChecked()) continue;
+        if (l.kind == 'V' && !fFdv_->isChecked()) continue;
         const QString band = LogbookIndex::bandForHz(l.hz);
         const QString mode = modeGuess(l);
         const bool cRow = contestMode_ && l.contest != 0;

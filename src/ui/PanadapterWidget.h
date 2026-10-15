@@ -90,6 +90,9 @@ struct SpotLabel {
     // (blue), 'W' worked/dupe (gray), 'Z' zero points (dim). 0 = no
     // contest open; the normal colors above apply.
     char contest = 0;
+    // Spot table only (FreeDV stations just sitting on a frequency): the
+    // band map skips it.
+    bool mapHidden = false;
 };
 
 // Spectrum + waterfall panadapter display. The flagship interactions live here:

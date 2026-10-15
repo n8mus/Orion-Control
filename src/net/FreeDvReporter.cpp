@@ -5,7 +5,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QWebSocket>
+#include <algorithm>
 
 namespace ttc {
 
@@ -50,10 +52,8 @@ void FreeDvReporter::setEnabled(bool on) {
         ws_ = nullptr;
     }
     stations_.clear();
-    if (!spots_.isEmpty()) {
-        spots_.clear();
-        emit spotsChanged();
-    }
+    heard_.clear();
+    emit spotsChanged();
     emit statusChanged("FreeDV Reporter: off");
 }
 
@@ -69,6 +69,7 @@ void FreeDvReporter::connectNow() {
         connect(ws_, &QWebSocket::disconnected, this, [this] {
             alive_.stop();
             stations_.clear();                     // a reconnect re-sends it all
+            emit spotsChanged();
             if (!enabled_) return;
             emit statusChanged(QString("FreeDV Reporter: disconnected, retry in %1 s")
                                    .arg(backoffS_));
@@ -104,10 +105,12 @@ void FreeDvReporter::handleFrame(const QString& f) {
     const QJsonArray a = d.array();
     if (a.size() < 1) return;
     const QString name = a.at(0).toString();
-    const size_t before = size_t(spots_.size());
+    static const QSet<QString> kStationEvents = {
+        "bulk_update", "new_connection", "remove_connection", "freq_change",
+        "tx_report", "rx_report"};
     if (name == QLatin1String("bulk_update")) {
         // [[name,{...}], ...] — the snapshot on connect, replayed through
-        // the same handlers, minus old tx_reports making spots.
+        // the same handlers.
         for (const QJsonValue& v : a.at(1).toArray()) {
             const QJsonArray p = v.toArray();
             handleEvent(p.at(0).toString(), p.at(1).toObject(), true);
@@ -115,72 +118,123 @@ void FreeDvReporter::handleFrame(const QString& f) {
     } else {
         handleEvent(name, a.at(1).toObject(), false);
     }
-    if (size_t(spots_.size()) != before || name == QLatin1String("tx_report")
-        || name == QLatin1String("rx_report"))
-        emit spotsChanged();
+    if (kStationEvents.contains(name)) emit spotsChanged();
 }
 
-void FreeDvReporter::handleEvent(const QString& name, const QJsonObject& o, bool replay) {
+qint64 FreeDvReporter::isoSecs(const QJsonValue& v) {
+    // "2026-10-15T15:17:43.697229+00:00" (microseconds; null = never).
+    if (!v.isString()) return 0;
+    QString t = v.toString();
+    const int dot = t.indexOf('.');
+    if (dot > 0) {                                 // trim to ms for Qt
+        int end = dot + 1;
+        while (end < t.size() && t[end].isDigit()) ++end;
+        t = t.left(std::min(end, dot + 4)) + t.mid(end);
+    }
+    const QDateTime d = QDateTime::fromString(t, Qt::ISODateWithMs);
+    return d.isValid() ? d.toSecsSinceEpoch() : 0;
+}
+
+void FreeDvReporter::handleEvent(const QString& name, const QJsonObject& o, bool) {
     const QString sid = o.value("sid").toString();
+    const auto fill = [&](Station& st) {
+        const QString c = o.value("callsign").toString().toUpper();
+        if (!c.isEmpty()) st.call = c;
+        const QString g = o.value("grid_square").toString();
+        if (!g.isEmpty()) st.grid = g;
+        if (o.contains("rx_only")) st.rxOnly = o.value("rx_only").toBool();
+        if (const qint64 u = isoSecs(o.value("last_update"))) st.lastUpdate = u;
+    };
     if (name == QLatin1String("new_connection")) {
-        Station& s = stations_[sid];
-        s.call = o.value("callsign").toString().toUpper();
-        s.grid = o.value("grid_square").toString();
+        fill(stations_[sid]);
     } else if (name == QLatin1String("remove_connection")) {
         stations_.remove(sid);
     } else if (name == QLatin1String("freq_change")) {
-        Station& s = stations_[sid];
-        if (s.call.isEmpty()) s.call = o.value("callsign").toString().toUpper();
-        if (s.grid.isEmpty()) s.grid = o.value("grid_square").toString();
-        s.hz = qint64(o.value("freq").toDouble());
+        Station& st = stations_[sid];
+        fill(st);
+        st.hz = qint64(o.value("freq").toDouble());
     } else if (name == QLatin1String("tx_report")) {
-        Station& s = stations_[sid];
-        if (s.call.isEmpty()) s.call = o.value("callsign").toString().toUpper();
-        s.mode = o.value("mode").toString();
-        if (!replay && o.value("transmitting").toBool())
-            addSpot(s.call, s.hz, s.mode, s.grid);
+        Station& st = stations_[sid];
+        fill(st);
+        const QString m = o.value("mode").toString();
+        if (!m.isEmpty()) st.mode = m;
+        st.transmitting = o.value("transmitting").toBool();
+        if (const qint64 t = isoSecs(o.value("last_tx"))) st.lastTx = t;
+        if (st.transmitting) st.lastTx = std::max(st.lastTx, now ? now() : QDateTime::currentSecsSinceEpoch());
     } else if (name == QLatin1String("rx_report")) {
         const QString heard = o.value("callsign").toString().toUpper();
         const auto it = stations_.constFind(sid);  // the RECEIVER's sid
         if (heard.isEmpty() || it == stations_.constEnd()) return;
         const QString rxCall = o.value("receiver_callsign").toString().toUpper();
-        addSpot(heard, it->hz,
-                QString("%1 heard by %2 %3 dB").arg(o.value("mode").toString(), rxCall)
-                    .arg(o.value("snr").toDouble(), 0, 'f', 0),
-                QString());
+        addHeard(heard, it->hz,
+                 QString("%1 heard by %2 %3 dB").arg(o.value("mode").toString(), rxCall)
+                     .arg(o.value("snr").toDouble(), 0, 'f', 0));
     }
 }
 
-void FreeDvReporter::addSpot(const QString& call, qint64 hz, const QString& comment,
-                             const QString& grid) {
+void FreeDvReporter::addHeard(const QString& call, qint64 hz, const QString& comment) {
     // HF/6 m sanity, as the cluster parser and POTA clamp.
     if (call.isEmpty() || hz < 1800000 || hz > 54000000) return;
     Spot s;
     s.call = call;
     s.hz = hz;
-    s.atSecs = nowSecs();
+    s.atSecs = now ? now() : QDateTime::currentSecsSinceEpoch();
     s.kind = 'V';
     s.tag = QStringLiteral("FreeDV");
-    s.grid = grid;
     s.spotter = QStringLiteral("FreeDV Reporter");
     s.comment = comment;
-    spots_[call] = s;
+    heard_[call] = s;
 }
 
 void FreeDvReporter::expire() {
-    const qint64 now = nowSecs();
-    bool gone = false;
-    for (auto it = spots_.begin(); it != spots_.end();) {
-        if (now - it->atSecs > kSpotLifeSecs) { it = spots_.erase(it); gone = true; }
+    const qint64 t = now ? now() : QDateTime::currentSecsSinceEpoch();
+    for (auto it = heard_.begin(); it != heard_.end();) {
+        if (t - it->atSecs > kSpotLifeSecs) it = heard_.erase(it);
         else ++it;
     }
-    if (gone) emit spotsChanged();
+    emit spotsChanged();                           // "TX n min ago" moves on
 }
 
 QVector<Spot> FreeDvReporter::spots() const {
+    const qint64 t = now ? now() : QDateTime::currentSecsSinceEpoch();
+    // One row per call: a station that reconnected has two sids — the
+    // freshest wins.
+    QHash<QString, const Station*> best;
+    for (const Station& st : stations_) {
+        if (st.call.isEmpty() || st.hz < 1800000 || st.hz > 54000000) continue;
+        const Station*& b = best[st.call];
+        if (!b || std::max(st.lastUpdate, st.lastTx) > std::max(b->lastUpdate, b->lastTx)) b = &st;
+    }
     QVector<Spot> v;
-    v.reserve(spots_.size());
-    for (const Spot& s : spots_) v.push_back(s);
+    for (const Station* st : std::as_const(best)) {
+        Spot s;
+        s.call = st->call;
+        s.hz = st->hz;
+        s.kind = 'V';
+        s.tag = QStringLiteral("FreeDV");
+        s.grid = st->grid;
+        s.spotter = QStringLiteral("FreeDV Reporter");
+        const QString mode = st->mode.isEmpty() ? QStringLiteral("FreeDV") : st->mode;
+        const bool lately = st->lastTx > 0 && t - st->lastTx < kSpotLifeSecs;
+        if (st->transmitting) {
+            s.atSecs = t;
+            s.comment = mode + " · ON AIR";
+        } else if (st->lastTx > 0) {
+            s.atSecs = st->lastTx;
+            const qint64 m = (t - st->lastTx) / 60;
+            s.comment = m < 1 ? mode + " · TX just now"
+                      : m < 120 ? QString("%1 · TX %2 min ago").arg(mode).arg(m)
+                                : QString("%1 · TX %2 h ago").arg(mode).arg(m / 60);
+        } else {
+            s.atSecs = st->lastUpdate > 0 ? st->lastUpdate : t;
+            s.comment = mode + (st->rxOnly ? " · listening (RX only)" : " · listening");
+        }
+        if (!st->grid.isEmpty()) s.comment += " · " + st->grid;
+        s.mapHidden = !(st->transmitting || lately);
+        v.push_back(s);
+    }
+    for (const Spot& h : heard_)
+        if (!best.contains(h.call)) v.push_back(h);
     return v;
 }
 

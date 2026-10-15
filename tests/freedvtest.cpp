@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // FreeDV Reporter frame handling, offline (no socket):
 //   cmake --build build --target freedvtest && ./build/freedvtest
-// Engine.IO open -> view-only connect; ping -> pong; the station table
-// from new_connection/freq_change; spots from a live tx_report and an
-// rx_report (heard call at the RECEIVER's frequency); a bulk_update's
-// old tx_report does not spot; remove_connection; HF sanity clamp.
+// Engine.IO open -> view-only connect; ping -> pong; the connect snapshot
+// becomes the station table: ON AIR / TX n min ago (band map) / TX hours
+// ago / listening / RX only (spot table only); rx_report spots the heard
+// call at the RECEIVER's frequency; remove_connection; HF clamp.
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QTimer>
 #include <cstdio>
+#include <algorithm>
 #include <cstdlib>
 
 #include "net/FreeDvReporter.h"
@@ -38,14 +40,18 @@ int main(int argc, char** argv) {
         QTimer::singleShot((argc > 2 ? atoi(argv[2]) : 30) * 1000, &app, [&] {
             std::printf("  %d stations online, %d spots\n", live.stationCount(),
                         int(live.spots().size()));
-            for (const Spot& s : live.spots())
-                std::printf("    %-10s %10.1f kHz  %s\n", qPrintable(s.call), s.hz / 1000.0,
-                            qPrintable(s.comment));
+            QVector<Spot> v = live.spots();
+            std::sort(v.begin(), v.end(), [](const Spot& a, const Spot& b) { return a.atSecs > b.atSecs; });
+            for (const Spot& s : v)
+                std::printf("    %-10s %10.1f kHz  %s%s\n", qPrintable(s.call), s.hz / 1000.0,
+                            qPrintable(s.comment), s.mapHidden ? "" : "   [band map]");
             app.quit();
         });
         return app.exec();
     }
     FreeDvReporter r;
+    const qint64 T = QDateTime::fromString("2026-10-15T15:20:00Z", Qt::ISODate).toSecsSinceEpoch();
+    r.now = [T] { return T; };
     QStringList out;
     r.send = [&](const QString& t) { out << t; };
     int changed = 0;
@@ -57,38 +63,59 @@ int main(int argc, char** argv) {
     check(out.value(1) == "3", "ping -> pong");
     r.handleFrame(R"(40{"sid":"abc"})");
 
-    // Snapshot: two stations; W1AW's old tx_report must NOT spot.
+    // The connect snapshot, shaped like the live one (2026-10-15): on air,
+    // TX 6 min ago, TX hours ago, listening, RX-only, anonymous, 60 m.
     r.handleFrame(R"(42["bulk_update",[)"
-                  R"(["new_connection",{"sid":"s1","callsign":"w1aw","grid_square":"FN31"}],)"
-                  R"(["freq_change",{"sid":"s1","callsign":"W1AW","freq":14236000}],)"
-                  R"(["tx_report",{"sid":"s1","callsign":"W1AW","mode":"RADEV1","transmitting":true}],)"
-                  R"(["new_connection",{"sid":"s2","callsign":"VK5DGR","grid_square":"PF95"}],)"
-                  R"(["freq_change",{"sid":"s2","callsign":"VK5DGR","freq":7177000}]]])");
-    check(r.spots().isEmpty(), "bulk_update replay makes no spots");
+        R"(["new_connection",{"sid":"s1","callsign":"f4lvf","grid_square":"JN18","rx_only":false,"last_update":"2026-10-15T15:15:13.849492+00:00"}],)"
+        R"(["freq_change",{"sid":"s1","freq":7174000}],)"
+        R"(["tx_report",{"sid":"s1","mode":"RADEV1","transmitting":true,"last_tx":"2026-10-15T15:15:13.849492+00:00"}],)"
+        R"(["new_connection",{"sid":"s2","callsign":"WJ8A","grid_square":"EN82"}],)"
+        R"(["freq_change",{"sid":"s2","freq":14236000}],)"
+        R"(["tx_report",{"sid":"s2","mode":"RADEV1","transmitting":false,"last_tx":"2026-10-15T15:13:28.881991+00:00"}],)"
+        R"(["new_connection",{"sid":"s3","callsign":"ZL2IT"}],)"
+        R"(["freq_change",{"sid":"s3","freq":7083000}],)"
+        R"(["tx_report",{"sid":"s3","mode":"RADEV1","transmitting":false,"last_tx":"2026-10-15T07:53:56.042139+00:00"}],)"
+        R"(["new_connection",{"sid":"s4","callsign":"KN4BNX","last_update":"2026-10-15T15:12:38.308275+00:00"}],)"
+        R"(["freq_change",{"sid":"s4","freq":14236000}],)"
+        R"(["tx_report",{"sid":"s4","mode":"RADEV1","transmitting":false,"last_tx":null}],)"
+        R"(["new_connection",{"sid":"s5","callsign":"F4WFD","rx_only":true}],)"
+        R"(["freq_change",{"sid":"s5","freq":14236000}],)"
+        R"(["new_connection",{"sid":"s6","callsign":""}],)"
+        R"(["freq_change",{"sid":"s6","freq":5368500}],)"
+        R"(["new_connection",{"sid":"s7","callsign":"S51SU"}],)"
+        R"(["freq_change",{"sid":"s7","freq":3700000000}]]])");
+    const QVector<Spot> v = r.spots();
+    const Spot* f4 = find(v, "F4LVF");
+    const Spot* wj = find(v, "WJ8A");
+    const Spot* zl = find(v, "ZL2IT");
+    const Spot* kn = find(v, "KN4BNX");
+    const Spot* fw = find(v, "F4WFD");
+    check(v.size() == 5, "every named station on HF is a spot, snapshot included");
+    check(f4 && f4->hz == 7174000 && f4->comment.startsWith("RADEV1 · ON AIR") && !f4->mapHidden,
+          "transmitting: ON AIR, on the band map");
+    check(f4 && f4->grid == "JN18" && f4->comment.contains("JN18"), "  with its grid");
+    check(wj && wj->comment.startsWith("RADEV1 · TX 6 min ago") && !wj->mapHidden && wj->atSecs < T,
+          "TX 6 min ago: on the band map, at its real time");
+    check(zl && zl->comment.contains("TX 7 h ago") && zl->mapHidden, "TX hours ago: table only");
+    check(kn && kn->comment.contains("listening") && kn->mapHidden, "never transmitted: listening, table only");
+    check(fw && fw->comment.contains("RX only"), "RX-only station says so");
+    check(!find(v, "S51SU"), "out-of-band frequency is not a spot");
 
-    r.handleFrame(R"(42["tx_report",{"sid":"s1","callsign":"W1AW","mode":"RADEV1","transmitting":true}])");
-    const Spot* w = find(r.spots(), "W1AW");
-    check(w && w->hz == 14236000 && w->kind == 'V', "live tx_report spots the station at its freq");
-    check(w && w->comment == "RADEV1" && w->grid == "FN31", "  with its mode and grid");
-
-    r.handleFrame(R"(42["rx_report",{"sid":"s2","receiver_callsign":"VK5DGR","callsign":"ZL2AB","snr":7.4,"mode":"RADEV1"}])");
+    r.handleFrame(R"(42["rx_report",{"sid":"s4","receiver_callsign":"KN4BNX","callsign":"ZL2AB","snr":7.4,"mode":"RADEV1"}])");
     const Spot* z = find(r.spots(), "ZL2AB");
-    check(z && z->hz == 7177000, "rx_report spots the heard call at the receiver's freq");
-    check(z && z->comment.contains("VK5DGR") && z->comment.contains("7 dB"), "  with receiver and SNR");
-    r.handleFrame(R"(42["rx_report",{"sid":"s2","receiver_callsign":"VK5DGR","callsign":"","snr":3}])");
-    check(r.spots().size() == 2, "rx_report without a decoded call is ignored");
+    check(z && z->hz == 14236000 && z->comment.contains("KN4BNX") && z->comment.contains("7 dB"),
+          "rx_report spots the heard call at the receiver's freq, with SNR");
+    r.handleFrame(R"(42["rx_report",{"sid":"s4","receiver_callsign":"KN4BNX","callsign":"","snr":3}])");
+    check(r.spots().size() == 6, "rx_report without a decoded call adds nothing");
 
-    r.handleFrame(R"(42["freq_change",{"sid":"s1","freq":3700000000}])");
-    r.handleFrame(R"(42["tx_report",{"sid":"s1","mode":"RADEV1","transmitting":true}])");
-    check(find(r.spots(), "W1AW")->hz == 14236000, "out-of-band frequency is not spotted");
-
-    r.handleFrame(R"(42["remove_connection",{"sid":"s2","callsign":"VK5DGR"}])");
-    r.handleFrame(R"(42["rx_report",{"sid":"s2","callsign":"K1ABC","snr":5}])");
-    check(!find(r.spots(), "K1ABC"), "removed station's reports have no frequency");
-    check(changed >= 2, "spotsChanged fires");
+    r.handleFrame(R"(42["tx_report",{"sid":"s1","mode":"RADEV1","transmitting":false,"last_tx":"2026-10-15T15:19:30.000000+00:00"}])");
+    check(find(r.spots(), "F4LVF")->comment.startsWith("RADEV1 · TX just now"), "un-key: TX just now");
+    r.handleFrame(R"(42["remove_connection",{"sid":"s2","callsign":"WJ8A"}])");
+    check(!find(r.spots(), "WJ8A"), "remove_connection drops the station");
+    check(changed >= 4, "spotsChanged fires");
     r.handleFrame("42[garbage");
     r.handleFrame("6");
-    check(r.spots().size() == 2, "junk frames are ignored");
+    check(r.spots().size() == 5, "junk frames are ignored");
 
     if (fails == 0) std::printf("freedvtest: all checks passed\n");
     return fails ? 1 : 0;

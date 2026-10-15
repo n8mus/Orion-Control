@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "net/RigctldServer.h"
 
+#include <QHash>
+
 #include <QTcpSocket>
 #include <cstdio>
 #include <cstdlib>
@@ -225,6 +227,30 @@ QByteArray RigctldServer::handleLine(const QByteArray& line) {
         if (!cmd.isEmpty()) reply += handleExtended(cmd, args);
         return reply;
     }
+
+    // Long backslash names in the plain protocol ("\set_freq 7101500",
+    // "\set_ptt 1") — what Pat (Winlink) sends, read back ONE line per
+    // command — map onto the single letters below. Only \chk_vfo,
+    // \dump_state and the powerstat pair have their own answers further
+    // down. (Before this, Pat got RPRT -11 for every QSY and PTT.)
+    if (line.startsWith('\\')) {
+        const int sp = line.indexOf(' ');
+        const QByteArray name = line.mid(1, sp < 0 ? -1 : sp - 1);
+        const QByteArray rest = sp < 0 ? QByteArray() : line.mid(sp);
+        static const QHash<QByteArray, char> kLong = {
+            {"get_freq", 'f'}, {"set_freq", 'F'}, {"get_mode", 'm'}, {"set_mode", 'M'},
+            {"get_vfo", 'v'}, {"set_vfo", 'V'}, {"get_ptt", 't'}, {"set_ptt", 'T'},
+            {"get_split_vfo", 's'}, {"set_split_vfo", 'S'}, {"get_split_freq", 'i'},
+            {"set_split_freq", 'I'}, {"get_rit", 'j'}, {"set_rit", 'J'},
+            {"get_xit", 'z'}, {"set_xit", 'Z'}, {"quit", 'q'}};
+        const auto it = kLong.constFind(name);
+        if (it != kLong.constEnd()) return handleLine(QByteArray(1, *it) + rest);
+        if (name == "dump_caps") return "RPRT 0\n";
+    }
+    // Pat's Ping is a bare "dump_caps", and it reads one line back: a
+    // multi-line caps dump would leave lines queued that every later reply
+    // would then be read from, so answer it in one.
+    if (line == "dump_caps") return "RPRT 0\n";
 
     const char c = line[0];
     // Strip the command letter, then drop any VFO token hamlib may prepend

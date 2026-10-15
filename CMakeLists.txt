@@ -352,6 +352,12 @@ add_executable(not1mmtest EXCLUDE_FROM_ALL
 target_include_directories(not1mmtest PRIVATE src)
 target_link_libraries(not1mmtest PRIVATE Qt6::Core Qt6::Sql)
 
+# rigctld server vs Pat's (Winlink) client sequence, no radio attached.
+add_executable(rigctldtest EXCLUDE_FROM_ALL
+  tests/rigctldtest.cpp src/net/RigctldServer.cpp src/net/RigctldServer.h)
+target_include_directories(rigctldtest PRIVATE src)
+target_link_libraries(rigctldtest PRIVATE Qt6::Core Qt6::Network)
+
 # FreeDV Reporter Socket.IO frame handling, offline.
 add_executable(freedvtest EXCLUDE_FROM_ALL
   tests/freedvtest.cpp src/net/FreeDvReporter.cpp src/net/FreeDvReporter.h)

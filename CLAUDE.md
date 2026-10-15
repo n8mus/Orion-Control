@@ -75,6 +75,7 @@ senders and weak-signal cases are the hard set.
 | `skimtest` | 10-station synthetic segment through the skimmer | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `not1mmtest` | Not1MM contest dupe sheet (`Not1mmLog`) vs a synthetic not1mm.json + ham.db + plugin: dupe_type 1/2/3/4, other contests ignored, Band fallback, inert while Not1MM isn't running; `--real` reads this station's Not1MM read-only | — |
+| `rigctldtest` | the :4532 rigctld server over TCP, no radio attached (PTT only raises the signal): Pat's (Winlink) exact sequence — `dump_caps` ping, `\chk_vfo`, `\get_freq`, `\set_freq`, `t`, `\set_ptt 1/0`, ONE line back each, stream stays aligned — plus the `+` extended form unchanged | — |
 | `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, the connect snapshot as the station table: ON AIR / TX n min ago / hours / listening / RX only, band-map vs table-only, rx_report heard spots, clamps); `--live N` watches qso.freedv.org for N s | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |

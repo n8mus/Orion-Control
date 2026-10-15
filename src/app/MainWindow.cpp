@@ -746,6 +746,11 @@ MainWindow::MainWindow(QWidget* parent)
     fdvOn->setCheckable(true);
     fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
                       "(orange labels; watch-only — nothing about this station is sent)");
+    auto* n1Dupes = spotsMenu->addAction("Gray Not1MM contest dupes");
+    n1Dupes->setCheckable(true);
+    n1Dupes->setToolTip("While Not1MM runs, stations already worked in its current contest\n"
+                        "draw gray on the band map, by that contest's own dupe rule\n"
+                        "(read-only from Not1MM's log; nothing to set up in Not1MM)");
     // Spotter area: only show what's being heard in a chosen part of the
     // world (server-side CC Cluster spotter-origin filter); the same region
     // choice narrows POTA to that region's parks. Custom takes any CC
@@ -822,6 +827,7 @@ MainWindow::MainWindow(QWidget* parent)
         potaOn->setChecked(s.value("spots/pota", true).toBool());
         ft8On->setChecked(s.value("spots/ft8", true).toBool());
         fdvOn->setChecked(s.value("spots/freedv", false).toBool());
+        n1Dupes->setChecked(s.value("spots/not1mmDupes", true).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
     topLay->addSpacing(8);
@@ -1103,6 +1109,12 @@ MainWindow::MainWindow(QWidget* parent)
             }
             for (SpotLabel& l : labels)
                 l.contest = contestClassify(l.call, l.hz);
+        } else if (not1mm_.active()) {
+            // Not1MM's contest (the console's own deck is closed): its
+            // dupes gray out, everything else keeps its usual colors.
+            for (SpotLabel& l : labels)
+                if (not1mm_.isDupe(l.call, l.hz, guessSpotMode(l.kind, l.comment, l.hz)))
+                    l.contest = 'W';
         }
         shownSpots_ = labels;
         pan_->setSpots(labels);
@@ -1250,6 +1262,22 @@ MainWindow::MainWindow(QWidget* parent)
         potaClient_.setEnabled(on && spotsOn->isChecked());
         pushSpots();
     });
+    connect(&not1mm_, &Not1mmLog::changed, this, [this, pushSpots] {
+        const bool a = not1mm_.active();
+        if (a != not1mmShownActive_) {
+            not1mmShownActive_ = a;
+            statusBar()->showMessage(a
+                ? QString("Not1MM: %1, %2 QSOs — its dupes gray on the band map")
+                      .arg(not1mm_.contestName()).arg(not1mm_.qsoCount())
+                : QStringLiteral("Not1MM dupes: off"), 6000);
+        }
+        pushSpots();
+    });
+    connect(n1Dupes, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("spots/not1mmDupes", on);
+        not1mm_.setEnabled(on);
+    });
+    not1mm_.setEnabled(n1Dupes->isChecked());
     connect(&freedv_, &FreeDvReporter::spotsChanged, this, pushSpots);
     connect(&freedv_, &FreeDvReporter::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });

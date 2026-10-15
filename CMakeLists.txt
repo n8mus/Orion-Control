@@ -111,6 +111,7 @@ add_executable(tentec-console
   src/net/SpotClient.cpp        src/net/SpotClient.h
   src/net/PotaClient.cpp        src/net/PotaClient.h
   src/net/FreeDvReporter.cpp    src/net/FreeDvReporter.h
+  src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
   src/net/RotorClient.cpp       src/net/RotorClient.h
@@ -336,6 +337,13 @@ add_executable(smithtest EXCLUDE_FROM_ALL
   src/ui/SmithChartWidget.cpp)
 target_include_directories(smithtest PRIVATE src)
 target_link_libraries(smithtest PRIVATE Qt6::Widgets)
+
+# Not1MM dupe sheet from a synthetic Not1MM config + SQLite log + plugin.
+add_executable(not1mmtest EXCLUDE_FROM_ALL
+  tests/not1mmtest.cpp src/log/Not1mmLog.cpp src/log/Not1mmLog.h
+  src/util/LogbookIndex.cpp src/util/CtyLookup.cpp src/log/LogDb.cpp src/log/Adif.cpp)
+target_include_directories(not1mmtest PRIVATE src)
+target_link_libraries(not1mmtest PRIVATE Qt6::Core Qt6::Sql)
 
 # FreeDV Reporter Socket.IO frame handling, offline.
 add_executable(freedvtest EXCLUDE_FROM_ALL

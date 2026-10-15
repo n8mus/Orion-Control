@@ -74,6 +74,7 @@ senders and weak-signal cases are the hard set.
 | `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s, `--only <substr>` isolates rows) | — |
 | `skimtest` | 10-station synthetic segment through the skimmer | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
+| `not1mmtest` | Not1MM contest dupe sheet (`Not1mmLog`) vs a synthetic not1mm.json + ham.db + plugin: dupe_type 1/2/3/4, other contests ignored, Band fallback, inert while Not1MM isn't running; `--real` reads this station's Not1MM read-only | — |
 | `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, station table, tx/rx_report spots, bulk_update replay, clamps); `--live N` watches qso.freedv.org for N s | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
@@ -129,7 +130,10 @@ that night's own capture).
   Kinds: 'D' DX yellow, 'P' POTA green, 'F' FT8 cyan, 'S' skimmer violet,
   'V' FreeDV orange (`FreeDvReporter`, qso.freedv.org view-only, Qt WebSockets);
   call text is colored by cqrlog worked-before status (LogbookIndex),
-  watch-list hits get an orange ring.
+  watch-list hits get an orange ring. While Not1MM runs, its current
+  contest's dupes draw gray (`Not1mmLog`: reads not1mm.json + its SQLite
+  log READ-ONLY, the contest plugin's own `dupe_type`; SPOTS ▾ toggle) —
+  the console's own contest deck, when open, wins.
 - **SKIM view** (SKIM ▾ → Waterfall view): CW-Skimmer-style zoomed
   waterfall — `src/cw/SkimStft` (4096-pt STFT at ~125 ksps, 31 Hz/bin,
   8 ms columns, fed in the iqHandler on the SDR thread, gated by window

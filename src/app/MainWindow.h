@@ -22,6 +22,7 @@ class QVBoxLayout;
 #include "radio/LpMeter.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
+#include "log/Not1mmLog.h"
 #include "net/FreeDvReporter.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
@@ -221,6 +222,8 @@ private:
     QAction*         spotsOnAct_ = nullptr;        // SPOT menu "Show spots"
     PotaClient       potaClient_;                  // POTA activator API feed
     FreeDvReporter   freedv_;                      // qso.freedv.org, view-only
+    Not1mmLog        not1mm_;                      // Not1MM's contest dupes (read-only)
+    bool             not1mmShownActive_ = false;   // status-bar edge only
     SolarClient      solarClient_;                 // NOAA space-weather poller
     // VOACAP overlay driver: recomputed on solar data, band crossings and
     // a slow timer; keyed so identical inputs never rerun the engine.

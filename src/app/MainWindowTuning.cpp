@@ -3,6 +3,9 @@
 // passband + notch overlay math and the coalesced drag-to-filter streams.
 // Split out of MainWindow.cpp so tuning work doesn't collide with UI work.
 #include "app/MainWindow.h"
+#ifdef HAVE_WDSP
+#include "sdr/SdrRx.h"
+#endif
 #include "app/MainWindowInternal.h"
 #include "app/Bands.h"
 #include "cw/CwDecoder.h"
@@ -365,6 +368,9 @@ void MainWindow::setLoOff(int off) {
     pan_->setDialOffsetHz(off);
     // The CW reader listens at the dial's offset from the LO — follow it.
     if (cwDec_) cwDec_->retune(-double(off));
+#ifdef HAVE_WDSP
+    if (sdrRx_) sdrRx_->retune(-double(off));      // so does the SDR receiver
+#endif
 }
 
 // Band-overview landing (operator design 2026-07-31): a band button frames
@@ -510,6 +516,7 @@ void MainWindow::pushVfoB() {
 }
 
 void MainWindow::refreshPassbandOverlay() {
+    updateSdrRxDemod();                            // SDR receiver follows the rig
     // SSB bandwidth grows away from the carrier (edgesFromRig): tell the
     // panadapter which edge a pure-BW drag pins so the preview matches.
     pan_->setBwAnchor(rigMode_ == Mode::USB ? -1

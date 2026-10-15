@@ -79,6 +79,7 @@ senders and weak-signal cases are the hard set.
 | `dcutest` | DCU-3 frame parser (streams-while-turning captures) + the rotctld server we put in front of it | — |
 | `watchtest` | DX-watch pattern matching | — |
 | `vkeqtest` | voice keyer audio chain (AetherSDR-ported gate → EQ → de-esser → compressor → final limiter, src/dsp): EQ vs its analytic curve, `snapToTargets()`, fitted presets on their targets, gate/comp/limiter/de-esser behaviour, look-ahead leveling, profiles + settings JSON (old curves load with dynamics off) | — |
+| `sdrrxtest` | SDR receive chain end to end on synthetic IQ (WDSP via the decimator + resampler, audio tapped, no device): USB tone, LSB rejection, CW carrier at the pitch, AM, NR2 on noise. Needs WDSP (FFTW3) | — |
 | `tunetest` | tuner/amp settings table behind the pan's amber tuner box (238C + Titan III, per antenna/band, `tuning.json`): nearest-point lookup, same-kHz overwrite, knob clamping, file round trip | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
 | `pmtest` | PowerMaster wattmeter frame decode + CRC (pure parser, no hardware) | — |
@@ -173,6 +174,16 @@ that night's own capture).
   on every ground-truth capture, and unguarded it merged shallow
   inter-element gaps on clean W1AW (DISPLAYED→DISPLAYEB). Weak-station
   copy is gated by the antenna feed SNR, not element release.
+- **SDR receive audio** (SDR ▾ → Receive audio (WDSP), `src/sdr/SdrRx`):
+  the RSP2's IQ through WDSP — Thetis's DSP, AetherSDR's vendored 2.10 in
+  `third_party/wdsp` (see `TTC-VENDOR.md`; the two NR3 model sources are
+  fetched by CMake from TAPR and SHA-checked, not committed). Chain: mix
+  the dial to 0 Hz on the IQ worker, FIR-decimate to 125 kHz, WDSP's own
+  resampler to 96 kHz (WDSP needs INTEGER rate ratios and nested power-of-
+  two block sizes — both ASan-found overruns), conjugate (WDSP keeps HPSDR
+  IQ handedness, the mirror of ours), RXA channel 96 k -> 48 k with NB/NB2
+  on the IQ, SNB, ANF, NR/NR2/NR3, AGC; RNNoise after; pacat with the LIVE
+  mic's backlog control; muted on TX. Follows mode/filter/CW pitch.
 - **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
   Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"
   personality). Quirks are documented where they're handled — grep

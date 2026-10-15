@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// SDR receive chain, end to end on synthetic IQ (no audio device, no SDR):
+//   cmake --build build --target sdrrxtest && ./build/sdrrxtest
+// IQ at 1 MS/s with the dial 260 kHz below the LO, as on the air:
+// - USB: a tone 1 kHz above the dial comes out at 1 kHz
+// - LSB: the same tone is rejected (opposite sideband)
+// - CWU: a carrier ON the dial comes out at the sidetone pitch (600 Hz)
+// - AM: a 1 kHz-modulated carrier on the dial demodulates to 1 kHz
+// - NR2 runs on noise without falling over, and lowers it
+#include <QCoreApplication>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <mutex>
+#include <thread>
+#include <vector>
+
+#include "sdr/SdrRx.h"
+
+using namespace ttc;
+
+static int fails = 0;
+static void check(bool ok, const char* what) {
+    if (!ok) { printf("FAIL: %s\n", what); ++fails; }
+}
+
+constexpr double kFs = 1e6, kLoOff = 260000.0;
+
+// Run `secs` of IQ through a fresh receiver; return the last second of audio.
+template <class Gen>
+static std::vector<float> run(Mode m, int lo, int hi, const SdrRx::Settings& st,
+                              double secs, Gen gen) {
+    SdrRx rx;
+    std::mutex mx;
+    std::vector<float> audio;
+    rx.setAudioTap([&](const float* x, int n) {
+        std::lock_guard<std::mutex> lk(mx);
+        audio.insert(audio.end(), x, x + n);
+    });
+    rx.setDemod(m, lo, hi, 600);
+    rx.setSettings(st);
+    rx.retune(-kLoOff);
+    rx.startTapOnly();
+    while (!rx.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const size_t blk = 10000;                       // 10 ms
+    std::vector<std::complex<float>> iq(blk);
+    const size_t total = size_t(secs * kFs);
+    for (size_t o = 0; o < total; o += blk) {
+        for (size_t i = 0; i < blk; ++i) iq[i] = gen(double(o + i) / kFs);
+        rx.processIq(iq.data(), blk);
+        std::this_thread::sleep_for(std::chrono::microseconds(1500));   // ~6x real time
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    rx.stop();
+    std::lock_guard<std::mutex> lk(mx);
+    if (audio.size() > 48000) audio.erase(audio.begin(), audio.end() - 48000);
+    return audio;
+}
+
+static double toneDb(const std::vector<float>& x, double hz) {
+    double re = 0, im = 0;
+    for (size_t i = 0; i < x.size(); ++i) {
+        re += x[i] * std::cos(2 * M_PI * hz * double(i) / 48000.0);
+        im += x[i] * std::sin(2 * M_PI * hz * double(i) / 48000.0);
+    }
+    return 20 * std::log10(std::hypot(re, im) / double(x.size()) * 2 + 1e-12);
+}
+static double rmsDb(const std::vector<float>& x) {
+    double a = 0;
+    for (float v : x) a += double(v) * v;
+    return 10 * std::log10(a / double(std::max<size_t>(1, x.size())) + 1e-20);
+}
+
+// A signal at `rfHz` above the dial, in the SDR's IQ (LO = dial + 260 kHz).
+static std::complex<float> at(double t, double rfHz, double amp) {
+    const double ph = 2 * M_PI * (rfHz - kLoOff) * t;
+    return {float(amp * std::cos(ph)), float(amp * std::sin(ph))};
+}
+
+int main(int argc, char** argv) {
+    QCoreApplication app(argc, argv);
+    SdrRx::Settings st;
+    st.agc = SdrRx::Agc::Fixed;                     // levels comparable
+    st.volumeDb = 0;
+
+    auto usb = run(Mode::USB, 0, 2800, st, 2.0, [](double t) { return at(t, 1000, 0.01); });
+    const double u1k = toneDb(usb, 1000), u2k = toneDb(usb, 2000);
+    printf("  USB: 1 kHz tone %.1f dB, 2 kHz (nothing) %.1f dB\n", u1k, u2k);
+    check(usb.size() >= 40000, "USB produced audio");
+    check(u1k - u2k > 30, "USB: +1 kHz tone demodulates at 1 kHz");
+
+    auto lsb = run(Mode::LSB, -2800, 0, st, 2.0, [](double t) { return at(t, 1000, 0.01); });
+    printf("  LSB: same +1 kHz tone %.1f dB (USB had %.1f)\n", toneDb(lsb, 1000), u1k);
+    check(u1k - toneDb(lsb, 1000) > 30, "LSB rejects the upper-sideband tone");
+
+    auto cw = run(Mode::CWU, -250, 250, st, 2.0, [](double t) { return at(t, 0, 0.01); });
+    const double c600 = toneDb(cw, 600), c400 = toneDb(cw, 400);
+    printf("  CWU: carrier on the dial -> 600 Hz %.1f dB, 400 Hz %.1f dB\n", c600, c400);
+    check(c600 - c400 > 25, "CW carrier on the dial plays at the 600 Hz pitch");
+
+    auto am = run(Mode::AM, -4000, 4000, st, 2.0, [](double t) {
+        const double env = 0.01 * (1.0 + 0.5 * std::sin(2 * M_PI * 1000 * t));
+        return at(t, 0, env);
+    });
+    const double a1k = toneDb(am, 1000), a1k5 = toneDb(am, 1500);
+    printf("  AM: 1 kHz modulation %.1f dB, 1.5 kHz %.1f dB\n", a1k, a1k5);
+    check(a1k - a1k5 > 25, "AM demodulates its 1 kHz modulation");
+
+    // NR2 on white noise in the passband: runs, and turns it down.
+    unsigned seed = 7;
+    auto noise = [&](double) {
+        auto u = [&] { seed = seed * 1103515245u + 12345u; return ((seed >> 9) & 0x3fff) / 8192.0 - 1.0; };
+        return std::complex<float>(float(0.002 * u()), float(0.002 * u()));
+    };
+    auto n0 = run(Mode::USB, 0, 2800, st, 3.0, noise);
+    SdrRx::Settings nr2 = st;
+    nr2.nr = SdrRx::NoiseReduction::NR2;
+    seed = 7;
+    auto n2 = run(Mode::USB, 0, 2800, nr2, 3.0, noise);
+    printf("  NR2 on noise: %.1f dB -> %.1f dB\n", rmsDb(n0), rmsDb(n2));
+    check(!n2.empty() && std::isfinite(rmsDb(n2)), "NR2 runs");
+    check(rmsDb(n0) - rmsDb(n2) > 3, "NR2 lowers steady noise");
+
+    if (fails == 0) printf("sdrrxtest: all checks passed\n");
+    return fails ? 1 : 0;
+}

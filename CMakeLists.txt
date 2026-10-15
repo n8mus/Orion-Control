@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 project(TenTecSDRConsole VERSION 0.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -53,6 +53,22 @@ find_package(OpenMP QUIET)
 # SDRplay RSP source is optional so the core app always builds. Turn on with
 # -DBUILD_SDRPLAY=ON once the SDRplay API service is running (Phase 0).
 option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
+
+# WDSP (Thetis's DSP library, via AetherSDR's vendored copy) for SDR receive
+# audio: on when FFTW3 is found (the double-precision libfftw3), else the
+# console builds without SDR RX. See third_party/wdsp/TTC-VENDOR.md.
+find_path(FFTW3_INCLUDE_DIRS fftw3.h)
+find_library(FFTW3_LIBRARIES fftw3)
+if(FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
+  set(FFTW3_FOUND TRUE)
+  set(FFTW3_LIBRARY_DIRS "")
+  enable_language(C)
+  add_subdirectory(third_party/wdsp)
+  set(HAVE_WDSP TRUE)
+  message(STATUS "WDSP: SDR receive audio enabled")
+else()
+  message(STATUS "WDSP: FFTW3 not found — building without SDR receive audio")
+endif()
 
 # rnnoise: on Linux a plain -lrnnoise from the distro package; on Windows it
 # comes from vcpkg (-DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake), where the lib
@@ -395,6 +411,21 @@ add_executable(tunetest EXCLUDE_FROM_ALL
   src/util/TuneTable.cpp)
 target_include_directories(tunetest PRIVATE src)
 target_link_libraries(tunetest PRIVATE Qt6::Core)
+
+if(HAVE_WDSP)
+  target_sources(tentec-console PRIVATE src/sdr/SdrRx.cpp src/sdr/SdrRx.h)
+  target_compile_definitions(tentec-console PRIVATE HAVE_WDSP)
+  target_link_libraries(tentec-console PRIVATE aether::wdsp)
+endif()
+
+# SDR receive chain end to end on synthetic IQ (USB tone, LSB rejection,
+# CW pitch, AM) — WDSP through the decimator, audio captured from a pipe.
+if(HAVE_WDSP)
+  add_executable(sdrrxtest EXCLUDE_FROM_ALL
+    tests/sdrrxtest.cpp src/sdr/SdrRx.cpp src/sdr/SdrRx.h)
+  target_include_directories(sdrrxtest PRIVATE src)
+  target_link_libraries(sdrrxtest PRIVATE Qt6::Core aether::wdsp rnnoise)
+endif()
 
 if(BUILD_SDRPLAY)
   target_sources(tentec-console PRIVATE src/sdr/SdrPlaySource.cpp src/sdr/SdrPlaySource.h)

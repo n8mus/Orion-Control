@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/MainWindow.h"
 #include "ui/TuneDialogs.h"
+#ifdef HAVE_WDSP
+#include "sdr/SdrRx.h"
+#endif
 #include "app/Bands.h"
 #include "app/MainWindowInternal.h"
 #include "contest/ContestDeck.h"
@@ -1657,6 +1660,7 @@ MainWindow::MainWindow(QWidget* parent)
     sdrMenu->addAction(gainAction);
 
     sdrBtn->setMenu(sdrMenu);
+    setupSdrRxUi(sdrMenu);                       // Receive audio (WDSP) submenu
     topLay->addSpacing(8);
     topLay->addWidget(sdrBtn);
 
@@ -3154,6 +3158,9 @@ MainWindow::MainWindow(QWidget* parent)
             skim_->processIq(iq.data(), iq.size());
             skimStft_->processIq(iq.data(), iq.size());
         }
+#ifdef HAVE_WDSP
+        if (sdrRx_) sdrRx_->processIq(iq.data(), iq.size());   // muted on TX
+#endif
         iqRec_->feed(iq);
         // Wideband peak for the Auto LNA loop (read+reset by a GUI timer).
         float m = 0.0f;
@@ -3236,6 +3243,9 @@ MainWindow::MainWindow(QWidget* parent)
                 cwDec_->setInputRate(fRate);
                 skim_->setInputRate(fRate);
                 skimStft_->setInputRate(fRate);
+#ifdef HAVE_WDSP
+                if (sdrRx_) sdrRx_->setInputRate(fRate);
+#endif
             }
             setLoOff(fLoOff);
             const bool fast = std::getenv("TTC_IQFAST") != nullptr;
@@ -3256,6 +3266,9 @@ MainWindow::MainWindow(QWidget* parent)
                     cwDec_->processIq(blk.data(), blk.size());
                     skim_->processIq(blk.data(), blk.size());
                     skimStft_->processIq(blk.data(), blk.size());
+#ifdef HAVE_WDSP
+                    if (sdrRx_) sdrRx_->processIq(blk.data(), blk.size());
+#endif
                     if (!fast) QThread::usleep(paceUs);        // real time
                 }
                 std::fprintf(stderr, "[replay] end of file\n");

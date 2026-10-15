@@ -30,6 +30,12 @@
 #include "ui/SkimmerWindow.h"
 #include "ui/SkimViewWindow.h"
 #include "ui/WinKeyerPanel.h"
+#ifdef HAVE_WDSP
+#include "sdr/SdrRx.h"
+#endif
+#include <QActionGroup>
+#include <QSlider>
+#include <QWidgetAction>
 
 #include <QDateTime>
 #include <QDir>
@@ -861,6 +867,7 @@ void MainWindow::applyCwPitch(int hz) {
     // Hz readout re-read the setting every time they run.
     if (audioDec_) audioDec_->retune(double(hz));
     if (audioSrc_) audioSrc_->setTargetPitch(hz);   // move the notch guard
+    updateSdrRxDemod();                            // SDR receiver's CW pitch
     statusBar()->showMessage(
         QString("CW sidetone %1 Hz — reader and 0-beat follow").arg(hz), 4000);
 }
@@ -1269,6 +1276,207 @@ void MainWindow::applySkimGate() {
     if (!first && skimEnable_->isChecked() && cwOnly)
         statusBar()->showMessage(run ? "CW skimmer running (CW mode)"
                                      : "CW skimmer paused — not in CW", 4000);
+}
+
+} // namespace ttc
+
+namespace ttc {
+
+#ifdef HAVE_WDSP
+namespace {
+// RX ▾ settings live under sdrrx/*; the enums' values are stored, so
+// append-only like every stored enum here.
+SdrRx::Settings loadSdrRxSettings() {
+    QSettings q;
+    SdrRx::Settings s;
+    s.volumeDb = float(q.value("sdrrx/volumeDb", s.volumeDb).toDouble());
+    s.agc = SdrRx::Agc(std::clamp(q.value("sdrrx/agc", int(s.agc)).toInt(), 0, 4));
+    s.nb = SdrRx::NoiseBlanker(std::clamp(q.value("sdrrx/nb", 0).toInt(), 0, 2));
+    s.nr = SdrRx::NoiseReduction(std::clamp(q.value("sdrrx/nr", 0).toInt(), 0, 3));
+    s.snb = q.value("sdrrx/snb", false).toBool();
+    s.anf = q.value("sdrrx/anf", false).toBool();
+    s.rnnoise = q.value("sdrrx/rnnoise", false).toBool();
+    return s;
+}
+void saveSdrRxSettings(const SdrRx::Settings& s) {
+    QSettings q;
+    q.setValue("sdrrx/volumeDb", s.volumeDb);
+    q.setValue("sdrrx/agc", int(s.agc));
+    q.setValue("sdrrx/nb", int(s.nb));
+    q.setValue("sdrrx/nr", int(s.nr));
+    q.setValue("sdrrx/snb", s.snb);
+    q.setValue("sdrrx/anf", s.anf);
+    q.setValue("sdrrx/rnnoise", s.rnnoise);
+}
+}  // namespace
+#endif
+
+// The SDR receiver demodulates what the Orion is set to: its mode, its
+// filter edges (the same edgesFromRig the panadapter draws) and, in CW,
+// the sidetone pitch.
+void MainWindow::updateSdrRxDemod() {
+#ifdef HAVE_WDSP
+    if (!sdrRx_) return;
+    int lo = 0, hi = 0;
+    edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
+    sdrRx_->setDemod(rigMode_, lo, hi, QSettings().value("cw/pitchHz", 550).toInt());
+#endif
+}
+
+// SDR ▾ → Receive audio (WDSP): the RSP2's receive audio through WDSP —
+// Thetis's receiver and noise tools — on the PC's speakers/headset. The
+// Orion's own audio is left alone (operator's choice); the SDR runs ~50-
+// 100 ms behind it, so hearing both at once is an echo. A submenu, not a
+// second-deck button: the button took the window's floor to 1905 px, past
+// the 1850 budget (the deck had no room left).
+void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
+#ifndef HAVE_WDSP
+    (void)sdrMenu;
+    return;                                        // built without FFTW/WDSP
+#else
+    sdrRx_ = new SdrRx;
+    connect(this, &QObject::destroyed, this, [rx = sdrRx_] { delete rx; });
+    sdrRx_->retune(-double(loOffHz_));
+    updateSdrRxDemod();
+    SdrRx::Settings st = loadSdrRxSettings();
+    sdrRx_->setSettings(st);
+
+    sdrMenu->addSeparator();
+    QMenu* menu = sdrMenu->addMenu("Receive audio (WDSP)");
+    styleMenu(menu);
+    menu->menuAction()->setToolTip(
+        "SDR receive audio: the panadapter's IQ demodulated by WDSP\n"
+        "(Thetis's DSP) with its noise blankers and noise reduction, on the\n"
+        "PC speakers/headset. Follows the radio's mode, filter and CW pitch;\n"
+        "silent while transmitting.");
+
+    auto* on = menu->addAction("SDR receive audio");
+    on->setCheckable(true);
+    on->setChecked(QSettings().value("sdrrx/on", false).toBool());
+
+    // Volume: a slider in the menu.
+    auto* volW = new QWidget(menu);
+    auto* volL = new QHBoxLayout(volW);
+    volL->setContentsMargins(24, 4, 12, 4);
+    auto* volCap = new QLabel("Volume", volW);
+    volCap->setStyleSheet("color: #c8d4e0;");
+    auto* vol = new QSlider(Qt::Horizontal, volW);
+    vol->setRange(-40, 20);
+    vol->setValue(int(std::lround(st.volumeDb)));
+    vol->setFixedWidth(150);
+    auto* volVal = new QLabel(QString("%1 dB").arg(vol->value()), volW);
+    volVal->setStyleSheet("color: #c8d4e0;");
+    volVal->setFixedWidth(44);
+    volL->addWidget(volCap);
+    volL->addWidget(vol);
+    volL->addWidget(volVal);
+    auto* volA = new QWidgetAction(menu);
+    volA->setDefaultWidget(volW);
+    menu->addAction(volA);
+    menu->addSeparator();
+
+    const auto apply = [this] {
+        SdrRx::Settings s = loadSdrRxSettings();
+        sdrRx_->setSettings(s);
+    };
+    // Exclusive choice submenu, value stored at `key`.
+    const auto choice = [this, menu, apply](const QString& title, const QString& key,
+                                            const QStringList& names, int cur,
+                                            const QString& tip) {
+        QMenu* sub = menu->addMenu(title);
+        styleMenu(sub);
+        sub->setToolTipsVisible(true);
+        sub->menuAction()->setToolTip(tip);
+        auto* grp = new QActionGroup(sub);
+        grp->setExclusive(true);
+        for (int i = 0; i < names.size(); ++i) {
+            QAction* a = sub->addAction(names[i]);
+            a->setCheckable(true);
+            a->setChecked(i == cur);
+            grp->addAction(a);
+            connect(a, &QAction::triggered, this, [key, i, apply] {
+                QSettings().setValue(key, i);
+                apply();
+            });
+        }
+    };
+    choice("AGC", "sdrrx/agc", {"Fixed", "Long", "Slow", "Medium", "Fast"}, int(st.agc),
+           "WDSP AGC (Thetis's): attack/hang/decay presets");
+    choice("Noise blanker", "sdrrx/nb",
+           {"Off", "NB — impulse blanker", "NB2 — blank and fill"}, int(st.nb),
+           "On the IQ, before any filter (as Thetis runs them). NB gates an\n"
+           "impulse to zero; NB2 fills the gap from either side — better\n"
+           "when the pop lands on the signal. Never both (they share a detector).");
+    choice("Noise reduction", "sdrrx/nr",
+           {"Off", "NR — LMS (Thetis NR)", "NR2 — spectral (Thetis NR2)",
+            "NR3 — neural (WDSP 2.10 NNR)"}, int(st.nr),
+           "One at a time, as Thetis offers them. NR2 is the usual choice on\n"
+           "SSB; NR3 is the new neural reducer (adds ~51 ms).");
+    const auto toggle = [this, menu, apply](const QString& title, const QString& key,
+                                            bool cur, const QString& tip) {
+        QAction* a = menu->addAction(title);
+        a->setCheckable(true);
+        a->setChecked(cur);
+        a->setToolTip(tip);
+        connect(a, &QAction::toggled, this, [key, apply](bool v) {
+            QSettings().setValue(key, v);
+            apply();
+        });
+    };
+    toggle("SNB — spectral noise blanker", "sdrrx/snb", st.snb,
+           "Thetis SNB: removes impulse noise in the frequency domain");
+    toggle("ANF — automatic notch", "sdrrx/anf", st.anf,
+           "Removes steady carriers / heterodynes (not for CW!)");
+    toggle("RNNoise (on the audio)", "sdrrx/rnnoise", st.rnnoise,
+           "Xiph RNNoise after the demod, as AetherSDR offers it — voice only");
+    menu->setToolTipsVisible(true);
+    menu->addSeparator();
+    auto* info = menu->addAction("—");
+    info->setEnabled(false);
+    connect(menu, &QMenu::aboutToShow, this, [this, info] {
+        info->setText(sdrRx_->running()
+            ? QString("Queue %1 ms · level %2 dB · %3 blocks dropped")
+                  .arg(sdrRx_->backlogMs(), 0, 'f', 0)
+                  .arg(sdrRx_->outputPeakDb(), 0, 'f', 0)
+                  .arg(sdrRx_->droppedBlocks())
+            : QStringLiteral("SDR receive audio is off"));
+    });
+
+    connect(vol, &QSlider::valueChanged, this, [volVal, apply](int v) {
+        volVal->setText(QString("%1 dB").arg(v));
+        QSettings().setValue("sdrrx/volumeDb", v);
+        apply();
+    });
+    const auto setOn = [this, menu](bool v) {
+        QSettings().setValue("sdrrx/on", v);
+        if (v) {
+            if (!sdrRx_->start(std::string())) {
+                statusBar()->showMessage("SDR RX: could not start pacat", 8000);
+                return;
+            }
+            statusBar()->showMessage("SDR receive audio on (WDSP) — PC speakers/headset", 5000);
+        } else {
+            sdrRx_->stop();
+            statusBar()->showMessage("SDR receive audio off", 3000);
+        }
+        menu->setTitle(v ? "Receive audio (WDSP) — ON" : "Receive audio (WDSP)");
+    };
+    connect(on, &QAction::toggled, this, setOn);
+    if (on->isChecked()) setOn(true);
+
+    // Silent while transmitting: the RSP2 hears our own carrier. TX context
+    // is the meter-poll TX state, the TX monitor's own record of it, VK
+    // playback and MOX/TUNE (radioTx_ follows those within a poll).
+    auto* txMute = new QTimer(this);
+    txMute->setInterval(50);
+    connect(txMute, &QTimer::timeout, this, [this] {
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        const bool tx = radioTx_ || dvrTxPlayback_
+            || now - txCtxMs_.load(std::memory_order_relaxed) < 300;
+        sdrRx_->setMuted(tx);
+    });
+    txMute->start();
+#endif
 }
 
 } // namespace ttc

@@ -75,6 +75,7 @@ class SpotTableWindow;
 class TuneEntryDialog;
 class VoiceEqDialog;
 class LiveVoice;
+class SdrRx;
 struct VoiceEqSettings;
 struct VoiceRenderStats;
 class TuneTableDialog;
@@ -128,6 +129,8 @@ private:
     void openSkimView();               // lazy CW-Skimmer-style waterfall
     void setupDigiUi();
     void setupRotorUi();
+    void setupSdrRxUi(QMenu* sdrMenu); // SDR ▾ → Receive audio (WDSP)
+    void updateSdrRxDemod();           // mode / filter / pitch -> SdrRx
     int  snapToCwPeak(int offsetHz, int windowHz) const; // CW zap peak finder
     void zeroBeat();                   // Z: zap strongest signal in the passband
     void zeroBeatPass();               // refinement passes (fresh FFT each time)
@@ -304,6 +307,7 @@ private:
     QPointer<TuneTableDialog> tuneTableDlg_;   // non-modal table editor
     QPointer<VoiceEqDialog> vkEqDlg_;          // non-modal voice keyer EQ
     LiveVoice* live_ = nullptr;          // live mic chain (LIVE button)
+    SdrRx* sdrRx_ = nullptr;             // SDR receive audio (null = no WDSP)
     bool liveMic_ = false;
     bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
     bool vkRenderBusy_ = false;                // a background VK render runs

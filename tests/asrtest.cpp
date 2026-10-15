@@ -4,11 +4,12 @@
 // - callsign extraction from whisper-style text (one word, letter runs,
 //   hyphens, phonetics, trailing number words, non-calls)
 // - with the base.en model present: G8SEZ's test recording (rade_c's
-//   input_sample.wav) through the live path — 48 kHz feed with hiss
-//   around it, the VAD, whisper — makes one utterance with "test" in it,
-//   and with G8SEZ as a band-map hint the call copies as G8SEZ.
+//   input_sample.wav): with G8SEZ as a band-map hint the call copies as
+//   G8SEZ; and three copies back to back in real time (a talker who never
+//   pauses) are cut into <= 7 s pieces that keep up (each within 8 s).
 #include <QCoreApplication>
 #include <QElapsedTimer>
+#include <QDateTime>
 #include <QFileInfo>
 #include <cmath>
 #include <cstdio>
@@ -51,6 +52,12 @@ int main(int argc, char** argv) {
         check(got == QLatin1String(c.want), "  extracted as expected");
     }
 
+    const QString rep = AsrEngine::collapseRepeats("testing G8SEZ test 1, 2, 3, 3, 3, 3, 3, 3, 3, 3");
+    std::printf("    repetition loop -> \"%s\"\n", qPrintable(rep));
+    check(rep.count('3') <= 4 && rep.contains("G8SEZ"), "repetition loop collapses");
+    check(AsrEngine::collapseRepeats("five nine, five nine") == "five nine, five nine",
+          "  ordinary repeats untouched");
+
     const QString model = AsrEngine::defaultModelPath();
 #ifdef RADE_WAV_DIR
     const char* wavPath = RADE_WAV_DIR "/input_sample.wav";
@@ -92,33 +99,58 @@ int main(int argc, char** argv) {
         for (const CallHit& h : hinted.calls) g8 |= h.call == "G8SEZ";
         check(g8, "band-map hint copies the call as G8SEZ");
 
-        // Live path: 48 kHz in 10 ms blocks, hiss before and after.
+        // Live path, in REAL time like the radio: hiss, then the recording
+        // three times back to back with no pause between (a talker who
+        // never stops), then hiss. Pieces must stay short and the copy
+        // must keep up; lag = result arrival - end of that piece's audio.
         QVector<AsrEngine::Result> got;
-        QObject::connect(&eng, &AsrEngine::transcribed,
-                         [&](const AsrEngine::Result& r) { got.push_back(r); });
+        QVector<double> lagS;
+        QElapsedTimer clock;
+        clock.start();
+        double fedS = 0;                           // audio seconds fed so far
+        qint64 startMs = 0;
+        QObject::connect(&eng, &AsrEngine::transcribed, [&](const AsrEngine::Result& r) {
+            got.push_back(r);
+            lagS.push_back((QDateTime::currentMSecsSinceEpoch() - r.atMs) / 1000.0 - r.seconds);
+        });
         eng.setHints({"G8SEZ"}, 14236000);
         std::vector<float> feed;
         unsigned seed = 3;
         const auto hiss = [&] { seed = seed * 1103515245u + 12345u; return 0.003f * (((seed >> 9) & 0xffff) / 32768.f - 1.f); };
         for (int i = 0; i < 48000 * 2; ++i) feed.push_back(hiss());
-        for (size_t i = 0; i + 1 < pcm16.size(); ++i)
-            for (int k = 0; k < 3; ++k)
-                feed.push_back(0.5f * (pcm16[i] + (pcm16[i + 1] - pcm16[i]) * k / 3.f) + hiss());
-        for (int i = 0; i < 48000 * 2; ++i) feed.push_back(hiss());
-        for (size_t o = 0; o + 480 <= feed.size(); o += 480) eng.feed48k(&feed[o], 480, false);
+        for (int rep = 0; rep < 3; ++rep)
+            for (size_t i = 0; i + 1 < pcm16.size(); ++i)
+                for (int k = 0; k < 3; ++k)
+                    feed.push_back(0.5f * (pcm16[i] + (pcm16[i + 1] - pcm16[i]) * k / 3.f) + hiss());
+        for (int i = 0; i < 48000 * 3; ++i) feed.push_back(hiss());
+        startMs = QDateTime::currentMSecsSinceEpoch();
+        clock.restart();
+        for (size_t o = 0; o + 480 <= feed.size(); o += 480) {
+            eng.feed48k(&feed[o], 480, false);
+            fedS += 0.01;
+            while (clock.elapsed() < qint64(fedS * 1000)) app.processEvents(QEventLoop::AllEvents, 2);
+        }
         QElapsedTimer t;
         t.start();
-        while ((got.isEmpty() || eng.queuedSeconds() > 0) && t.elapsed() < 30000)
-            app.processEvents(QEventLoop::AllEvents, 50);
-        t.restart();
-        while (t.elapsed() < 6000) app.processEvents(QEventLoop::AllEvents, 50);   // stragglers
-        std::printf("    live path: %d utterance(s)\n", int(got.size()));
-        for (const auto& r : got)
-            std::printf("      %.1f s: %s [conf %.2f]\n", r.seconds, qPrintable(r.text), r.confidence);
-        check(!got.isEmpty() && got[0].text.contains("test", Qt::CaseInsensitive),
-              "VAD closes the over and whisper copies it");
-        check(got.size() == 1 && got[0].seconds > 7 && got[0].seconds < 14,
-              "one utterance spanning the speech, not the hiss");
+        while (t.elapsed() < 12000) app.processEvents(QEventLoop::AllEvents, 50);   // stragglers
+        std::printf("    nonstop talker, %.0f s of speech: %d piece(s)\n", 3 * pcm16.size() / 16000.0,
+                    int(got.size()));
+        double maxLen = 0, maxLag = 0, sumLag = 0;
+        QString all;
+        for (int i = 0; i < got.size(); ++i) {
+            std::printf("      %.1f s, +%.1f s late: %s [conf %.2f]\n", got[i].seconds, lagS[i],
+                        qPrintable(got[i].text), got[i].confidence);
+            maxLen = std::max(maxLen, got[i].seconds);
+            maxLag = std::max(maxLag, lagS[i]);
+            sumLag += lagS[i];
+            all += got[i].text + ' ';
+        }
+        std::printf("    lag: mean %.1f s, worst %.1f s\n", got.isEmpty() ? 0 : sumLag / got.size(), maxLag);
+        check(got.size() >= 4, "the nonstop over is cut into pieces");
+        check(maxLen <= 7.6, "no piece longer than ~7 s");
+        check(all.count("G8SEZ") >= 3 && all.contains("test", Qt::CaseInsensitive),
+              "the copy keeps the call and the words");
+        check(maxLag < 8.0, "each piece lands within 8 s of its end");
         eng.stop();
     }
     if (fails == 0) std::printf("asrtest: all checks passed\n");

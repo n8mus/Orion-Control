@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -23,12 +24,15 @@ namespace ttc {
 // can run). One whisper run per closed utterance — no sliding window:
 //
 //   SDR DSP thread  feed48k(): 3:1 FIR to 16 kHz, 10 ms frames, VAD,
-//                   close an utterance on silence / TX / 20 s -> queue
+//                   close a piece on silence / phrase pause / TX, cut at
+//                   7 s at its quietest point -> queue (2 deep, newest kept)
 //   own thread      whisper_full() per utterance -> transcribed()
 //
-// The VAD tracks the noise floor rather than AetherSDR's fixed level:
-// after WDSP's AGC the hiss between words sits far above any absolute
-// threshold. Two ttc additions, both measured here (base.en, 8 threads,
+// The VAD tracks the noise floor (quietest frame of 2 s) rather than
+// AetherSDR's fixed level: after WDSP's AGC the hiss between words sits
+// far above any absolute threshold. Pieces stay 3-7 s (live-found: a
+// talker who never paused made one 20 s lump, decoded 30 s late and
+// worse). Two ttc additions, both measured here (base.en, 8 threads,
 // a 9.8 s clip): the encoder window is sized to the utterance (whisper
 // pads every call to 30 s — audio_ctx cut 9.5 s to 4.3 s), and the
 // prompt carries the calls spotted near the dial (a generic ham prompt
@@ -73,6 +77,11 @@ signals:
 private:
     void worker();
     void closeUtterance();
+    void cutUtterance();
+    static bool promptEcho(const QString& t, const QStringList& hints);
+public:
+    static QString collapseRepeats(const QString& t);   // public for asrtest
+private:
     static bool hallucination(const QString& t);
 
     whisper_context* ctx_ = nullptr;
@@ -85,6 +94,8 @@ private:
     int phase_ = 0;
     std::vector<float> frame_;                     // 160 samples @ 16 kHz
     std::vector<float> utt_, preroll_;
+    std::vector<float> uttDb_;                     // per-frame level of utt_
+    std::deque<float> floorHist_;
     bool inSpeech_ = false;
     int voicedFrames_ = 0, quietFrames_ = 0, loudRun_ = 0;
     float floorDb_ = -60.f;
@@ -95,6 +106,7 @@ private:
     struct Utt { std::vector<float> pcm; qint64 atMs; qint64 dialHz; };
     std::deque<Utt> queue_;
     QStringList hints_;
+    QHash<QString, qint64> heardCalls_;            // worker thread only
     qint64 dialHz_ = 0;
 };
 

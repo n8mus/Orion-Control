@@ -207,12 +207,17 @@ that night's own capture).
   callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
   **Copy Assist** (SDR ▾ → Copy Assist, `src/asr`, AetherSDR's design):
   SdrRx's asr tap (pre gate/EQ/MUTE) -> 16 kHz, noise-floor-tracking VAD
-  (1 s hangover) -> system whisper.cpp base.en on its own thread
+  (quietest-frame-of-2-s floor; pieces 3-7 s: 600 ms quiet, a 250 ms
+  phrase pause past 3 s, or a cut at the quietest point at 7 s; queue 2
+  deep, newest kept) -> system whisper.cpp base.en on its own thread
   (`ggml_backend_load_all()` first — Arch's ggml has loadable CPU
   variants; this Xeon gets the Sandy Bridge one). Encoder window sized
-  to the over but never < 512 frames (short windows read garbage);
-  prompt = band-map calls within 3 kHz of the dial (measured: the only
-  thing that fixed callsign spelling). Optional: no whisper = no menu
+  to the piece but never < 384 frames (short windows read garbage);
+  prompt = a SENTENCE naming our call + calls decoded in the last 3 min
+  + band-map calls near the dial (a list prompt echoed back verbatim;
+  carrying the previous TEXT made it repeat); max_tokens ~5/s and a
+  repeat-collapse stop whisper's '3, 3, 3...' loop. Nonstop talker in
+  asrtest: lag ~3 s (was one 20 s lump ~30 s late). Optional: no whisper = no menu
   entry (CI/release build without it).
 - **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
   Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"

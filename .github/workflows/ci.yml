@@ -19,7 +19,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             cmake g++ make qt6-base-dev qt6-serialport-dev \
-            libgl1-mesa-dev autoconf automake libtool curl fonts-dejavu-core
+            libgl1-mesa-dev autoconf automake libtool curl fonts-dejavu-core \
+            libfftw3-dev
 
       # Ubuntu doesn't package rnnoise — build the Xiph release from
       # source (autogen fetches the model data).
@@ -45,7 +46,7 @@ jobs:
       - name: Build app + quick tests
         run: |
           cmake --build build -j"$(nproc)" --target tentec-console \
-            cwtest autogaintest trimtest skimtest watchtest
+            cwtest autogaintest trimtest skimtest watchtest sdrrxtest
 
       - name: Quick test tier
         run: |
@@ -53,6 +54,7 @@ jobs:
           ./build/trimtest
           ./build/skimtest
           ./build/watchtest
+          ./build/sdrrxtest      # SDR receive: WDSP chain on synthetic IQ
           TTC_CWLEGACY=1 ./build/cwtest --quick | tee cw.out
           grep -q "TOTAL: 100%" cw.out
 

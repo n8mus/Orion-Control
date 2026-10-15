@@ -118,6 +118,7 @@ add_executable(tentec-console
   src/net/SpotClient.cpp        src/net/SpotClient.h
   src/net/PotaClient.cpp        src/net/PotaClient.h
   src/net/FreeDvReporter.cpp    src/net/FreeDvReporter.h
+  src/net/PatMonitor.cpp        src/net/PatMonitor.h
   src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
@@ -351,6 +352,11 @@ add_executable(not1mmtest EXCLUDE_FROM_ALL
   src/util/LogbookIndex.cpp src/util/CtyLookup.cpp src/log/LogDb.cpp src/log/Adif.cpp)
 target_include_directories(not1mmtest PRIVATE src)
 target_link_libraries(not1mmtest PRIVATE Qt6::Core Qt6::Sql)
+
+# Winlink: Pat's websocket JSON -> session / progress, offline.
+add_executable(wltest EXCLUDE_FROM_ALL tests/wltest.cpp src/net/PatMonitor.cpp src/net/PatMonitor.h)
+target_include_directories(wltest PRIVATE src)
+target_link_libraries(wltest PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
 
 # rigctld server vs Pat's (Winlink) client sequence, no radio attached.
 add_executable(rigctldtest EXCLUDE_FROM_ALL

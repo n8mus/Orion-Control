@@ -1748,6 +1748,11 @@ void MainWindow::showTuneBoxMenu(const QPoint& globalPos) {
 // have had DIG up first).
 void MainWindow::setLiveMic(bool on) {
     if (on == liveMic_) { txBar_->showLiveMic(on); return; }
+    if (on && winlinkActive_) {
+        txBar_->showLiveMic(false);
+        statusBar()->showMessage("LIVE MIC refused: a Winlink session owns the SignaLink", 8000);
+        return;
+    }
     if (on) {
         const auto refuse = [this](const QString& why) {
             txBar_->showLiveMic(false);

@@ -76,6 +76,7 @@ senders and weak-signal cases are the hard set.
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `not1mmtest` | Not1MM contest dupe sheet (`Not1mmLog`) vs a synthetic not1mm.json + ham.db + plugin: dupe_type 1/2/3/4, other contests ignored, Band fallback, inert while Not1MM isn't running; `--real` reads this station's Not1MM read-only | — |
 | `rigctldtest` | the :4532 rigctld server over TCP, no radio attached (PTT only raises the signal): Pat's (Winlink) exact sequence — `dump_caps` ping, `\chk_vfo`, `\get_freq`, `\set_freq`, `t`, `\set_ptt 1/0`, ONE line back each, stream stays aligned — plus the `+` extended form unchanged | — |
+| `wltest` | Winlink session watching (`PatMonitor`): Pat's websocket JSON by hand — dialing/connected = session, gateway named, progress readout, disconnect ends it | — |
 | `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, the connect snapshot as the station table: ON AIR / TX n min ago / hours / listening / RX only, band-map vs table-only, rx_report heard spots, clamps); `--live N` watches qso.freedv.org for N s | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
@@ -127,7 +128,13 @@ that night's own capture).
     their band map here — server `127.0.0.1` port `7300`; the greeting
     carries the word HELLO because Not1MM's client waits for it before
     reading spots, cqrlog ignores it);
-  QSO logging = UDP ADIF datagram to cqrlog's bridge on `:2334`.
+  QSO logging = UDP ADIF datagram to cqrlog's bridge on `:2334`;
+  Winlink = Pat (getpat.io) -> rigctld `:4532` for QSY + PTT (its long
+    `\set_freq`/`\set_ptt` forms, one line back each — `rigctldtest`),
+    ardopcf launched from AUDIO ▾ → Winlink on the SignaLink via PipeWire
+    (`pipewire:NODE=<node>`, never plughw — it would lock the console
+    out), and `PatMonitor` watching Pat's `ws://localhost:8080/ws`: while a
+    session dials/connects the console takes DIG and refuses LIVE/RADE/VK/MOX.
   New integrations should follow this pattern, not grab devices.
 - **Spot pipeline**: sources (cluster telnet, POTA API, own skimmer) →
   `pushSpots` lambda in MainWindow.cpp → `PanadapterWidget::setSpots`.

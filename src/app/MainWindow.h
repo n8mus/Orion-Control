@@ -25,6 +25,7 @@ class QVBoxLayout;
 #include "net/SpotClient.h"
 #include "log/Not1mmLog.h"
 #include "net/FreeDvReporter.h"
+#include "net/PatMonitor.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
 #include "app/Voacap.h"
@@ -322,6 +323,14 @@ private:
                                          // shared with SdrRx's DSP-thread tap
     QPointer<CopyAssistWindow> caWin_;
     void setupCopyAssistUi(QMenu* sdrMenu);
+    // Winlink (AUDIO ▾ → Winlink): Pat drives the rig through :4532; the
+    // console watches Pat's session and hands it the SignaLink.
+    void setupWinlinkUi(QMenu* audioMenu);
+    void onWinlinkSession(bool active, const QString& remote);
+    PatMonitor pat_;
+    bool winlinkActive_ = false, winlinkOwnsDig_ = false, winlinkStoppedLive_ = false;
+    QLabel* wlLabel_ = nullptr;
+    QProcess* ardop_ = nullptr;
     bool liveMic_ = false;
     bool liveOwnsLineIn_ = false;              // LIVE turned DIG on (restore)
     // FreeDV RADE transmit (AUDIO ▾): LIVE in RADE mode; MOX-off waits for

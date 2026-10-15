@@ -873,6 +873,7 @@ MainWindow::MainWindow(QWidget* parent)
         "TX knob so ALC just moves. Off again at every start.");
     connect(radeTxAct_, &QAction::toggled, this, &MainWindow::setRadeTx);
 #endif
+    setupWinlinkUi(audioMenu);
     audioBtn->setMenu(audioMenu);
     topLay->addSpacing(8);
     topLay->addWidget(audioBtn);
@@ -2388,6 +2389,11 @@ MainWindow::MainWindow(QWidget* parent)
         statusBar()->showMessage("MOX failsafe: un-keyed after 3 min", 6000);
     });
     connect(txBar_, &TxBar::moxToggled, this, [this](bool on) {
+        if (on && winlinkActive_) {                // Pat owns the transmitter now
+            txBar_->showMoxActive(false);
+            statusBar()->showMessage("MOX refused: a Winlink session is on the air", 6000);
+            return;
+        }
         if (on && tuneTimeout_->isActive()) {      // never both keyed at once
             txBar_->showTuneActive(false);
             stopManualTune();
@@ -2461,6 +2467,10 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(txBar_, &TxBar::dvrPlayClicked, this, [this, dvrBusy](bool overAir) {
         if (dvrBusy()) return;
+        if (overAir && winlinkActive_) {
+            statusBar()->showMessage("Replay refused: a Winlink session is on the air", 6000);
+            return;
+        }
         QString f = dvrLastRx_;
         if (f.isEmpty()) {                         // newest take from an earlier run
             const QFileInfoList takes = QDir(dvrDir()).entryInfoList(
@@ -2496,6 +2506,10 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(txBar_, &TxBar::vkClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
+        if (winlinkActive_) {
+            statusBar()->showMessage("Voice keyer refused: a Winlink session is on the air", 6000);
+            return;
+        }
         playVoiceSlot(slot);
     });
     connect(txBar_, &TxBar::liveMicToggled, this, &MainWindow::setLiveMic);

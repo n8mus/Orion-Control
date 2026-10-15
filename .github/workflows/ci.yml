@@ -47,7 +47,7 @@ jobs:
         run: |
           cmake --build build -j"$(nproc)" --target tentec-console \
             cwtest autogaintest trimtest skimtest watchtest sdrrxtest \
-            raderxtest radetxtest freedvtest not1mmtest rigctldtest
+            raderxtest radetxtest freedvtest not1mmtest rigctldtest wltest
 
       - name: Quick test tier
         run: |
@@ -61,6 +61,7 @@ jobs:
           ./build/freedvtest     # FreeDV Reporter frames, offline
           ./build/not1mmtest     # Not1MM dupe sheet, synthetic log
           ./build/rigctldtest    # rigctld server vs Pat's (Winlink) client sequence
+          ./build/wltest         # Pat session watching, offline
           TTC_CWLEGACY=1 ./build/cwtest --quick | tee cw.out
           grep -q "TOTAL: 100%" cw.out
 

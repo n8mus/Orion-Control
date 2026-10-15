@@ -43,6 +43,14 @@
 #include <QJsonObject>
 #endif
 #include <QActionGroup>
+#include <QUrl>
+#include <QStandardPaths>
+#include <QDialogButtonBox>
+#include <QPlainTextEdit>
+#include <QApplication>
+#include <QClipboard>
+#include <QProcess>
+#include <QDesktopServices>
 #include <QSlider>
 #include <QWidgetAction>
 
@@ -1549,6 +1557,162 @@ void MainWindow::setupCopyAssistUi(QMenu* sdrMenu) {
     QSettings q;
     if (q.value("asr/on", false).toBool()) setOn(true, q.value("asr/threads", 8).toInt());
 #endif
+}
+
+// AUDIO ▾ → Winlink: radio email through Pat (getpat.io) + the ARDOP
+// modem (ardopcf), both the operator's own programs. The console's part,
+// single-master as everywhere: Pat tunes and keys THROUGH our rigctld on
+// :4532 (ardopcf has no PTT of its own; Pat relays its PTT requests); the
+// ARDOP modem shares the SignaLink through PipeWire (ALSA device
+// "pipewire:NODE=<node>", tested: 12 kHz capture alongside the console)
+// rather than grabbing it with plughw; and while Pat's session is up the
+// console hands it the SignaLink (DIG on, LIVE/RADE/VK off and refused).
+void MainWindow::setupWinlinkUi(QMenu* audioMenu) {
+    QMenu* wl = audioMenu->addMenu("Winlink (Pat + ARDOP)");
+    QAction* ardopAct = wl->addAction("Start the ARDOP modem (ardopcf) on the SignaLink");
+    ardopAct->setCheckable(true);
+    ardopAct->setToolTip("ardopcf on port 8515, SignaLink shared through PipeWire, no PTT of\n"
+                         "its own (Pat keys through the console). Install: yay -S ardopcf-bin");
+    connect(ardopAct, &QAction::toggled, this, [this, ardopAct](bool on) {
+        const auto refuse = [this, ardopAct](const QString& why) {
+            const QSignalBlocker b(ardopAct);
+            ardopAct->setChecked(false);
+            statusBar()->showMessage("ARDOP: " + why, 10000);
+        };
+        if (!on) {
+            if (ardop_) {
+                ardop_->disconnect(this);
+                ardop_->terminate();
+                if (!ardop_->waitForFinished(1500)) ardop_->kill();
+                ardop_->deleteLater();
+                ardop_ = nullptr;
+            }
+            statusBar()->showMessage("ARDOP modem stopped", 4000);
+            return;
+        }
+        const QString exe = QStandardPaths::findExecutable("ardopcf");
+        if (exe.isEmpty()) return refuse("ardopcf not installed (yay -S ardopcf-bin)");
+        if (radioSink_.isEmpty() || radioSource_.isEmpty())
+            return refuse("SignaLink not found in PipeWire");
+        const QString logDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/ardop";
+        QDir().mkpath(logDir);
+        const QString call = QSettings().value("station/callsign", "N8EM").toString().toUpper();
+        ardop_ = new QProcess(this);
+        ardop_->setProcessChannelMode(QProcess::MergedChannels);
+        ardop_->setStandardOutputFile(logDir + "/ardopcf-console.log");
+        connect(ardop_, &QProcess::finished, this, [this, ardopAct](int code, QProcess::ExitStatus) {
+            if (ardop_) { ardop_->deleteLater(); ardop_ = nullptr; }
+            const QSignalBlocker b(ardopAct);
+            ardopAct->setChecked(false);
+            statusBar()->showMessage(QString("ARDOP modem exited (%1) — see its log in "
+                                             "~/.local/share/n8mus/tentec-console/ardop").arg(code), 10000);
+        });
+        ardop_->start(exe, {"--logdir", logDir, "-G", "8514", "-H", "MYCALL " + call, "8515",
+                            "pipewire:NODE=" + radioSource_, "pipewire:NODE=" + radioSink_});
+        if (!ardop_->waitForStarted(3000)) {
+            ardop_->deleteLater();
+            ardop_ = nullptr;
+            return refuse("ardopcf would not start");
+        }
+        statusBar()->showMessage("ARDOP modem up on :8515 (levels page: localhost:8514). "
+                                 "Connect from Pat's web page.", 10000);
+    });
+    connect(wl->addAction("Open Pat (mailbox, connect) in the browser"), &QAction::triggered,
+            this, [] { QDesktopServices::openUrl(QUrl("http://localhost:8080")); });
+    connect(wl->addAction("Open the ARDOP level page"), &QAction::triggered,
+            this, [] { QDesktopServices::openUrl(QUrl("http://localhost:8514")); });
+    connect(wl->addAction("Pat settings for this station…"), &QAction::triggered, this, [this] {
+        const QString call = QSettings().value("station/callsign", "N8EM").toString().toUpper();
+        const QString grid = QSettings().value("station/grid", "EN83al").toString();
+        const QString snippet = QString(
+            "  \"mycall\": \"%1\",\n"
+            "  \"locator\": \"%2\",\n"
+            "  \"hamlib_rigs\": {\n"
+            "    \"console\": {\"address\": \"127.0.0.1:4532\", \"network\": \"tcp\", \"VFO\": \"\"}\n"
+            "  },\n"
+            "  \"ardop\": {\n"
+            "    \"addr\": \"localhost:8515\",\n"
+            "    \"arq_bandwidth\": {\"Forced\": false, \"Max\": 2000},\n"
+            "    \"rig\": \"console\",\n"
+            "    \"ptt_ctrl\": true,\n"
+            "    \"beacon_interval\": 0,\n"
+            "    \"cwid_enabled\": true\n"
+            "  },\n").arg(call, grid);
+        auto* d = new QDialog(this);
+        d->setAttribute(Qt::WA_DeleteOnClose);
+        d->setWindowTitle("Pat settings for this station");
+        auto* lay = new QVBoxLayout(d);
+        auto* note = new QLabel(
+            "In Pat (<b>pat configure</b>, or its web page → Config) set these fields — the\n"
+            "rig is this console's rigctld on :4532, so Pat tunes and keys through it.\n"
+            "Your Winlink password goes in <b>secure_login_password</b> — enter it yourself.\n"
+            "First time: <b>pat connect telnet</b> (internet, no radio) creates the account.", d);
+        note->setTextFormat(Qt::RichText);
+        note->setWordWrap(true);
+        lay->addWidget(note);
+        auto* ed = new QPlainTextEdit(snippet, d);
+        ed->setReadOnly(true);
+        ed->setFont(QFont("monospace"));
+        ed->setMinimumSize(520, 260);
+        lay->addWidget(ed);
+        auto* bb = new QDialogButtonBox(d);
+        auto* copy = bb->addButton("Copy", QDialogButtonBox::ActionRole);
+        bb->addButton(QDialogButtonBox::Close);
+        connect(copy, &QPushButton::clicked, d, [snippet] { QApplication::clipboard()->setText(snippet); });
+        connect(bb, &QDialogButtonBox::rejected, d, &QDialog::close);
+        lay->addWidget(bb);
+        d->show();
+    });
+    wl->addSeparator();
+    QAction* watch = wl->addAction("Hand Pat the SignaLink during its sessions");
+    watch->setCheckable(true);
+    watch->setToolTip("Watches Pat's own web socket (localhost:8080): while a Winlink session\n"
+                      "dials or is connected, DIG goes on and LIVE / RADE / VK / MOX stand down");
+    watch->setChecked(QSettings().value("winlink/watch", true).toBool());
+    connect(watch, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("winlink/watch", on);
+        pat_.setEnabled(on);
+    });
+    wlLabel_ = new QLabel(this);
+    wlLabel_->setStyleSheet("QLabel { color: #e8b04a; font-weight: bold; padding: 0 6px; }");
+    wlLabel_->hide();
+    statusBar()->addPermanentWidget(wlLabel_);
+    connect(&pat_, &PatMonitor::sessionChanged, this, &MainWindow::onWinlinkSession);
+    connect(&pat_, &PatMonitor::progressChanged, this, [this](const QString& t) {
+        if (!winlinkActive_) return;
+        wlLabel_->setText(QString("WINLINK %1%2").arg(pat_.remote(), t.isEmpty() ? QString() : "  " + t));
+    });
+    pat_.setEnabled(watch->isChecked());
+}
+
+void MainWindow::onWinlinkSession(bool active, const QString& remote) {
+    if (active == winlinkActive_) return;
+    winlinkActive_ = active;
+    if (active) {
+        // The SignaLink is Pat's now: nothing of ours plays into it.
+        stopVoicePlayback();
+        winlinkStoppedLive_ = liveMic_;
+        if (liveMic_) setLiveMic(false);           // RADE TX goes with it
+        if (!digital_) {
+            winlinkOwnsDig_ = true;
+            setDigitalMode(true);                  // rear line input
+        }
+        wlLabel_->setText(QString("WINLINK %1").arg(remote.isEmpty() ? QStringLiteral("dialing…") : remote));
+        wlLabel_->show();
+        statusBar()->showMessage(QString("Winlink session %1 — the SignaLink is Pat's; LIVE/VK/MOX "
+                                         "stand down").arg(remote), 8000);
+    } else {
+        if (winlinkOwnsDig_) {
+            winlinkOwnsDig_ = false;
+            setDigitalMode(false);
+        }
+        wlLabel_->hide();
+        statusBar()->showMessage(winlinkStoppedLive_
+            ? QString("Winlink session with %1 ended — LIVE was turned off for it; turn it back "
+                      "on when you want it").arg(remote)
+            : QString("Winlink session with %1 ended").arg(remote), 10000);
+        winlinkStoppedLive_ = false;
+    }
 }
 
 } // namespace ttc

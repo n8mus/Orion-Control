@@ -238,6 +238,10 @@ void SdrRx::applySettingsDsp() {
     SetRXAEMNRRun(kCh, s.nr == NoiseReduction::NR2 ? 1 : 0);
     SetRXANNRRun(kCh, s.nr == NoiseReduction::NR3 ? 1 : 0);
     if (s.rnnoise && !rnn_) rnn_ = rnnoise_create(nullptr);
+    eq_.setActiveBandCount(int(s.eq.size()));
+    for (int i = 0; i < int(s.eq.size()); ++i) eq_.setBand(i, s.eq[size_t(i)]);
+    if (s.eqOn && !eq_.isEnabled()) eq_.reset();   // no stale state on the way in
+    eq_.setEnabled(s.eqOn);
     appliedSettings_ = s;
 }
 
@@ -254,6 +258,7 @@ void SdrRx::dspLoop() {
     RESAMPLE rs = create_resample(1, kRsIn, rsIn.data(), rsOut.data(),
                                   int(kDecimRate), kWdspInRate, 0.0, 0, 1.0);
     std::deque<double> at96;                       // interleaved I/Q at 96 kHz
+    eq_.prepare(kOutRate);
     ready_.store(true);
     SetRXAEMNRgainMethod(kCh, 2);                  // Thetis NR2 defaults
     SetRXAEMNRnpeMethod(kCh, 0);
@@ -313,10 +318,10 @@ void SdrRx::dspLoop() {
                 for (int k = 0; k < 480; ++k) done.push_back(f[k] / 32768.f);
                 rnnIn_.erase(rnnIn_.begin(), rnnIn_.begin() + 480);
             }
-            if (!done.empty()) writeAudio(done.data(), int(done.size()));
+            if (!done.empty()) emitAudio(done.data(), int(done.size()));
         } else {
             rnnIn_.clear();
-            writeAudio(audio.data(), kOutSize);
+            emitAudio(audio.data(), kOutSize);
         }
     }
     ready_.store(false);
@@ -371,6 +376,11 @@ double SdrRx::backlogMs() const {
     int n = 0;
     if (pipeProbe_ >= 0) ::ioctl(pipeProbe_, FIONREAD, &n);
     return double(n) / kBytesPerMs;
+}
+
+void SdrRx::emitAudio(float* x, int n) {
+    if (eq_.isEnabled()) eq_.process(x, n, 1);
+    writeAudio(x, n);
 }
 
 void SdrRx::writeAudio(const float* x, int n) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <array>
 #include <atomic>
 #include <complex>
 #include <condition_variable>
@@ -10,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "dsp/ClientEq.h"
 #include "radio/RadioController.h"   // Mode
 
 struct DenoiseState;
@@ -26,7 +28,8 @@ namespace ttc {
 //                      125 kHz, queue (cheap; the IQ fan-out's budget)
 //   own DSP thread:    1000-sample blocks -> NB/NB2 -> WDSP RXA (bandpass,
 //                      SNB, ANF, NR*, AGC, demod; 48 kHz out) -> RNNoise ->
-//                      volume / TX mute -> pacat on the PC's default output
+//                      RX EQ -> volume / TX mute -> pacat on the PC's
+//                      default output
 //
 // Audio is held near kTargetMs of queue the way the LIVE mic is (the SDR
 // and the sound card are different clocks): quiet 8 ms blocks are dropped
@@ -46,6 +49,10 @@ public:
         bool snb = false;                          // spectral noise blanker
         bool anf = false;                          // auto notch
         bool rnnoise = false;                      // AetherSDR-style, on audio
+        // RX EQ: AetherSDR's ClientEq on the finished audio (after
+        // RNNoise), the voice keyer's 8-slot layout (VoiceEqSettings).
+        bool eqOn = false;
+        std::array<ClientEq::BandParams, 8> eq{};
     };
 
     SdrRx();
@@ -130,6 +137,8 @@ private:
     int bwLo_ = 100, bwHi_ = 2800, pitch_ = 600;
     bool demodDirty_ = true;
     std::atomic<bool> muted_{false};
+    ClientEq eq_;                                  // RX EQ, prepared at 48 kHz
+    void emitAudio(float* x, int n);               // EQ -> writeAudio
     DenoiseState* rnn_ = nullptr;
     std::vector<float> rnnIn_;                     // 480-sample frames
 

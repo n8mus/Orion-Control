@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ui/SdrRxDialog.h"
+#include "ui/VoiceEqDialog.h"   // VoiceEqCurve
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -13,6 +14,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <cmath>
+#include <vector>
 
 namespace ttc {
 
@@ -30,7 +32,53 @@ const char* kStyle =
     " border: 1px solid #2a3644; padding: 3px 8px; }"
     "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
     " selection-background-color: #2b5c8a; }";
+
+// Listening shapes, tune-by-ear starting points (slots: 0 HP, 1 LS,
+// 2-5 peaks, 6 HS, 7 LP). Each starts from flat, so a slot not named
+// here is off.
+struct RxEqPreset {
+    const char* name;
+    struct B { int slot; float hz, db, q; int slope; };
+    std::vector<B> bands;
+};
+const std::vector<RxEqPreset>& rxEqPresets() {
+    static const std::vector<RxEqPreset> p = {
+        {"Flat", {}},
+        // Thin the mud, lift the consonants: SSB in a pile of QRM.
+        {"Voice clarity", {{0, 150, 0, 0.707f, 24}, {2, 300, -3, 1.0f, 0},
+                           {4, 2200, 4, 1.0f, 0}}},
+        // Long sessions: warm lows, the top hiss taken down.
+        {"Mellow (less hiss)", {{1, 200, 2, 0.707f, 0}, {6, 2500, -6, 0.707f, 0}}},
+        // Band noise above the voice cut hard.
+        {"Hiss cut 2.6 kHz", {{0, 120, 0, 0.707f, 24}, {7, 2600, 0, 0.707f, 48}}},
+        // CW: a soft audio window around the usual pitches.
+        {"CW window", {{0, 300, 0, 0.707f, 24}, {7, 1000, 0, 0.707f, 24}}},
+    };
+    return p;
+}
 }  // namespace
+
+void SdrRxDialog::loadEqPreset(int idx) {
+    const auto& all = rxEqPresets();
+    if (idx < 0 || idx >= int(all.size())) return;
+    eq_ = VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat);
+    for (auto& b : eq_.bands) b.enabled = false;
+    for (const auto& b : all[size_t(idx)].bands) {
+        auto& d = eq_.bands[size_t(b.slot)];
+        d.freqHz = b.hz;
+        d.gainDb = b.db;
+        d.q = b.q;
+        if (b.slope) d.slopeDbPerOct = b.slope;
+        d.enabled = true;
+    }
+    eq_.enabled = idx > 0;
+    {
+        const QSignalBlocker blk(eqOn_);
+        eqOn_->setChecked(eq_.enabled);
+    }
+    curve_->setSettings(eq_);
+    emitChanged();
+}
 
 SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     : QDialog(parent) {
@@ -93,6 +141,29 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     ng->addWidget(rnn_, 4, 0, 1, 2);
     lay->addWidget(noise);
 
+    // RX EQ: the voice keyer's editor on the receive audio — drag a
+    // handle (left/right = frequency, up/down = gain, Shift-drag or the
+    // wheel = Q); grabbing a band that is off turns it on.
+    auto* eqBox = new QGroupBox("EQ", this);
+    auto* eqLay = new QVBoxLayout(eqBox);
+    auto* eqRow = new QHBoxLayout;
+    eqOn_ = new QCheckBox("EQ on", eqBox);
+    eqRow->addWidget(eqOn_);
+    eqRow->addStretch(1);
+    eqRow->addWidget(new QLabel("Preset", eqBox));
+    eqPreset_ = new QComboBox(eqBox);
+    eqPreset_->addItem("Load…");
+    for (const auto& p : rxEqPresets()) eqPreset_->addItem(p.name);
+    eqPreset_->setToolTip("Starting points — then drag the curve to taste");
+    eqRow->addWidget(eqPreset_);
+    eqLay->addLayout(eqRow);
+    curve_ = new VoiceEqCurve(eqBox);
+    curve_->setEdge(0.f, QString());
+    curve_->setToolTip("Drag a dot: left/right = frequency, up/down = gain;\n"
+                       "Shift-drag or the wheel = Q (width). HP/LP move in frequency.");
+    eqLay->addWidget(curve_);
+    lay->addWidget(eqBox);
+
     info_ = new QLabel(this);
     info_->setStyleSheet("QLabel { color: #c8d4e0; font-family: monospace; }");
     lay->addWidget(info_);
@@ -112,6 +183,11 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     snb_->setChecked(s.snb);
     anf_->setChecked(s.anf);
     rnn_->setChecked(s.rnnoise);
+    eq_ = VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat);
+    eq_.enabled = s.eqOn;
+    for (size_t i = 0; i < s.eq.size(); ++i) eq_.bands[i] = s.eq[i];
+    eqOn_->setChecked(s.eqOn);
+    curve_->setSettings(eq_);
     loading_ = false;
 
     connect(on_, &QCheckBox::toggled, this, [this] { emitChanged(); });
@@ -123,6 +199,25 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
         connect(c, &QComboBox::currentIndexChanged, this, [this] { emitChanged(); });
     for (QCheckBox* c : {snb_, anf_, rnn_})
         connect(c, &QCheckBox::toggled, this, [this] { emitChanged(); });
+    connect(eqOn_, &QCheckBox::toggled, this, [this](bool v) {
+        eq_.enabled = v;
+        curve_->setSettings(eq_);
+        emitChanged();
+    });
+    connect(eqPreset_, &QComboBox::activated, this, [this](int i) {
+        if (i > 0) loadEqPreset(i - 1);
+        const QSignalBlocker blk(eqPreset_);
+        eqPreset_->setCurrentIndex(0);
+    });
+    curve_->onBandEdited = [this](int band, const ClientEq::BandParams& p) {
+        eq_.bands[size_t(band)] = p;
+        if (p.enabled && !eq_.enabled) {           // the curve turned it on
+            eq_.enabled = true;
+            const QSignalBlocker blk(eqOn_);
+            eqOn_->setChecked(true);
+        }
+        emitChanged();
+    };
     connect(close, &QPushButton::clicked, this, &QDialog::close);
 
     auto* tick = new QTimer(this);
@@ -147,6 +242,8 @@ SdrRx::Settings SdrRxDialog::collect() const {
     s.snb = snb_->isChecked();
     s.anf = anf_->isChecked();
     s.rnnoise = rnn_->isChecked();
+    s.eqOn = eq_.enabled;
+    for (size_t i = 0; i < s.eq.size(); ++i) s.eq[i] = eq_.bands[i];
     return s;
 }
 

@@ -7,6 +7,7 @@
 // - CWU: a carrier ON the dial comes out at the sidetone pitch (600 Hz)
 // - AM: a 1 kHz-modulated carrier on the dial demodulates to 1 kHz
 // - NR2 runs on noise without falling over, and lowers it
+// - RX EQ: a +6 dB peak at 1 kHz lifts the USB tone ~6 dB; EQ off = bypass
 #include <QCoreApplication>
 #include <chrono>
 #include <cmath>
@@ -105,6 +106,20 @@ int main(int argc, char** argv) {
     const double a1k = toneDb(am, 1000), a1k5 = toneDb(am, 1500);
     printf("  AM: 1 kHz modulation %.1f dB, 1.5 kHz %.1f dB\n", a1k, a1k5);
     check(a1k - a1k5 > 25, "AM demodulates its 1 kHz modulation");
+
+    // RX EQ: one +6 dB peak on the tone; the same bands with EQ off leave
+    // the tone where it was.
+    SdrRx::Settings eq = st;
+    for (auto& b : eq.eq) b.enabled = false;
+    eq.eq[3] = {1000.f, 6.f, 1.0f, ClientEq::FilterType::Peak, true, 12};
+    SdrRx::Settings eqOff = eq;
+    eq.eqOn = true;
+    auto ue = run(Mode::USB, 0, 2800, eq, 2.0, [](double t) { return at(t, 1000, 0.01); });
+    auto uo = run(Mode::USB, 0, 2800, eqOff, 2.0, [](double t) { return at(t, 1000, 0.01); });
+    printf("  RX EQ +6 dB @ 1 kHz: tone %.1f dB (EQ off %.1f, none %.1f)\n",
+           toneDb(ue, 1000), toneDb(uo, 1000), u1k);
+    check(std::fabs(toneDb(ue, 1000) - u1k - 6.0) < 1.0, "RX EQ peak lifts the tone 6 dB");
+    check(std::fabs(toneDb(uo, 1000) - u1k) < 0.5, "RX EQ off is a bypass");
 
     // NR2 on white noise in the passband: runs, and turns it down.
     unsigned seed = 7;

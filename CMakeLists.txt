@@ -423,7 +423,8 @@ endif()
 # CW pitch, AM) — WDSP through the decimator, audio captured from a pipe.
 if(HAVE_WDSP)
   add_executable(sdrrxtest EXCLUDE_FROM_ALL
-    tests/sdrrxtest.cpp src/sdr/SdrRx.cpp src/sdr/SdrRx.h)
+    tests/sdrrxtest.cpp src/sdr/SdrRx.cpp src/sdr/SdrRx.h
+    src/dsp/ClientEq.cpp)
   target_include_directories(sdrrxtest PRIVATE src)
   target_link_libraries(sdrrxtest PRIVATE Qt6::Core aether::wdsp rnnoise)
 endif()

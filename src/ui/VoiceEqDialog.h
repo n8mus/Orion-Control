@@ -29,6 +29,8 @@ public:
     explicit VoiceEqCurve(QWidget* parent = nullptr);
     void setSettings(const VoiceEqSettings& s) { s_ = s; update(); }
     void setTarget(int idx) { target_ = idx; update(); }   // voiceEqTargets()
+    // The shaded "radio cuts above here" edge; 0 hides it (the RX EQ).
+    void setEdge(float hz, const QString& label) { edgeHz_ = hz; edgeLabel_ = label; update(); }
     QSize sizeHint() const override { return {560, 200}; }
     std::function<void(int band, const ClientEq::BandParams& p)> onBandEdited;
     std::function<void()> onDragFinished;
@@ -50,6 +52,8 @@ private:
 
     VoiceEqSettings s_;
     int target_ = 0;
+    float edgeHz_ = 3900.f;                        // widest Orion TX filter
+    QString edgeLabel_ = QStringLiteral("Orion TX edge →");
     int drag_ = -1, hover_ = -1;
     bool dragQ_ = false;                           // Shift held at grab
     QPointF dragStart_;

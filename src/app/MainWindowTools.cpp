@@ -33,6 +33,9 @@
 #ifdef HAVE_WDSP
 #include "sdr/SdrRx.h"
 #include "ui/SdrRxDialog.h"
+#include "audio/VoiceEq.h"
+#include <QJsonDocument>
+#include <QJsonObject>
 #endif
 #include <QActionGroup>
 #include <QSlider>
@@ -1297,6 +1300,14 @@ SdrRx::Settings loadSdrRxSettings() {
     s.snb = q.value("sdrrx/snb", false).toBool();
     s.anf = q.value("sdrrx/anf", false).toBool();
     s.rnnoise = q.value("sdrrx/rnnoise", false).toBool();
+    // The RX EQ is stored as the voice keyer's EQ JSON (same 8 slots, same
+    // validation of slot types); never configured = flat and off.
+    const QJsonDocument eq = QJsonDocument::fromJson(q.value("sdrrx/eq").toByteArray());
+    const VoiceEqSettings v = eq.isObject()
+        ? VoiceEqSettings::fromJson(eq.object())
+        : VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat);
+    s.eqOn = v.enabled;
+    for (size_t i = 0; i < s.eq.size(); ++i) s.eq[i] = v.bands[i];
     return s;
 }
 void saveSdrRxSettings(const SdrRx::Settings& s) {
@@ -1308,6 +1319,10 @@ void saveSdrRxSettings(const SdrRx::Settings& s) {
     q.setValue("sdrrx/snb", s.snb);
     q.setValue("sdrrx/anf", s.anf);
     q.setValue("sdrrx/rnnoise", s.rnnoise);
+    VoiceEqSettings v = VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat);
+    v.enabled = s.eqOn;
+    for (size_t i = 0; i < s.eq.size(); ++i) v.bands[i] = s.eq[i];
+    q.setValue("sdrrx/eq", QJsonDocument(v.toJson()).toJson(QJsonDocument::Compact));
 }
 }  // namespace
 #endif

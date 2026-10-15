@@ -3,12 +3,15 @@
 #include <QDialog>
 #include <functional>
 
+#include "audio/VoiceEq.h"
 #include "sdr/SdrRx.h"
 
 class QCheckBox;
 class QComboBox;
 class QLabel;
 class QSlider;
+
+namespace ttc { class VoiceEqCurve; }
 
 namespace ttc {
 
@@ -40,6 +43,11 @@ private:
     QCheckBox* snb_ = nullptr;
     QCheckBox* anf_ = nullptr;
     QCheckBox* rnn_ = nullptr;
+    QCheckBox* eqOn_ = nullptr;
+    QComboBox* eqPreset_ = nullptr;
+    VoiceEqCurve* curve_ = nullptr;
+    VoiceEqSettings eq_;                           // the curve's bands + on
+    void loadEqPreset(int idx);                    // index into rxEqPresets
     QLabel*    info_ = nullptr;
     std::function<QString()> status_;
     bool loading_ = false;

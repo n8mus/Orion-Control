@@ -29,7 +29,6 @@ namespace ttc {
 namespace {
 constexpr float kLoHz = 40.f, kHiHz = 6000.f;
 constexpr float kDbSpan = 15.f;                    // plot is ±15 dB
-constexpr float kOrionTxEdgeHz = 3900.f;           // widest Orion TX filter
 
 const char* kStyle =
     "QDialog { background: #141b24; }"
@@ -175,14 +174,16 @@ void VoiceEqCurve::paintEvent(QPaintEvent*) {
     };
     // The radio's side of the story: above 3.9 kHz the Orion's TX filter
     // removes it whatever the EQ does.
-    p.fillRect(QRectF(QPointF(xOf(kOrionTxEdgeHz), r.top()), r.bottomRight()),
-               QColor(60, 30, 30, 90));
     QFont f = p.font();
     f.setPixelSize(10);
     p.setFont(f);
-    p.setPen(QColor(150, 90, 90));
-    p.drawText(QRectF(xOf(kOrionTxEdgeHz) - 103, r.top() + 1, 100, 14),
-               Qt::AlignRight | Qt::AlignVCenter, "Orion TX edge →");
+    if (edgeHz_ > 0) {
+        p.fillRect(QRectF(QPointF(xOf(edgeHz_), r.top()), r.bottomRight()),
+                   QColor(60, 30, 30, 90));
+        p.setPen(QColor(150, 90, 90));
+        p.drawText(QRectF(xOf(edgeHz_) - 103, r.top() + 1, 100, 14),
+                   Qt::AlignRight | Qt::AlignVCenter, edgeLabel_);
+    }
     for (float hz : {50.f, 100.f, 200.f, 500.f, 1000.f, 2000.f, 5000.f}) {
         const double x = xOf(hz);
         p.setPen(QColor(32, 42, 54));

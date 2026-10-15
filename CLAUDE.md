@@ -74,6 +74,7 @@ senders and weak-signal cases are the hard set.
 | `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s, `--only <substr>` isolates rows) | — |
 | `skimtest` | 10-station synthetic segment through the skimmer | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
+| `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, station table, tx/rx_report spots, bulk_update replay, clamps); `--live N` watches qso.freedv.org for N s | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
 | `rotortest` | rotctld client (the `rotor/mode=rotctld` fallback) | `rotctld -m 1 -t 14533 &` (dummy turns ~6°/s — be patient) |
 | `dcutest` | DCU-3 frame parser (streams-while-turning captures) + the rotctld server we put in front of it | — |
@@ -125,7 +126,8 @@ that night's own capture).
   New integrations should follow this pattern, not grab devices.
 - **Spot pipeline**: sources (cluster telnet, POTA API, own skimmer) →
   `pushSpots` lambda in MainWindow.cpp → `PanadapterWidget::setSpots`.
-  Kinds: 'D' DX yellow, 'P' POTA green, 'F' FT8 cyan, 'S' skimmer violet;
+  Kinds: 'D' DX yellow, 'P' POTA green, 'F' FT8 cyan, 'S' skimmer violet,
+  'V' FreeDV orange (`FreeDvReporter`, qso.freedv.org view-only, Qt WebSockets);
   call text is colored by cqrlog worked-before status (LogbookIndex),
   watch-list hits get an orange ring.
 - **SKIM view** (SKIM ▾ → Waterfall view): CW-Skimmer-style zoomed

@@ -25,7 +25,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ make gfortran qt6-base-dev qt6-serialport-dev \
+            cmake g++ make gfortran qt6-base-dev qt6-serialport-dev qt6-websockets-dev \
             libgl1-mesa-dev autoconf automake libtool curl file \
             fuse libfuse2 desktop-file-utils libfftw3-dev
 

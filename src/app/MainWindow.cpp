@@ -742,6 +742,10 @@ MainWindow::MainWindow(QWidget* parent)
     ft8On->setCheckable(true);
     ft8On->setToolTip("FT8 skimmer spots from the cluster node (cyan labels, "
                       "placed at the station's actual offset in the watering hole)");
+    auto* fdvOn = spotsMenu->addAction("FreeDV Reporter spots");
+    fdvOn->setCheckable(true);
+    fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
+                      "(orange labels; watch-only — nothing about this station is sent)");
     // Spotter area: only show what's being heard in a chosen part of the
     // world (server-side CC Cluster spotter-origin filter); the same region
     // choice narrows POTA to that region's parks. Custom takes any CC
@@ -817,6 +821,7 @@ MainWindow::MainWindow(QWidget* parent)
         dxOn->setChecked(s.value("spots/dx", true).toBool());
         potaOn->setChecked(s.value("spots/pota", true).toBool());
         ft8On->setChecked(s.value("spots/ft8", true).toBool());
+        fdvOn->setChecked(s.value("spots/freedv", false).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
     topLay->addSpacing(8);
@@ -936,7 +941,7 @@ MainWindow::MainWindow(QWidget* parent)
         l.needB = nd.band.toLatin1();
         l.needM = nd.mode.toLatin1();
     };
-    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, ctyPlace, logStatus,
+    auto pushSpots = [this, spotsOn, dxOn, potaOn, ft8On, fdvOn, ctyPlace, logStatus,
                       needFill, watchBeep] {
         QVector<SpotLabel> labels;
         if (spotsOn->isChecked()) {
@@ -954,6 +959,16 @@ MainWindow::MainWindow(QWidget* parent)
                     needFill(l);
                     labels.push_back(l);
                     seen.insert(s.call);
+                }
+            if (fdvOn->isChecked())
+                for (const Spot& s : freedv_.spots()) {
+                    SpotLabel l{s.call, s.hz, s.atSecs, s.kind, s.tag, s.lat, s.lon};
+                    ctyPlace(l);
+                    l.status = logStatus(l);
+                    l.spotter = s.spotter;
+                    l.comment = s.comment;
+                    needFill(l);
+                    labels.push_back(l);
                 }
             for (const Spot& s : spotClient_.spots()) {
                 if (s.kind == 'D' && !dxOn->isChecked()) continue;
@@ -1036,7 +1051,8 @@ MainWindow::MainWindow(QWidget* parent)
                 std::remove_if(
                     labels.begin(), labels.end(),
                     [&cat](const SpotLabel& l) {
-                        if (l.kind == 'P' || l.kind == 'F') return true;
+                        if (l.kind == 'P' || l.kind == 'F' || l.kind == 'V')
+                            return true;
                         const QString m =
                             guessSpotMode(l.kind, l.comment, l.hz);
                         if (cat == QLatin1String("MIXED"))
@@ -1222,15 +1238,24 @@ MainWindow::MainWindow(QWidget* parent)
     connect(&potaClient_, &PotaClient::spotsChanged, this, pushSpots);
     connect(&potaClient_, &PotaClient::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });
-    connect(spotsOn, &QAction::toggled, this, [this, pushSpots, potaOn](bool on) {
+    connect(spotsOn, &QAction::toggled, this, [this, pushSpots, potaOn, fdvOn](bool on) {
         QSettings().setValue("spots/enabled", on);
         spotClient_.setEnabled(on);
         potaClient_.setEnabled(on && potaOn->isChecked());
+        freedv_.setEnabled(on && fdvOn->isChecked());
         pushSpots();
     });
     connect(potaOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
         QSettings().setValue("spots/pota", on);
         potaClient_.setEnabled(on && spotsOn->isChecked());
+        pushSpots();
+    });
+    connect(&freedv_, &FreeDvReporter::spotsChanged, this, pushSpots);
+    connect(&freedv_, &FreeDvReporter::statusChanged, this,
+            [this](const QString& s) { statusBar()->showMessage(s, 4000); });
+    connect(fdvOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
+        QSettings().setValue("spots/freedv", on);
+        freedv_.setEnabled(on && spotsOn->isChecked());
         pushSpots();
     });
     connect(ft8On, &QAction::toggled, this, [this, pushSpots](bool on) {
@@ -1302,6 +1327,7 @@ MainWindow::MainWindow(QWidget* parent)
     spotClient_.setFt8Wanted(ft8On->isChecked());  // before connect: config
     spotClient_.setEnabled(spotsOn->isChecked());  // rides the login sequence
     potaClient_.setEnabled(spotsOn->isChecked() && potaOn->isChecked());
+    freedv_.setEnabled(spotsOn->isChecked() && fdvOn->isChecked());
 
 #ifdef HAVE_SDRPLAY
     // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).

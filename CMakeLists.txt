@@ -34,7 +34,7 @@ if(CCACHE_PROGRAM)
   message(STATUS "ccache: enabled")
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort Sql)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort Sql WebSockets)
 
 # Qt Multimedia backs the Windows audio endpoints (src/audio/AudioIo) —
 # capture/playback where the PipeWire CLI tools don't exist. Required there;
@@ -110,6 +110,7 @@ add_executable(tentec-console
   src/net/RigctldServer.cpp     src/net/RigctldServer.h
   src/net/SpotClient.cpp        src/net/SpotClient.h
   src/net/PotaClient.cpp        src/net/PotaClient.h
+  src/net/FreeDvReporter.cpp    src/net/FreeDvReporter.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
   src/net/RotorClient.cpp       src/net/RotorClient.h
@@ -186,7 +187,7 @@ add_executable(tentec-console
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
-target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql rnnoise)
+target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql Qt6::WebSockets rnnoise)
 if(WIN32)
   # GUI subsystem: no stray console window on double-click. stderr then has
   # no tty, so main.cpp's session-log redirect engages — same behavior as a
@@ -335,6 +336,12 @@ add_executable(smithtest EXCLUDE_FROM_ALL
   src/ui/SmithChartWidget.cpp)
 target_include_directories(smithtest PRIVATE src)
 target_link_libraries(smithtest PRIVATE Qt6::Widgets)
+
+# FreeDV Reporter Socket.IO frame handling, offline.
+add_executable(freedvtest EXCLUDE_FROM_ALL
+  tests/freedvtest.cpp src/net/FreeDvReporter.cpp src/net/FreeDvReporter.h)
+target_include_directories(freedvtest PRIVATE src)
+target_link_libraries(freedvtest PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
 
 add_executable(skimsrvtest EXCLUDE_FROM_ALL
   tests/skimsrvtest.cpp

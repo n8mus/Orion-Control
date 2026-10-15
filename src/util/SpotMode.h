@@ -5,11 +5,12 @@
 namespace ttc {
 
 // Best-effort mode for a spot, for the country/band/mode needed-status:
-// the kind knows (skimmer = CW, FT8 feed = FT8), the comment often says,
+// the kind knows (skimmer = CW, FT8 feed = FT8, FreeDV), the comment often says,
 // and the band plan's phone edge settles the rest.
 inline QString guessSpotMode(char kind, const QString& comment, qint64 hz) {
     if (kind == 'F') return QStringLiteral("FT8");
     if (kind == 'S') return QStringLiteral("CW");
+    if (kind == 'V') return QStringLiteral("DIGITALVOICE");   // FreeDV/RADE (ADIF)
     const QString c = comment.toUpper();
     if (c.contains(QLatin1String("FT8")) || c.contains(QLatin1String("FT4")))
         return QStringLiteral("FT8");

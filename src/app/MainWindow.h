@@ -22,6 +22,7 @@ class QVBoxLayout;
 #include "radio/LpMeter.h"
 #include "net/RigctldServer.h"
 #include "net/SpotClient.h"
+#include "net/FreeDvReporter.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
 #include "app/Voacap.h"
@@ -219,6 +220,7 @@ private:
     QAction*         spotSrcAct_ = nullptr;        // SPOT menu "source:" line
     QAction*         spotsOnAct_ = nullptr;        // SPOT menu "Show spots"
     PotaClient       potaClient_;                  // POTA activator API feed
+    FreeDvReporter   freedv_;                      // qso.freedv.org, view-only
     SolarClient      solarClient_;                 // NOAA space-weather poller
     // VOACAP overlay driver: recomputed on solar data, band crossings and
     // a slow timer; keyed so identical inputs never rerun the engine.

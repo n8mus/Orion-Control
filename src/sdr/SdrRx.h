@@ -74,6 +74,9 @@ public:
         // FreeDV RADE: the demodulated USB audio is the modem; what plays
         // is RadeRx's decoded speech (then gate/EQ/comp/volume as usual).
         bool rade = false;
+        // ...but play the raw sideband (freedv-gui's "Analog"): RADE still
+        // decodes — sync, SNR, callsigns — you hear the SSB audio.
+        bool radeAnalog = false;
     };
     static constexpr float kBoostDb = 6.f;
     static constexpr float kCeilingDb = -1.f;      // final limiter, always on

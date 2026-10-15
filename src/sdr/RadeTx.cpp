@@ -83,7 +83,7 @@ void RadeTx::upsample(const float* x8, int n, std::vector<float>& out) {
                 if (k >= kTaps) break;
                 acc += h[size_t(k)] * uHist_[size_t(L - 1 - j)];
             }
-            out.push_back(6.f * kOutScale * acc);
+            out.push_back(6.f * kOutScale * gain_ * acc);
         }
     }
 }

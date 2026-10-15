@@ -34,6 +34,9 @@
 #include "sdr/SdrRx.h"
 #include "ui/SdrRxDialog.h"
 #include "audio/VoiceEq.h"
+#include "audio/LiveVoice.h"
+#include "ui/FreeDvWindow.h"
+#include <QDesktopServices>
 #ifdef HAVE_WHISPER
 #include "asr/AsrEngine.h"
 #include "ui/CopyAssistWindow.h"
@@ -1387,8 +1390,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
     connect(this, &QObject::destroyed, this, [rx = sdrRx_] { delete rx; });
     sdrRx_->retune(-double(loOffHz_));
     updateSdrRxDemod();
-    SdrRx::Settings st = loadSdrRxSettings();
-    sdrRx_->setSettings(st);
+    applySdrRxSettings();
 
     // One entry in SDR ▾ opens a window that stays up while you listen
     // (the first cut was a submenu, which closed on every click).
@@ -1413,6 +1415,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         open->setText(v ? "Receive audio (WDSP) — ON…" : "Receive audio (WDSP)…");
         return v;
     };
+    sdrRxSetOn_ = setOn;
     connect(open, &QAction::triggered, this, [this, setOn] {
         if (!sdrRxDlg_) {
             auto* dlg = new SdrRxDialog(QSettings().value("sdrrx/on", false).toBool(),
@@ -1428,11 +1431,10 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
                     : QStringLiteral("off");
             });
             dlg->setLevelSource([this] { return sdrRx_->levels(); });
-            dlg->setRadeSource([this] { return sdrRx_->radeStatus(); });
             connect(dlg, &SdrRxDialog::changed, this,
                     [this, setOn](bool on, const SdrRx::Settings& s) {
                 saveSdrRxSettings(s);
-                sdrRx_->setSettings(s);            // applied at the next block
+                applySdrRxSettings();              // + FDV's overrides; next block
                 if (on != sdrRx_->running()) {
                     const bool got = setOn(on);
                     if (sdrRxDlg_) sdrRxDlg_->setOn(got);
@@ -1687,6 +1689,7 @@ void MainWindow::setupWinlinkUi(QMenu* audioMenu) {
 
 void MainWindow::onWinlinkSession(bool active, const QString& remote) {
     if (active == winlinkActive_) return;
+    if (active && fdvMode_) setFdvMode(false);     // Pat's session wins the SignaLink
     winlinkActive_ = active;
     if (active) {
         // The SignaLink is Pat's now: nothing of ours plays into it.
@@ -1716,17 +1719,13 @@ void MainWindow::onWinlinkSession(bool active, const QString& remote) {
 }
 
 // Who owns the qso.freedv.org link: the spot view (SPOTS ▾ → FreeDV
-// Reporter spots) and/or reporting (SPOTS ▾ → Report my FreeDV station,
-// which only counts while RADE is decoding or armed to transmit — like
-// freedv-gui, which reports only while it is started).
+// Reporter spots), and the FreeDV mode — its station list, and reporting
+// when the window's "Report my station" is on (like freedv-gui, which
+// reports only while it is started).
 void MainWindow::updateFreedvLink() {
     const bool spotsWanted = spotsOnAct_ && spotsOnAct_->isChecked()
                           && fdvSpotsAct_ && fdvSpotsAct_->isChecked();
-    bool onFreedv = radeTxOn_;
-#ifdef HAVE_WDSP
-    if (sdrRx_ && sdrRx_->radeDecoding()) onFreedv = true;
-#endif
-    const bool report = fdvReportAct_ && fdvReportAct_->isChecked() && onFreedv;
+    const bool report = fdvMode_ && QSettings().value("freedv/report", false).toBool();
     QSettings q;
     const QString call = q.value("station/callsign", "N8EM").toString().toUpper();
     const QString grid = q.value("station/grid", "EN83al").toString();
@@ -1734,13 +1733,179 @@ void MainWindow::updateFreedvLink() {
     freedv_.setReporting(report, call, grid, sw, true);
     psk_.setIdentity(call, grid, sw);
     psk_.setEnabled(report);
-    freedv_.setEnabled(spotsWanted || report);
+    freedv_.setEnabled(spotsWanted || fdvMode_);   // FDV's station list needs it
+    if (fdvWin_) fdvWin_->setReportingLive(report, QString("%1 (%2)").arg(call, grid));
     if (report != fdvReportingNow_) {
         fdvReportingNow_ = report;
         statusBar()->showMessage(report
             ? QString("FreeDV: reporting as %1 (%2) to qso.freedv.org and PSK Reporter").arg(call, grid)
             : QStringLiteral("FreeDV: reporting off"), 6000);
     }
+}
+
+// The receiver as the operator set it (SDR ▾ → Receive audio), with the
+// FreeDV mode's overrides on top while it runs: RADE decode, and none of
+// the noise tools — NR/NB/ANF/SNB/RNNoise distort the modem. Never saved:
+// leaving FDV re-applies the operator's own settings.
+void MainWindow::applySdrRxSettings() {
+#ifdef HAVE_WDSP
+    if (!sdrRx_) return;
+    SdrRx::Settings s = loadSdrRxSettings();
+    s.rade = fdvMode_;
+    s.radeAnalog = fdvMode_ && fdvAnalog_;
+    if (fdvMode_) {
+        s.nb = SdrRx::NoiseBlanker::Off;
+        s.nr = SdrRx::NoiseReduction::Off;
+        s.snb = s.anf = s.rnnoise = false;
+    }
+    sdrRx_->setSettings(s);
+#endif
+}
+
+void MainWindow::setFdvMode(bool on, bool keepMode) {
+    if (on == fdvMode_) { panel_->showFdv(on); return; }
+#if !defined(HAVE_WDSP) || !defined(HAVE_RADE)
+    (void)keepMode;
+    panel_->showFdv(false);
+    statusBar()->showMessage("FreeDV: not in this build (needs WDSP + RADE)", 8000);
+    return;
+#else
+    if (on) {
+        if (winlinkActive_) {
+            panel_->showFdv(false);
+            statusBar()->showMessage("FreeDV refused: a Winlink session owns the SignaLink", 8000);
+            return;
+        }
+        if (!sdrRx_ || !sdrRxSetOn_) {
+            panel_->showFdv(false);
+            statusBar()->showMessage("FreeDV needs the SDR receiver", 8000);
+            return;
+        }
+        if (samActive_) {                          // one pseudo-mode at a time
+            samActive_ = false;
+            panel_->showSam(false);
+            panel_->setSamLabel("SAM");
+        }
+        fdvSaved_ = {rigMode_, rigBwHz_, rigPbtHz_, txBwHz_, lastTxPwr_,
+                     sdrRx_->running(), liveMic_};
+        // Radio: USB with a filter wide enough for the modem (RADE sits at
+        // ~700-2300 Hz), TX filter likewise, the FreeDV power level (RADE
+        // averages ~40-50 % of PEP: far hotter than voice).
+        applyMode(Mode::USB);
+        panel_->clearModeSelection();
+        QTimer::singleShot(450, this, [this] {
+            if (!fdvMode_) return;
+            radio_->setBandwidthHz(Rx::Main, 2800);
+            radio_->setPbtHz(Rx::Main, 0);
+        });
+        if (txBwHz_ < 2800) { radio_->setTxFilter(2800); txBar_->showTxFilter(2800); }
+        const int pwr = std::clamp(QSettings().value("fdv/powerPct", 50).toInt(), 5, 100);
+        radio_->setTxPower(pwr);
+        txBar_->showTxPower(pwr);
+        // Transmit: voice LIVE makes way for RADE on the same path (DIG
+        // comes with it: line input, mic + processor off).
+        if (liveMic_) setLiveMic(false);
+        fdvMode_ = true;
+        setRadeTx(true);
+        if (!radeTxOn_) {                          // couldn't arm (no SignaLink?):
+            setFdvMode(false);                     // unwind — fdvMode_ is still true,
+            return;                                // so this restores the radio
+        }
+        if (live_) live_->setRadeLevelDb(float(QSettings().value("fdv/txLevelDb", 0).toInt()));
+        // Receive: the SDR decodes RADE.
+        fdvAnalog_ = false;
+        applySdrRxSettings();
+        if (!sdrRx_->running()) sdrRxSetOn_(true);
+        panel_->showFdv(true);
+        updateFreedvLink();
+        openFreeDvWindow();
+        statusBar()->showMessage(QString("FreeDV: USB, wide filter, processor off, %1 % power. "
+                                         "Key with MOX / space; your call goes out at the end "
+                                         "of each over.").arg(pwr), 12000);
+    } else {
+        fdvMode_ = false;
+        fdvAnalog_ = false;
+        setRadeTx(false);                          // DIG goes back with LIVE
+        if (fdvSaved_.live) setLiveMic(true);
+        applySdrRxSettings();
+        if (!fdvSaved_.sdrOn && sdrRx_->running()) sdrRxSetOn_(false);
+        radio_->setTxPower(fdvSaved_.power);
+        txBar_->showTxPower(fdvSaved_.power);
+        if (fdvSaved_.txBw != txBwHz_) {
+            radio_->setTxFilter(fdvSaved_.txBw);
+            txBar_->showTxFilter(fdvSaved_.txBw);
+        }
+        if (!keepMode) {
+            applyMode(fdvSaved_.mode);
+            panel_->showMode(fdvSaved_.mode);
+            QTimer::singleShot(450, this, [this, bw = fdvSaved_.bw, pbt = fdvSaved_.pbt] {
+                radio_->setBandwidthHz(Rx::Main, bw);
+                radio_->setPbtHz(Rx::Main, pbt);
+            });
+        }
+        panel_->showFdv(false);
+        updateFreedvLink();
+        if (fdvWin_) fdvWin_->close();
+        statusBar()->showMessage("FreeDV off — mode, filter, power, processor and audio restored", 8000);
+    }
+#endif
+}
+
+void MainWindow::openFreeDvWindow() {
+    if (!fdvWin_) {
+        auto* w = new FreeDvWindow(this);
+        w->setAttribute(Qt::WA_DeleteOnClose);
+        fdvWin_ = w;
+        QSettings q;
+        w->setMyGrid(q.value("station/grid", "EN83al").toString());
+        w->setControls(fdvAnalog_, q.value("fdv/txLevelDb", 0).toInt(),
+                       q.value("freedv/report", false).toBool(), q.value("fdv/message").toString());
+        w->setStatusFor([this](const QString& call, qint64 hz) {
+            return logbook_.ready() ? logbook_.status(call, LogbookIndex::bandForHz(hz)).toLatin1() : '?';
+        });
+        connect(w, &FreeDvWindow::analogChanged, this, [this](bool on) {
+            fdvAnalog_ = on;
+            applySdrRxSettings();
+        });
+        connect(w, &FreeDvWindow::txLevelChanged, this, [this](int db) {
+            QSettings().setValue("fdv/txLevelDb", db);
+            if (live_) live_->setRadeLevelDb(float(db));
+        });
+        connect(w, &FreeDvWindow::reportChanged, this, [this](bool on) {
+            QSettings().setValue("freedv/report", on);
+            updateFreedvLink();
+        });
+        connect(w, &FreeDvWindow::statusMessageSent, this, [this](const QString& t) {
+            QSettings().setValue("fdv/message", t);
+            freedv_.sendStatusMessage(t);
+            statusBar()->showMessage(fdvReportingNow_ ? "FreeDV: message sent"
+                                                      : "FreeDV: message saved — it goes out "
+                                                        "once Report my station is on", 5000);
+        });
+        connect(w, &FreeDvWindow::qsyTo, this, [this](qint64 hz, const QString& call) {
+            tuneAbsolute(uint64_t(hz));
+            statusBar()->showMessage(QString("FreeDV: QSY to %1 on %2 kHz").arg(call)
+                                         .arg(hz / 1000.0, 0, 'f', 1), 5000);
+        });
+        connect(w, &FreeDvWindow::lookupCall, this, [](const QString& c) {
+            QDesktopServices::openUrl(QUrl("https://www.qrz.com/db/" + c));
+        });
+        connect(w, &FreeDvWindow::turnRotor, this, [this](double az) { rotor_.turnTo(az); });
+        connect(w, &FreeDvWindow::requestQsy, this, [this](const QString& sid, const QString& call) {
+            const qint64 hz = qint64(centerHz_);
+            freedv_.requestQsy(sid, hz, QString("%1 kHz?").arg(hz / 1000.0, 0, 'f', 1));
+            statusBar()->showMessage(QString("FreeDV: asked %1 to QSY to %2 kHz").arg(call)
+                                         .arg(hz / 1000.0, 0, 'f', 1), 6000);
+        });
+        connect(w, &FreeDvWindow::logQso, this,
+                [this](const QString& call, const QString& grid, qint64, int) {
+            openLogWindow(call, QString(), grid);
+            if (logWin_) logWin_->setModeHint("DIGITALVOICE");
+        });
+    }
+    fdvWin_->show();
+    fdvWin_->raise();
+    fdvWin_->activateWindow();
 }
 
 } // namespace ttc

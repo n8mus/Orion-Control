@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -35,6 +37,8 @@ public:
     void endOver(std::vector<float>& out);
 
     static constexpr float kOutScale = 0.5f;
+    // TX level trim, dB (<= 0): freedv-gui's "TX Attenuation".
+    void setLevelDb(float db) { gain_ = std::pow(10.f, std::min(db, 0.f) / 20.f); }
 
 private:
     void upsample(const float* x8, int n, std::vector<float>& out);
@@ -45,6 +49,7 @@ private:
     int nFeat_ = 0, nTx_ = 0, nEoo_ = 0, nEooBits_ = 0;
     std::vector<float> taps_, dHist_, uHist_;
     int dPhase_ = 0;
+    float gain_ = 1.f;
     std::vector<short> pcm16_;                     // 16 kHz samples waiting
     std::vector<float> feats_;                     // features for the next frame
     std::vector<float> eooBits_;

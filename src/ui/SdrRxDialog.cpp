@@ -231,20 +231,10 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     ng->addWidget(rnn_, 3, 0);
     lay->addWidget(noise);
 
-    // FreeDV RADE: the USB audio is the modem, the decoded speech plays.
-    auto* fdv = new QGroupBox("FREEDV RADE", this);
-    auto* fl = new QVBoxLayout(fdv);
-    rade_ = new QCheckBox("Decode RADE digital voice (FreeDV)", fdv);
-    rade_->setToolTip("Plays RADE's decoded speech instead of the SSB audio — silent\n"
-                      "until a RADE signal syncs. Radio in USB on the station's\n"
-                      "frequency with a 2.4 kHz+ filter; leave NR / ANF / SNB off\n"
-                      "(they distort the modem). The gate/EQ/compressor below\n"
-                      "still shape the decoded voice.");
-    fl->addWidget(rade_);
-    radeInfo_ = new QLabel(fdv);
-    radeInfo_->setStyleSheet("QLabel { color: #c8d4e0; font-family: monospace; }");
-    fl->addWidget(radeInfo_);
-    lay->addWidget(fdv);
+    auto* fdvNote = new QLabel("FreeDV (RADE): the <b>FreeDV</b> button in the MODE panel sets "
+                               "this receiver up for it.", this);
+    fdvNote->setTextFormat(Qt::RichText);
+    lay->addWidget(fdvNote);
 
     // RX EQ: the voice keyer's editor on the receive audio — drag a
     // handle (left/right = frequency, up/down = gain, Shift-drag or the
@@ -354,7 +344,6 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     compMakeup_->setValue(s.compMakeupDb);
     mute_->setChecked(s.mute);
     boost_->setChecked(s.boost);
-    rade_->setChecked(s.rade);
     loading_ = false;
 
     connect(on_, &QCheckBox::toggled, this, [this] { emitChanged(); });
@@ -366,7 +355,7 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
         connect(c, &QComboBox::currentIndexChanged, this, [this] { emitChanged(); });
     for (QDoubleSpinBox* b : {gateThr_, gateFloor_, compThr_, compRatio_, compMakeup_})
         connect(b, &QDoubleSpinBox::valueChanged, this, [this] { emitChanged(); });
-    for (QCheckBox* c : {gateOn_, compOn_, mute_, boost_, rade_})
+    for (QCheckBox* c : {gateOn_, compOn_, mute_, boost_})
         connect(c, &QCheckBox::toggled, this, [this] { emitChanged(); });
     for (QCheckBox* c : {snb_, anf_, rnn_})
         connect(c, &QCheckBox::toggled, this, [this] { emitChanged(); });
@@ -395,22 +384,6 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     tick->setInterval(250);
     connect(tick, &QTimer::timeout, this, [this] {
         if (status_) info_->setText(status_());
-        if (!radeSrc_) return;
-        const SdrRx::RadeStatus r = radeSrc_();
-        if (!r.available) {
-            rade_->setEnabled(false);
-            radeInfo_->setText("not in this build (needs BUILD_RADE)");
-            return;
-        }
-        if (!rade_->isChecked()) { radeInfo_->setText("off — normal SSB audio"); return; }
-        const QString call = r.lastCall.empty() ? QStringLiteral("—")
-                                                : QString::fromStdString(r.lastCall);
-        radeInfo_->setText(r.sync
-            ? QString("<span style='color:#50e080'>● SYNC</span>  SNR %1 dB  offset %2 Hz"
-                      "   last call: <b>%3</b>")
-                  .arg(r.snrDb, 0, 'f', 0).arg(r.freqOffsetHz, 0, 'f', 1).arg(call)
-            : QString("<span style='color:#8a96a3'>○ searching…</span>   last call: <b>%1</b>")
-                  .arg(call));
     });
     tick->start();
     auto* mtick = new QTimer(this);
@@ -447,7 +420,6 @@ SdrRx::Settings SdrRxDialog::collect() const {
     s.compMakeupDb = float(compMakeup_->value());
     s.mute = mute_->isChecked();
     s.boost = boost_->isChecked();
-    s.rade = rade_->isChecked();
     for (size_t i = 0; i < s.eq.size(); ++i) s.eq[i] = eq_.bands[i];
     return s;
 }

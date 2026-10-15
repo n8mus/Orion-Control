@@ -84,6 +84,7 @@ class SdrRx;
 class SdrRxDialog;
 class AsrEngine;
 class CopyAssistWindow;
+class FreeDvWindow;
 struct VoiceEqSettings;
 struct VoiceRenderStats;
 class TuneTableDialog;
@@ -329,14 +330,26 @@ private:
     void setupWinlinkUi(QMenu* audioMenu);
     void onWinlinkSession(bool active, const QString& remote);
     PatMonitor pat_;
-    // FreeDV reporting (SPOTS ▾ → Report my FreeDV station): FreeDV
-    // Reporter role "report" + PSK Reporter, only while RADE is decoding
-    // or armed to transmit. updateFreedvLink() owns freedv_.setEnabled.
+    // FreeDV reporting (FreeDV window → Report my station): FreeDV
+    // Reporter role "report" + PSK Reporter, only in the FreeDV mode.
+    // updateFreedvLink() owns freedv_.setEnabled.
     PskReporter psk_;
     QAction* fdvSpotsAct_ = nullptr;
-    QAction* fdvReportAct_ = nullptr;
     bool fdvReportingNow_ = false;
     void updateFreedvLink();
+    // FreeDV mode (MODE panel → FreeDV): one switch for RADE receive +
+    // transmit + the FreeDV window, everything restored when it ends.
+    void setFdvMode(bool on, bool keepMode = false);
+    void openFreeDvWindow();
+    void applySdrRxSettings();                     // stored settings + FDV overrides
+    bool fdvMode_ = false, fdvAnalog_ = false;
+    struct FdvSaved {
+        Mode mode = Mode::USB;
+        int bw = 2400, pbt = 0, txBw = 2850, power = 50;
+        bool sdrOn = false, live = false;
+    } fdvSaved_;
+    QPointer<FreeDvWindow> fdvWin_;
+    std::function<bool(bool)> sdrRxSetOn_;         // SDR receive audio on/off
     bool winlinkActive_ = false, winlinkOwnsDig_ = false, winlinkStoppedLive_ = false;
     QLabel* wlLabel_ = nullptr;
     QProcess* ardop_ = nullptr;

@@ -143,10 +143,10 @@ that night's own capture).
   'V' FreeDV orange (`FreeDvReporter`, qso.freedv.org view-only, Qt WebSockets:
   every online station, every band, in the spot table — ON AIR / TX n min
   ago / listening; only on-air or TX < 20 min reach the band map via
-  `SpotLabel::mapHidden`). SPOTS ▾ → Report my FreeDV station = freedv-gui's
+  `SpotLabel::mapHidden`). FreeDV window → Report my station = freedv-gui's
   reporting: role "report" (call/grid/freq/TX/rx_report) + PSK Reporter
-  (`PskReporter`, EOO calls, 5-min batches), ONLY while RADE decodes or is
-  armed to TX (`updateFreedvLink()` owns the link);
+  (`PskReporter`, EOO calls, 5-min batches), ONLY in FreeDV mode
+  (`updateFreedvLink()` owns the link);
   call text is colored by cqrlog worked-before status (LogbookIndex),
   watch-list hits get an orange ring. While Not1MM runs, its current
   contest's dupes draw gray (`Not1mmLog`: reads not1mm.json + its SQLite
@@ -218,7 +218,17 @@ that night's own capture).
   limiter. `third_party/rade` FETCHES rade_c + Opus (SHA-pinned; Arch's
   opus lacks the LPCNet/FARGAN symbols) and commits only the small EOO
   callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
-  **RADE transmit** (AUDIO ▾ → FreeDV RADE transmit): LIVE in RADE mode —
+  **FreeDV mode** (MODE panel → FreeDV, `setFdvMode`, like SAM a pseudo-
+  mode): saves mode/filter/PBT/TX filter/power/SDR-on/LIVE, sets USB +
+  2.8 kHz + TX filter >= 2.8 kHz + `fdv/powerPct` (50), arms RADE TX (LIVE
+  path, DIG), SDR decodes RADE with NR/NB/ANF/SNB/RNNoise forced off
+  (`applySdrRxSettings`, never saved), opens `FreeDvWindow` (sync/SNR,
+  Analog, TX level, Report my station, status message, freedv-gui's
+  Reporter columns: double-click QSY, right-click rotor/QRZ/QSY request;
+  heard log -> Log QSO). Off (or any real mode) restores it all. In FDV:
+  voice LIVE, VK, over-air replay, DIG-off refused; a Winlink session ends
+  FDV. The 30 px FreeDV row made layout-min height 809.
+  **RADE transmit** (internal `setRadeTx`, driven by FDV): LIVE in RADE mode —
   mic -> `RadeTx` -> SignaLink, buffer held 130-360 ms (drift drops MIC
   blocks, never modem). Keyed by MOX/space: MOX-off sends the EOO
   (callsign, rade_text) + 200 ms, waits for `radeOverSent()` (2 s

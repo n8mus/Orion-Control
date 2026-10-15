@@ -64,6 +64,14 @@ bool LiveVoice::setRade(bool on, const QString& callsign) {
 #endif
 }
 
+void LiveVoice::setRadeLevelDb(float db) {
+#ifdef HAVE_RADE
+    if (radeTx_) radeTx_->setLevelDb(db);
+#else
+    (void)db;
+#endif
+}
+
 void LiveVoice::endOverRade() {
 #ifdef HAVE_RADE
     if (!radeTx_ || !play_ || radeEnding_) { emit radeOverSent(); return; }

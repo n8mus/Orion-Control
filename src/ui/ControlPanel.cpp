@@ -127,6 +127,19 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     connect(digBtn_, &QPushButton::toggled, this, [this](bool on) {
         if (!digBtn_->signalsBlocked()) emit digitalToggled(on);
     });
+    // Row 5: FreeDV, the console's digital-voice mode — like SAM, a
+    // pseudo-mode that sets the radio, receiver and transmitter up and
+    // puts everything back when it's turned off.
+    fdvBtn_ = makeButton("FreeDV");
+    fdvBtn_->setToolTip("FreeDV digital voice (RADE): USB + wide filter, speech processor off,\n"
+                        "line input, FreeDV power level, SDR decoding RADE, transmit by MOX /\n"
+                        "space with your callsign at the end of each over, and the FreeDV\n"
+                        "window (stations on the air, heard calls, Log QSO). Off restores\n"
+                        "everything as it was.");
+    modeGrid->addWidget(fdvBtn_, 4, 0, 1, 2);
+    connect(fdvBtn_, &QPushButton::toggled, this, [this](bool on) {
+        if (!fdvBtn_->signalsBlocked()) emit fdvToggled(on);
+    });
     lay->addWidget(modeBox);
 
     // --- AGC --------------------------------------------------------------
@@ -473,6 +486,11 @@ void ControlPanel::clearModeSelection() {
     modeGroup_->setExclusive(false);      // exclusive groups refuse "none"
     for (auto* b : modeGroup_->buttons()) b->setChecked(false);
     modeGroup_->setExclusive(true);
+}
+
+void ControlPanel::showFdv(bool on) {
+    QSignalBlocker b(fdvBtn_);
+    fdvBtn_->setChecked(on);
 }
 
 void ControlPanel::showDigital(bool on) {

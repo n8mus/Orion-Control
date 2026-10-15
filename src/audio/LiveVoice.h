@@ -49,6 +49,7 @@ public:
     // SignaLink — only then may PTT drop.
     void endOverRade();
     bool radeEnding() const { return radeEnding_; }
+    void setRadeLevelDb(float db);                 // TX level trim (<= 0 dB)
 
     // Meters of the last processed block, for the UI.
     float inputPeakDb() const { return inPeakDb_; }

@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QWebSocket>
 #include <algorithm>
+#include <cmath>
 
 namespace ttc {
 
@@ -115,7 +116,7 @@ void FreeDvReporter::handleFrame(const QString& f) {
     }
     static const QSet<QString> kStationEvents = {
         "bulk_update", "new_connection", "remove_connection", "freq_change",
-        "tx_report", "rx_report"};
+        "tx_report", "rx_report", "message_update"};
     if (name == QLatin1String("bulk_update")) {
         // [[name,{...}], ...] — the snapshot on connect, replayed through
         // the same handlers.
@@ -169,6 +170,24 @@ void FreeDvReporter::sendEvent(const QString& name, const QJsonObject& o) {
 void FreeDvReporter::resendState() {
     if (repHz_ > 0) sendEvent("freq_change", QJsonObject{{"freq", double(repHz_)}});
     sendEvent("tx_report", QJsonObject{{"mode", "RADEV1"}, {"transmitting", repTx_}});
+    if (!repMsg_.isEmpty()) sendEvent("message_update", QJsonObject{{"message", repMsg_}});
+}
+
+void FreeDvReporter::sendStatusMessage(const QString& text) {
+    repMsg_ = text;
+    sendEvent("message_update", QJsonObject{{"message", text}});
+}
+
+void FreeDvReporter::requestQsy(const QString& sid, qint64 hz, const QString& message) {
+    sendEvent("qsy_request", QJsonObject{{"dest_sid", sid}, {"message", message},
+                                         {"frequency", double(hz)}});
+}
+
+QVector<FreeDvReporter::StationInfo> FreeDvReporter::stations() const {
+    QVector<StationInfo> v;
+    for (const Station& st : stations_)
+        if (!st.call.isEmpty()) v.push_back(st);
+    return v;
 }
 
 void FreeDvReporter::reportFrequency(qint64 hz) {
@@ -210,6 +229,9 @@ void FreeDvReporter::handleEvent(const QString& name, const QJsonObject& o, bool
         const QString g = o.value("grid_square").toString();
         if (!g.isEmpty()) st.grid = g;
         if (o.contains("rx_only")) st.rxOnly = o.value("rx_only").toBool();
+        const QString v = o.value("version").toString();
+        if (!v.isEmpty()) st.version = v;
+        st.sid = sid;
         if (const qint64 u = isoSecs(o.value("last_update"))) st.lastUpdate = u;
     };
     if (name == QLatin1String("new_connection")) {
@@ -228,9 +250,21 @@ void FreeDvReporter::handleEvent(const QString& name, const QJsonObject& o, bool
         st.transmitting = o.value("transmitting").toBool();
         if (const qint64 t = isoSecs(o.value("last_tx"))) st.lastTx = t;
         if (st.transmitting) st.lastTx = std::max(st.lastTx, now ? now() : QDateTime::currentSecsSinceEpoch());
+    } else if (name == QLatin1String("message_update")) {
+        const auto it = stations_.find(sid);
+        if (it != stations_.end()) it->message = o.value("message").toString();
+    } else if (name == QLatin1String("qsy_request")) {
+        emit qsyRequested(o.value("callsign").toString().toUpper(),
+                          qint64(o.value("frequency").toDouble()), o.value("message").toString());
     } else if (name == QLatin1String("rx_report")) {
         const QString heard = o.value("callsign").toString().toUpper();
-        const auto it = stations_.constFind(sid);  // the RECEIVER's sid
+        const auto rit = stations_.find(sid);      // the RECEIVER's sid
+        if (rit != stations_.end() && !heard.isEmpty()) {
+            rit->lastRxCall = heard;
+            rit->lastRxSnr = int(std::lround(o.value("snr").toDouble()));
+            rit->lastRxAt = now ? now() : QDateTime::currentSecsSinceEpoch();
+        }
+        const auto it = stations_.constFind(sid);
         if (heard.isEmpty() || it == stations_.constEnd()) return;
         const QString rxCall = o.value("receiver_callsign").toString().toUpper();
         addHeard(heard, it->hz,

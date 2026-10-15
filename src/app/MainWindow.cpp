@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "app/MainWindow.h"
 #include "audio/LiveVoice.h"
+#include "ui/FreeDvWindow.h"
 #include "ui/TuneDialogs.h"
 #ifdef HAVE_WDSP
 #include "sdr/SdrRx.h"
@@ -747,14 +748,6 @@ MainWindow::MainWindow(QWidget* parent)
     fdvOn->setCheckable(true);
     fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
                       "(orange labels; watch-only — nothing about this station is sent)");
-    fdvReportAct_ = spotsMenu->addAction("Report my FreeDV station (FreeDV Reporter + PSK Reporter)");
-    fdvReportAct_->setCheckable(true);
-    fdvReportAct_->setToolTip(
-        "As freedv-gui does: while RADE is decoding or armed to transmit, this station\n"
-        "appears on qso.freedv.org (call, grid, frequency, TX on/off, who it decodes\n"
-        "and at what SNR), and every callsign decoded from an end of over goes to\n"
-        "pskreporter.info as heard by you — so others see you on the air and see\n"
-        "where they are heard. Uses Setup's callsign and grid. Off = view-only.");
     fdvSpotsAct_ = fdvOn;
     auto* n1Dupes = spotsMenu->addAction("Gray Not1MM contest dupes");
     n1Dupes->setCheckable(true);
@@ -838,7 +831,6 @@ MainWindow::MainWindow(QWidget* parent)
         ft8On->setChecked(s.value("spots/ft8", true).toBool());
         fdvOn->setChecked(s.value("spots/freedv", false).toBool());
         n1Dupes->setChecked(s.value("spots/not1mmDupes", true).toBool());
-        fdvReportAct_->setChecked(s.value("freedv/report", false).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
     topLay->addSpacing(8);
@@ -872,17 +864,7 @@ MainWindow::MainWindow(QWidget* parent)
     audioMenu->addSeparator();
     connect(audioMenu->addAction("Voice keyer EQ & dynamics…"), &QAction::triggered,
             this, &MainWindow::showVoiceEq);
-#ifdef HAVE_RADE
-    radeTxAct_ = audioMenu->addAction("FreeDV RADE transmit (key with MOX / space)");
-    radeTxAct_->setCheckable(true);
-    radeTxAct_->setToolTip(
-        "Your mic -> RADE digital voice -> SignaLink (the LIVE path). Key with\n"
-        "MOX or the space bar: on release the console sends the end-of-over\n"
-        "with your callsign, THEN drops PTT. Radio: USB, speech processor OFF,\n"
-        "TX filter wide enough for ~700-2300 Hz; set drive with the SignaLink\n"
-        "TX knob so ALC just moves. Off again at every start.");
-    connect(radeTxAct_, &QAction::toggled, this, &MainWindow::setRadeTx);
-#endif
+
     setupWinlinkUi(audioMenu);
     audioBtn->setMenu(audioMenu);
     topLay->addSpacing(8);
@@ -1303,16 +1285,20 @@ MainWindow::MainWindow(QWidget* parent)
     });
     not1mm_.setEnabled(n1Dupes->isChecked());
     connect(&freedv_, &FreeDvReporter::spotsChanged, this, pushSpots);
+    connect(&freedv_, &FreeDvReporter::qsyRequested, this,
+            [this](const QString& from, qint64 hz, const QString& msg) {
+        QApplication::beep();
+        statusBar()->showMessage(QString("FreeDV: %1 asks you to QSY to %2 kHz%3 — double-click "
+                                         "%1 in the FreeDV window to go")
+                                     .arg(from).arg(hz / 1000.0, 0, 'f', 1)
+                                     .arg(msg.isEmpty() ? QString() : " (\"" + msg + "\")"), 30000);
+    });
     connect(&freedv_, &FreeDvReporter::statusChanged, this,
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });
     connect(fdvOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
         QSettings().setValue("spots/freedv", on);
         updateFreedvLink();
         pushSpots();
-    });
-    connect(fdvReportAct_, &QAction::toggled, this, [this](bool on) {
-        QSettings().setValue("freedv/report", on);
-        updateFreedvLink();
     });
     connect(ft8On, &QAction::toggled, this, [this, pushSpots](bool on) {
         QSettings().setValue("spots/ft8", on);
@@ -1392,7 +1378,28 @@ MainWindow::MainWindow(QWidget* parent)
     fdvTick->setInterval(250);
     connect(fdvTick, &QTimer::timeout, this, [this, seenCalls = 0, quietTicks = 0]() mutable {
         updateFreedvLink();
-        if (!fdvReportingNow_) return;
+#ifdef HAVE_WDSP
+        if (fdvWin_ && sdrRx_) {
+            const SdrRx::RadeStatus rs = sdrRx_->radeStatus();
+            FreeDvWindow::Status st;
+            st.sync = rs.sync;
+            st.tx = radioTx_ && radeTxOn_;
+            st.snrDb = rs.snrDb;
+            st.freqOffsetHz = rs.freqOffsetHz;
+            st.lastCall = QString::fromStdString(rs.lastCall);
+            st.modemOutDb = live_ && live_->rade() ? live_->outputPeakDb() : -120.f;
+            fdvWin_->setStatus(st);
+            fdvWin_->setStations(freedv_.stations(), qint64(centerHz_));
+            if (rs.calls > seenCalls && !rs.lastCall.empty())
+                fdvWin_->addHeard(st.lastCall, int(std::lround(rs.snrDb)), qint64(centerHz_));
+        }
+#endif
+        if (!fdvReportingNow_) {
+#ifdef HAVE_WDSP
+            if (sdrRx_) seenCalls = sdrRx_->radeStatus().calls;
+#endif
+            return;
+        }
         freedv_.reportFrequency(qint64(centerHz_));
         freedv_.reportTransmit(radeTxOn_ && radioTx_);
 #ifdef HAVE_WDSP
@@ -2511,8 +2518,8 @@ MainWindow::MainWindow(QWidget* parent)
     });
     connect(txBar_, &TxBar::dvrPlayClicked, this, [this, dvrBusy](bool overAir) {
         if (dvrBusy()) return;
-        if (overAir && winlinkActive_) {
-            statusBar()->showMessage("Replay refused: a Winlink session is on the air", 6000);
+        if (overAir && (winlinkActive_ || fdvMode_)) {
+            statusBar()->showMessage("Replay refused: Winlink / FreeDV owns the transmitter", 6000);
             return;
         }
         QString f = dvrLastRx_;
@@ -2554,9 +2561,20 @@ MainWindow::MainWindow(QWidget* parent)
             statusBar()->showMessage("Voice keyer refused: a Winlink session is on the air", 6000);
             return;
         }
+        if (fdvMode_) {
+            statusBar()->showMessage("Voice keyer refused: FreeDV transmits RADE (the VK is analog)", 6000);
+            return;
+        }
         playVoiceSlot(slot);
     });
-    connect(txBar_, &TxBar::liveMicToggled, this, &MainWindow::setLiveMic);
+    connect(txBar_, &TxBar::liveMicToggled, this, [this](bool on) {
+        if (fdvMode_) {                            // FreeDV owns the LIVE path
+            txBar_->showLiveMic(liveMic_);
+            statusBar()->showMessage("LIVE is RADE in FreeDV mode — leave FreeDV for voice LIVE", 6000);
+            return;
+        }
+        setLiveMic(on);
+    });
     connect(txBar_, &TxBar::liveMicMenuRequested, this, &MainWindow::showVoiceEq);
     connect(txBar_, &TxBar::vkPreviewClicked, this, [this, dvrBusy](int slot) {
         if (dvrBusy()) return;
@@ -2598,8 +2616,14 @@ MainWindow::MainWindow(QWidget* parent)
         lastMicGain_    = s.value("audio/voiceMic", 51).toInt();
         lastSpeechProc_ = s.value("audio/voiceSpeech", 2).toInt();
     }
-    connect(panel_, &ControlPanel::digitalToggled, this,
-            [this](bool on) { setDigitalMode(on); });
+    connect(panel_, &ControlPanel::digitalToggled, this, [this](bool on) {
+        if (fdvMode_ && !on) {                     // RADE rides the line input
+            panel_->showDigital(true);
+            statusBar()->showMessage("DIG stays on in FreeDV — leave FreeDV to go back to the mic", 6000);
+            return;
+        }
+        setDigitalMode(on);
+    });
     connect(txBar_, &TxBar::ampModeChanged, this, [this](bool on, int limit) {
         QSettings s;
         s.setValue("amp/enabled", on);
@@ -2696,6 +2720,7 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Control surface -> radio. Sets are fire-and-forget; polling confirms.
     connect(panel_, &ControlPanel::modeSelected, this, [this](Mode m) {
+        if (fdvMode_) setFdvMode(false, /*keepMode*/ true);   // a real mode ends FreeDV
         if (samActive_) {                          // picking a real mode ends SAM
             samActive_ = false;
             panel_->showSam(false);
@@ -2717,7 +2742,9 @@ MainWindow::MainWindow(QWidget* parent)
             radio_->setPbtHz(Rx::Main, 0);
         });
     };
+    connect(panel_, &ControlPanel::fdvToggled, this, [this](bool on) { setFdvMode(on); });
     connect(panel_, &ControlPanel::samToggled, this, [this, samFilter](bool on) {
+        if (on && fdvMode_) setFdvMode(false, true);
         if (on) {                                  // engage, upper sideband first
             samActive_ = true;
             samEngine_ = Mode::USB;

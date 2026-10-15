@@ -91,6 +91,11 @@ int main(int argc, char** argv) {
     check(ev(5).at(1)["callsign"] == "", "receiving, no call yet: empty callsign (freedv-gui's '--')");
     r.reportFrequency(14236000);
     check(out.size() == 6, "an unchanged frequency is not re-sent");
+    r.sendStatusMessage("QRV 20 m");
+    r.requestQsy("sidX", 14236000, "14236.0 kHz?");
+    check(ev(6).at(0) == "message_update" && ev(6).at(1)["message"] == "QRV 20 m", "status message");
+    check(ev(7).at(0) == "qsy_request" && ev(7).at(1)["dest_sid"] == "sidX"
+              && ev(7).at(1)["frequency"].toDouble() == 14236000, "QSY request (dest_sid, frequency)");
 
     if (fails == 0) std::printf("psktest: all checks passed\n");
     return fails ? 1 : 0;

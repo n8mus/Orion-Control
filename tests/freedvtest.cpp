@@ -113,9 +113,28 @@ int main(int argc, char** argv) {
     r.handleFrame(R"(42["remove_connection",{"sid":"s2","callsign":"WJ8A"}])");
     check(!find(r.spots(), "WJ8A"), "remove_connection drops the station");
     check(changed >= 4, "spotsChanged fires");
+    // The FreeDV window's columns: version, message, what each one heard.
+    r.handleFrame(R"(42["new_connection",{"sid":"s9","callsign":"VE4WSC","grid_square":"EN19ku","version":"FreeDV 2.0.2"}])");
+    r.handleFrame(R"(42["freq_change",{"sid":"s9","freq":14236000}])");
+    r.handleFrame(R"(42["message_update",{"sid":"s9","message":"QRV 20m"}])");
+    r.handleFrame(R"(42["rx_report",{"sid":"s9","receiver_callsign":"VE4WSC","callsign":"N8EM","snr":11.6,"mode":"RADEV1"}])");
+    FreeDvReporter::StationInfo ve;
+    for (const auto& st : r.stations())
+        if (st.call == "VE4WSC") ve = st;
+    check(ve.version == "FreeDV 2.0.2" && ve.message == "QRV 20m", "station list: version and message");
+    check(ve.lastRxCall == "N8EM" && ve.lastRxSnr == 12, "  and what it last decoded (N8EM, 12 dB)");
+    QString qFrom, qMsg;
+    qint64 qHz = 0;
+    QObject::connect(&r, &FreeDvReporter::qsyRequested, [&](const QString& c, qint64 hz, const QString& m) {
+        qFrom = c; qHz = hz; qMsg = m;
+    });
+    r.handleFrame(R"(42["qsy_request",{"callsign":"ve4wsc","frequency":14240000,"message":"QSY?"}])");
+    check(qFrom == "VE4WSC" && qHz == 14240000 && qMsg == "QSY?", "a QSY request to us surfaces");
+    r.handleFrame(R"(42["remove_connection",{"sid":"s9"}])");
+
     r.handleFrame("42[garbage");
     r.handleFrame("6");
-    check(r.spots().size() == 5, "junk frames are ignored");
+    check(r.spots().size() == 6, "junk frames are ignored (5 + VE4WSC's heard N8EM)");
 
     if (fails == 0) std::printf("freedvtest: all checks passed\n");
     return fails ? 1 : 0;

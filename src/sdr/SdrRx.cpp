@@ -442,7 +442,11 @@ void SdrRx::radeBlock(const float* modem, int n) {
     radeOut_.insert(radeOut_.end(), sp.begin(), sp.end());
     if (radeOut_.size() > 48000) radeOut_.erase(radeOut_.begin(), radeOut_.end() - 12000);
     if (!radePrimed_ && radeOut_.size() >= 6240) radePrimed_ = true;
-    if (radePrimed_) {
+    if (appliedSettings_.radeAnalog) {             // hear the sideband itself
+        std::copy(modem, modem + n, blk.begin());
+        radeOut_.clear();
+        radePrimed_ = false;
+    } else if (radePrimed_) {
         if (radeOut_.size() >= size_t(n)) {
             std::copy(radeOut_.begin(), radeOut_.begin() + n, blk.begin());
             radeOut_.erase(radeOut_.begin(), radeOut_.begin() + n);

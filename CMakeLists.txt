@@ -120,6 +120,7 @@ add_executable(tentec-console
   src/net/FreeDvReporter.cpp    src/net/FreeDvReporter.h
   src/net/PatMonitor.cpp        src/net/PatMonitor.h
   src/net/PskReporter.cpp       src/net/PskReporter.h
+  src/ui/FreeDvWindow.cpp       src/ui/FreeDvWindow.h
   src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h

@@ -56,6 +56,22 @@ public:
     void reportTransmit(bool tx);
     void reportHeard(const QString& call, int snrDb);
     QString authPayload() const;                   // the "40{...}" connect, for tests
+
+    // The FreeDV window's station list (freedv-gui's Reporter columns).
+    struct StationInfo {
+        QString sid, call, grid, version, mode, message;
+        qint64 hz = 0;
+        qint64 lastTx = 0, lastUpdate = 0;         // epoch secs, 0 = never
+        bool transmitting = false, rxOnly = false;
+        QString lastRxCall;                        // what THIS station last decoded
+        int lastRxSnr = 0;
+        qint64 lastRxAt = 0;
+    };
+    QVector<StationInfo> stations() const;
+    // While reporting: our one-line status message (freedv-gui's "Msg"),
+    // and asking another station to come to our frequency.
+    void sendStatusMessage(const QString& text);
+    void requestQsy(const QString& sid, qint64 hz, const QString& message);
     QVector<Spot> spots() const;
     int stationCount() const { return int(stations_.size()); }
 
@@ -70,15 +86,12 @@ public:
 
 signals:
     void spotsChanged();
+    // Someone asked US to QSY (only reaches reporting clients).
+    void qsyRequested(const QString& fromCall, qint64 hz, const QString& message);
     void statusChanged(const QString& s);
 
 private:
-    struct Station {
-        QString call, grid, mode;
-        qint64 hz = 0;
-        qint64 lastTx = 0, lastUpdate = 0;         // epoch secs, 0 = never
-        bool transmitting = false, rxOnly = false;
-    };
+    using Station = StationInfo;
     void connectNow();
     void handleEvent(const QString& name, const QJsonObject& o, bool replay);
     void addHeard(const QString& call, qint64 hz, const QString& comment);
@@ -90,6 +103,7 @@ private:
     bool reporting_ = false, txCapable_ = true, fullyConnected_ = false;
     QString call_, grid_, software_;
     qint64 repHz_ = 0;
+    QString repMsg_;
     bool repTx_ = false;
     QWebSocket* ws_ = nullptr;
     QTimer retry_, alive_, expire_;

@@ -8,10 +8,11 @@
 
 class QCheckBox;
 class QComboBox;
+class QDoubleSpinBox;
 class QLabel;
 class QSlider;
 
-namespace ttc { class VoiceEqCurve; }
+namespace ttc { class VoiceEqCurve; class SdrRxMeter; }
 
 namespace ttc {
 
@@ -26,6 +27,8 @@ public:
     void setOn(bool on);                           // reflect a refusal / stop
     // Status line provider, polled ~4x a second while the window is open.
     void setStatusSource(std::function<QString()> f) { status_ = std::move(f); }
+    // Meter feed, polled ~20x a second while the window is open.
+    void setLevelSource(std::function<SdrRx::Levels()> f) { levels_ = std::move(f); }
 
 signals:
     void changed(bool on, const ttc::SdrRx::Settings& s);
@@ -48,8 +51,19 @@ private:
     VoiceEqCurve* curve_ = nullptr;
     VoiceEqSettings eq_;                           // the curve's bands + on
     void loadEqPreset(int idx);                    // index into rxEqPresets
+    QCheckBox* gateOn_ = nullptr;
+    QDoubleSpinBox* gateThr_ = nullptr;
+    QDoubleSpinBox* gateFloor_ = nullptr;
+    QCheckBox* compOn_ = nullptr;
+    QDoubleSpinBox* compThr_ = nullptr;
+    QDoubleSpinBox* compRatio_ = nullptr;
+    QDoubleSpinBox* compMakeup_ = nullptr;
+    QCheckBox* mute_ = nullptr;
+    QCheckBox* boost_ = nullptr;
+    SdrRxMeter* meter_ = nullptr;
     QLabel*    info_ = nullptr;
     std::function<QString()> status_;
+    std::function<SdrRx::Levels()> levels_;
     bool loading_ = false;
 };
 

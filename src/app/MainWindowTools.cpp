@@ -1308,6 +1308,15 @@ SdrRx::Settings loadSdrRxSettings() {
         : VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat);
     s.eqOn = v.enabled;
     for (size_t i = 0; i < s.eq.size(); ++i) s.eq[i] = v.bands[i];
+    s.gateOn = q.value("sdrrx/gateOn", false).toBool();
+    s.gateThrDb = std::clamp(float(q.value("sdrrx/gateThrDb", s.gateThrDb).toDouble()), -70.f, -10.f);
+    s.gateFloorDb = std::clamp(float(q.value("sdrrx/gateFloorDb", s.gateFloorDb).toDouble()), -40.f, 0.f);
+    s.compOn = q.value("sdrrx/compOn", false).toBool();
+    s.compThrDb = std::clamp(float(q.value("sdrrx/compThrDb", s.compThrDb).toDouble()), -50.f, 0.f);
+    s.compRatio = std::clamp(float(q.value("sdrrx/compRatio", s.compRatio).toDouble()), 1.f, 6.f);
+    s.compMakeupDb = std::clamp(float(q.value("sdrrx/compMakeupDb", s.compMakeupDb).toDouble()), 0.f, 18.f);
+    s.mute = q.value("sdrrx/mute", false).toBool();
+    s.boost = q.value("sdrrx/boost", false).toBool();
     return s;
 }
 void saveSdrRxSettings(const SdrRx::Settings& s) {
@@ -1322,6 +1331,15 @@ void saveSdrRxSettings(const SdrRx::Settings& s) {
     VoiceEqSettings v = VoiceEqSettings::preset(VoiceEqSettings::Preset::Flat);
     v.enabled = s.eqOn;
     for (size_t i = 0; i < s.eq.size(); ++i) v.bands[i] = s.eq[i];
+    q.setValue("sdrrx/gateOn", s.gateOn);
+    q.setValue("sdrrx/gateThrDb", s.gateThrDb);
+    q.setValue("sdrrx/gateFloorDb", s.gateFloorDb);
+    q.setValue("sdrrx/compOn", s.compOn);
+    q.setValue("sdrrx/compThrDb", s.compThrDb);
+    q.setValue("sdrrx/compRatio", s.compRatio);
+    q.setValue("sdrrx/compMakeupDb", s.compMakeupDb);
+    q.setValue("sdrrx/mute", s.mute);
+    q.setValue("sdrrx/boost", s.boost);
     q.setValue("sdrrx/eq", QJsonDocument(v.toJson()).toJson(QJsonDocument::Compact));
 }
 }  // namespace
@@ -1394,6 +1412,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
                           .arg(sdrRx_->droppedBlocks())
                     : QStringLiteral("off");
             });
+            dlg->setLevelSource([this] { return sdrRx_->levels(); });
             connect(dlg, &SdrRxDialog::changed, this,
                     [this, setOn](bool on, const SdrRx::Settings& s) {
                 saveSdrRxSettings(s);

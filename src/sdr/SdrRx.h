@@ -11,7 +11,10 @@
 #include <thread>
 #include <vector>
 
+#include "dsp/ClientComp.h"
 #include "dsp/ClientEq.h"
+#include "dsp/ClientFinalLimiter.h"
+#include "dsp/ClientGate.h"
 #include "radio/RadioController.h"   // Mode
 
 struct DenoiseState;
@@ -28,8 +31,10 @@ namespace ttc {
 //                      125 kHz, queue (cheap; the IQ fan-out's budget)
 //   own DSP thread:    1000-sample blocks -> NB/NB2 -> WDSP RXA (bandpass,
 //                      SNB, ANF, NR*, AGC, demod; 48 kHz out) -> RNNoise ->
-//                      RX EQ -> volume / TX mute -> pacat on the PC's
-//                      default output
+//                      gate -> RX EQ -> compressor -> volume/BOOST ->
+//                      final limiter -> MUTE / TX mute -> pacat on the PC's
+//                      default output (AetherSDR's RX order: NR first, then
+//                      gate, EQ, compressor, final output)
 //
 // Audio is held near kTargetMs of queue the way the LIVE mic is (the SDR
 // and the sound card are different clocks): quiet 8 ms blocks are dropped
@@ -53,7 +58,31 @@ public:
         // RNNoise), the voice keyer's 8-slot layout (VoiceEqSettings).
         bool eqOn = false;
         std::array<ClientEq::BandParams, 8> eq{};
+        // RX dynamics (AetherSDR's ClientGate / ClientComp, the same
+        // classes as the voice chain). Levels are dBFS BEFORE the volume,
+        // so turning the volume never moves a threshold.
+        bool gateOn = false;                       // quiets the hiss between overs
+        float gateThrDb = -35.f;
+        float gateFloorDb = -20.f;                 // most it turns down
+        bool compOn = false;                       // evens out fades / loud stations
+        float compThrDb = -24.f;
+        float compRatio = 2.f;                     // AetherSDR: 1.5-2:1 on RX
+        float compMakeupDb = 4.f;
+        bool mute = false;
+        bool boost = false;                        // +kBoostDb into the limiter
     };
+    static constexpr float kBoostDb = 6.f;
+    static constexpr float kCeilingDb = -1.f;      // final limiter, always on
+
+    // Meter snapshot (any thread; the stages publish per block).
+    struct Levels {
+        float inDb = -120.f;                       // into the gate, pre-volume
+        bool gateOpen = true;
+        float compGrDb = 0.f;                      // <= 0
+        float limGrDb = 0.f;                       // final limiter, <= 0
+        float outDb = -120.f;                      // to the speakers
+    };
+    Levels levels() const;
 
     SdrRx();
     ~SdrRx();
@@ -137,15 +166,18 @@ private:
     int bwLo_ = 100, bwHi_ = 2800, pitch_ = 600;
     bool demodDirty_ = true;
     std::atomic<bool> muted_{false};
-    ClientEq eq_;                                  // RX EQ, prepared at 48 kHz
-    void emitAudio(float* x, int n);               // EQ -> writeAudio
+    ClientGate gate_;                              // RX dynamics, all at 48 kHz
+    ClientEq eq_;
+    ClientComp comp_;
+    ClientFinalLimiter limit_;
+    void emitAudio(float* x, int n);               // dynamics -> writeAudio
     DenoiseState* rnn_ = nullptr;
     std::vector<float> rnnIn_;                     // 480-sample frames
 
     // ---- output pipe (pacat) ----
     int pipeW_ = -1, pipeProbe_ = -1;
     int playerPid_ = -1;
-    std::atomic<float> outPeakDb_{-120.f};
+    std::atomic<float> outPeakDb_{-120.f}, inPeakDb_{-120.f};
     std::atomic<int> dropped_{0};
     std::function<void(const float*, int)> tap_;
 };

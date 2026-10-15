@@ -242,6 +242,24 @@ void SdrRx::applySettingsDsp() {
     for (int i = 0; i < int(s.eq.size()); ++i) eq_.setBand(i, s.eq[size_t(i)]);
     if (s.eqOn && !eq_.isEnabled()) eq_.reset();   // no stale state on the way in
     eq_.setEnabled(s.eqOn);
+    if (s.gateOn && !gate_.isEnabled()) gate_.reset();
+    gate_.setEnabled(s.gateOn);
+    gate_.setThresholdDb(s.gateThrDb);
+    gate_.setFloorDb(s.gateFloorDb);
+    gate_.setRatio(3.f);                           // a firm expander, not a slam
+    gate_.setHoldMs(150.f);                        // rides through CW/word gaps
+    gate_.setReleaseMs(300.f);
+    gate_.setReturnDb(3.f);
+    gate_.setLookaheadMs(2.f);
+    if (s.compOn && !comp_.isEnabled()) comp_.reset();
+    comp_.setEnabled(s.compOn);
+    comp_.setThresholdDb(s.compThrDb);
+    comp_.setRatio(s.compRatio);
+    comp_.setAttackMs(10.f);
+    comp_.setReleaseMs(250.f);
+    comp_.setKneeDb(6.f);
+    comp_.setMakeupDb(s.compMakeupDb);
+    comp_.setLimiterEnabled(false);                // the final limiter is after it
     appliedSettings_ = s;
 }
 
@@ -258,7 +276,13 @@ void SdrRx::dspLoop() {
     RESAMPLE rs = create_resample(1, kRsIn, rsIn.data(), rsOut.data(),
                                   int(kDecimRate), kWdspInRate, 0.0, 0, 1.0);
     std::deque<double> at96;                       // interleaved I/Q at 96 kHz
+    gate_.prepare(kOutRate);
     eq_.prepare(kOutRate);
+    comp_.prepare(kOutRate);
+    limit_.prepare(kOutRate);
+    limit_.setEnabled(true);                       // ears + headset: never clip
+    limit_.setCeilingDb(kCeilingDb);
+    limit_.setDcBlockEnabled(false);               // WDSP's output has none
     ready_.store(true);
     SetRXAEMNRgainMethod(kCh, 2);                  // Thetis NR2 defaults
     SetRXAEMNRnpeMethod(kCh, 0);
@@ -305,8 +329,8 @@ void SdrRx::dspLoop() {
         fexchange0(kCh, in.data(), out.data(), &err);
         // WDSP's AGC drives its output to ~full scale (measured: 0 dBFS
         // peaks on real 40 m CW) — keep 6 dB of headroom under the volume.
-        const float g = 0.5f * std::pow(10.f, s.volumeDb / 20.f);
-        for (int i = 0; i < kOutSize; ++i) audio[size_t(i)] = float(out[size_t(2 * i)]) * g;
+        // The volume is applied at the end (emitAudio), after the dynamics.
+        for (int i = 0; i < kOutSize; ++i) audio[size_t(i)] = float(out[size_t(2 * i)]) * 0.5f;
         if (s.rnnoise && rnn_) {
             // RNNoise works on 480-sample frames at 48 kHz, int16 scale.
             rnnIn_.insert(rnnIn_.end(), audio.begin(), audio.end());
@@ -379,8 +403,29 @@ double SdrRx::backlogMs() const {
 }
 
 void SdrRx::emitAudio(float* x, int n) {
+    const Settings& s = appliedSettings_;
+    float pk = 0.f;                                // own meter: the gate's only
+    for (int i = 0; i < n; ++i) pk = std::max(pk, std::fabs(x[i]));   // runs when on
+    inPeakDb_.store(20.f * std::log10(std::max(pk, 1e-6f)));
+    if (s.gateOn) gate_.process(x, n, 1);
     if (eq_.isEnabled()) eq_.process(x, n, 1);
+    if (s.compOn) comp_.process(x, n, 1);
+    const float g = std::pow(10.f, (s.volumeDb + (s.boost ? kBoostDb : 0.f)) / 20.f);
+    for (int i = 0; i < n; ++i) x[i] *= g;
+    limit_.process(x, n, 1);
+    if (s.mute) std::fill(x, x + n, 0.f);
     writeAudio(x, n);
+}
+
+SdrRx::Levels SdrRx::levels() const {
+    Levels l;
+    const bool on = running_.load();
+    l.inDb = on ? inPeakDb_.load() : -120.f;
+    l.gateOpen = gate_.isEnabled() ? gate_.gateOpen() : true;
+    l.compGrDb = comp_.isEnabled() ? comp_.gainReductionDb() : 0.f;
+    l.limGrDb = limit_.gainReductionDb();
+    l.outDb = on ? outPeakDb_.load() : -120.f;
+    return l;
 }
 
 void SdrRx::writeAudio(const float* x, int n) {

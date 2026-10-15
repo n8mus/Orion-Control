@@ -8,6 +8,9 @@
 // - AM: a 1 kHz-modulated carrier on the dial demodulates to 1 kHz
 // - NR2 runs on noise without falling over, and lowers it
 // - RX EQ: a +6 dB peak at 1 kHz lifts the USB tone ~6 dB; EQ off = bypass
+// - RX dynamics: the final limiter holds -1 dBFS, MUTE is silence, BOOST
+//   is +6 dB, the compressor narrows a 20 dB step, the gate turns a tone
+//   under its threshold down by its depth and leaves one above it alone
 #include <QCoreApplication>
 #include <chrono>
 #include <cmath>
@@ -82,7 +85,7 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     SdrRx::Settings st;
     st.agc = SdrRx::Agc::Fixed;                     // levels comparable
-    st.volumeDb = 0;
+    st.volumeDb = -40;                              // fixed gain: keep under the limiter
 
     auto usb = run(Mode::USB, 0, 2800, st, 2.0, [](double t) { return at(t, 1000, 0.01); });
     const double u1k = toneDb(usb, 1000), u2k = toneDb(usb, 2000);
@@ -120,6 +123,57 @@ int main(int argc, char** argv) {
            toneDb(ue, 1000), toneDb(uo, 1000), u1k);
     check(std::fabs(toneDb(ue, 1000) - u1k - 6.0) < 1.0, "RX EQ peak lifts the tone 6 dB");
     check(std::fabs(toneDb(uo, 1000) - u1k) < 0.5, "RX EQ off is a bypass");
+
+    // RX dynamics. Fixed AGC is a straight gain, so the tone's amplitude
+    // sets its level into the dynamics: 0.0001 -> about -14 dBFS there.
+    const auto peakDb = [](const std::vector<float>& x) {
+        float p = 0;
+        for (float v : x) p = std::max(p, std::fabs(v));
+        return 20 * std::log10(std::max(p, 1e-9f));
+    };
+    const auto tone = [](double amp) {
+        return [amp](double t) { return at(t, 1000, amp); };
+    };
+    SdrRx::Settings loud = st;
+    loud.volumeDb = 0;                              // +26 dBFS into the limiter
+    auto lim = run(Mode::USB, 0, 2800, loud, 2.0, tone(0.01));
+    printf("  final limiter: a +26 dBFS tone comes out at %.2f dBFS peak\n", peakDb(lim));
+    check(peakDb(lim) <= SdrRx::kCeilingDb + 0.3, "final limiter holds the ceiling");
+    SdrRx::Settings mu = st;
+    mu.mute = true;
+    auto muted = run(Mode::USB, 0, 2800, mu, 1.5, tone(0.01));
+    check(!muted.empty() && peakDb(muted) < -150, "MUTE is silence");
+    SdrRx::Settings bo = st;
+    bo.boost = true;
+    auto boosted = run(Mode::USB, 0, 2800, bo, 2.0, tone(0.01));
+    printf("  BOOST: %.1f dB (plain %.1f)\n", toneDb(boosted, 1000), u1k);
+    check(std::fabs(toneDb(boosted, 1000) - u1k - SdrRx::kBoostDb) < 0.5, "BOOST adds its 6 dB");
+
+    SdrRx::Settings d = st;
+    d.volumeDb = 0;
+    const double hi0 = toneDb(run(Mode::USB, 0, 2800, d, 2.0, tone(0.0001)), 1000);
+    const double lo0 = toneDb(run(Mode::USB, 0, 2800, d, 2.0, tone(0.00001)), 1000);
+    SdrRx::Settings cp = d;
+    cp.compOn = true;
+    cp.compThrDb = -40;
+    cp.compRatio = 2;
+    cp.compMakeupDb = 0;
+    const double hiC = toneDb(run(Mode::USB, 0, 2800, cp, 2.0, tone(0.0001)), 1000);
+    const double loC = toneDb(run(Mode::USB, 0, 2800, cp, 2.0, tone(0.00001)), 1000);
+    printf("  compressor 2:1 @ -40: step %.1f dB -> %.1f dB (loud %.1f, weak %.1f)\n",
+           hi0 - lo0, hiC - loC, hi0, lo0);
+    check(std::fabs((hi0 - lo0) - 20) < 1, "the test step is 20 dB uncompressed");
+    check(hiC - loC < 13 && hiC - loC > 7, "2:1 compressor about halves it");
+    SdrRx::Settings gt = d;
+    gt.gateOn = true;
+    gt.gateThrDb = -24;
+    gt.gateFloorDb = -20;
+    const double hiG = toneDb(run(Mode::USB, 0, 2800, gt, 2.0, tone(0.0001)), 1000);
+    const double loG = toneDb(run(Mode::USB, 0, 2800, gt, 2.0, tone(0.00001)), 1000);
+    printf("  gate @ -24, depth -20: loud %.1f (was %.1f), weak %.1f (was %.1f)\n",
+           hiG, hi0, loG, lo0);
+    check(std::fabs(hiG - hi0) < 0.5, "gate leaves a tone above threshold alone");
+    check(lo0 - loG > 15, "gate turns a tone under threshold down by its depth");
 
     // NR2 on white noise in the passband: runs, and turns it down.
     unsigned seed = 7;

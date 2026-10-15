@@ -4,6 +4,8 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
+#include <QPainter>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -13,6 +15,7 @@
 #include <QSlider>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -30,6 +33,8 @@ const char* kStyle =
     "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
     "QComboBox, QPushButton { background: #1c2430; color: #c8d4e0;"
     " border: 1px solid #2a3644; padding: 3px 8px; }"
+    "QDoubleSpinBox { background: #1c2430; color: #c8d4e0; }"
+    "QDoubleSpinBox:disabled { color: #4a5868; }"
     "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
     " selection-background-color: #2b5c8a; }";
 
@@ -57,6 +62,87 @@ const std::vector<RxEqPreset>& rxEqPresets() {
     return p;
 }
 }  // namespace
+
+// The receive meter: level into the gate (pre-volume — what the gate and
+// compressor thresholds are set against, both marked), compressor gain
+// reduction, and the output to the speakers with the final limiter's
+// ceiling. Peaks hold and fall ~20 dB/s, as the LIVE mic meter does.
+class SdrRxMeter : public QWidget {
+public:
+    explicit SdrRxMeter(QWidget* parent) : QWidget(parent) { setMinimumHeight(78); }
+    QSize sizeHint() const override { return {440, 78}; }
+    void setLevels(const SdrRx::Levels& l, bool gateOn, float gateThr,
+                   bool compOn, float compThr) {
+        const auto fall = [](float& shown, float v) { shown = std::max(v, shown - 1.f); };
+        fall(in_, l.inDb);
+        fall(out_, l.outDb);
+        comp_ = std::min(l.compGrDb, std::min(0.f, comp_ + 1.f));   // GR falls back up
+        lim_ = l.limGrDb;
+        gateOpen_ = l.gateOpen;
+        gateOn_ = gateOn; gateThr_ = gateThr; compOn_ = compOn; compThr_ = compThr;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter p(this);
+        p.fillRect(rect(), QColor(11, 16, 22));
+        QFont f = p.font();
+        f.setPixelSize(10);
+        p.setFont(f);
+        const QRectF bars = QRectF(rect()).adjusted(52, 4, -60, -4);
+        const double h = (bars.height() - 8) / 3;
+        const auto xOf = [&](float db) {          // -60 .. 0 dBFS
+            return bars.left() + bars.width() * (std::clamp(db, -60.f, 0.f) + 60.f) / 60.f;
+        };
+        const auto row = [&](int i, const QString& name, float db, QColor c,
+                             const QString& val) {
+            const QRectF r(bars.left(), bars.top() + i * (h + 4), bars.width(), h);
+            p.fillRect(r, QColor(24, 32, 42));
+            p.fillRect(QRectF(r.left(), r.top(), xOf(db) - r.left(), r.height()), c);
+            p.setPen(QColor(143, 163, 184));
+            p.drawText(QRectF(0, r.top(), 48, r.height()), Qt::AlignRight | Qt::AlignVCenter, name);
+            p.setPen(QColor(200, 212, 224));
+            p.drawText(QRectF(r.right() + 4, r.top(), 56, r.height()),
+                       Qt::AlignLeft | Qt::AlignVCenter, val);
+            return r;
+        };
+        const QRectF ri = row(0, "In", in_, gateOn_ && !gateOpen_ ? QColor(90, 100, 110)
+                                                           : QColor(80, 200, 120),
+                              QString("%1 dB").arg(in_, 0, 'f', 0));
+        const auto mark = [&](const QRectF& r, float db, QColor c) {
+            p.setPen(QPen(c, 2));
+            p.drawLine(QPointF(xOf(db), r.top() - 1), QPointF(xOf(db), r.bottom() + 1));
+        };
+        if (gateOn_) mark(ri, gateThr_, QColor(232, 176, 74));    // amber: gate
+        if (compOn_) mark(ri, compThr_, QColor(90, 160, 240));    // blue: comp
+        // GR drawn from the right: 0..-20 dB over the bar.
+        const QRectF rc(bars.left(), bars.top() + (h + 4), bars.width(), h);
+        p.fillRect(rc, QColor(24, 32, 42));
+        const double w = bars.width() * std::clamp(-comp_, 0.f, 20.f) / 20.f;
+        p.fillRect(QRectF(rc.right() - w, rc.top(), w, rc.height()), QColor(90, 160, 240));
+        p.setPen(QColor(143, 163, 184));
+        p.drawText(QRectF(0, rc.top(), 48, rc.height()), Qt::AlignRight | Qt::AlignVCenter, "Comp");
+        p.setPen(QColor(200, 212, 224));
+        p.drawText(QRectF(rc.right() + 4, rc.top(), 56, rc.height()), Qt::AlignLeft | Qt::AlignVCenter,
+                   compOn_ ? QString("%1 dB").arg(comp_, 0, 'f', 1) : QStringLiteral("off"));
+        const QRectF ro = row(2, "Out", out_, lim_ < -0.5f ? QColor(230, 80, 70)
+                                                     : QColor(80, 200, 120),
+                              lim_ < -0.5f ? QString("lim %1").arg(lim_, 0, 'f', 0)
+                                           : QString("%1 dB").arg(out_, 0, 'f', 0));
+        mark(ro, SdrRx::kCeilingDb, QColor(230, 80, 70));
+        if (gateOn_) {                             // the gate's state, in words
+            p.setPen(gateOpen_ ? QColor(80, 200, 120) : QColor(232, 176, 74));
+            p.drawText(QRectF(ri.left() + 4, ri.top(), 120, ri.height()),
+                       Qt::AlignLeft | Qt::AlignVCenter, gateOpen_ ? "gate open" : "gate closed");
+        }
+    }
+
+private:
+    float in_ = -120.f, out_ = -120.f, comp_ = 0.f, lim_ = 0.f;
+    bool gateOpen_ = true, gateOn_ = false, compOn_ = false;
+    float gateThr_ = -35.f, compThr_ = -24.f;
+};
 
 void SdrRxDialog::loadEqPreset(int idx) {
     const auto& all = rxEqPresets();
@@ -164,6 +250,57 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     eqLay->addWidget(curve_);
     lay->addWidget(eqBox);
 
+    // RX dynamics, AetherSDR's receive order after the noise tools:
+    // gate -> EQ -> compressor -> volume/BOOST -> final limiter.
+    auto* dyn = new QGroupBox("DYNAMICS", this);
+    auto* dg = new QGridLayout(dyn);
+    const auto spin = [dyn](double lo, double hi, double step, int dec, const QString& suf) {
+        auto* b = new QDoubleSpinBox(dyn);
+        b->setRange(lo, hi);
+        b->setSingleStep(step);
+        b->setDecimals(dec);
+        b->setSuffix(suf);
+        return b;
+    };
+    gateOn_ = new QCheckBox("Gate", dyn);
+    gateOn_->setToolTip("Turns the band hiss down between overs. Set the threshold\n"
+                        "(amber mark on the In bar) just above the noise between words.");
+    gateThr_ = spin(-70, -10, 1, 0, " dB");
+    gateThr_->setToolTip("Opens above this level (the amber mark)");
+    gateFloor_ = spin(-40, 0, 1, 0, " dB");
+    gateFloor_->setToolTip("Depth: how far it turns the hiss down when closed");
+    dg->addWidget(gateOn_, 0, 0);
+    dg->addWidget(new QLabel("threshold", dyn), 0, 1);
+    dg->addWidget(gateThr_, 0, 2);
+    dg->addWidget(new QLabel("depth", dyn), 0, 3);
+    dg->addWidget(gateFloor_, 0, 4);
+    compOn_ = new QCheckBox("Compressor", dyn);
+    compOn_->setToolTip("Evens out fading and loud/weak stations. Gentle on receive:\n"
+                        "1.5-2:1 (AetherSDR's advice); threshold = the blue mark.");
+    compThr_ = spin(-50, 0, 1, 0, " dB");
+    compRatio_ = spin(1.0, 6.0, 0.1, 1, ":1");
+    compMakeup_ = spin(0, 18, 0.5, 1, " dB");
+    compMakeup_->setToolTip("Make-up gain after compression");
+    dg->addWidget(compOn_, 1, 0);
+    dg->addWidget(new QLabel("threshold", dyn), 1, 1);
+    dg->addWidget(compThr_, 1, 2);
+    dg->addWidget(new QLabel("ratio", dyn), 1, 3);
+    dg->addWidget(compRatio_, 1, 4);
+    dg->addWidget(new QLabel("make-up", dyn), 1, 5);
+    dg->addWidget(compMakeup_, 1, 6);
+    mute_ = new QCheckBox("MUTE", dyn);
+    mute_->setToolTip("Silence the SDR audio (the receiver keeps running)");
+    boost_ = new QCheckBox(QString("BOOST +%1 dB").arg(SdrRx::kBoostDb, 0, 'f', 0), dyn);
+    boost_->setToolTip("Extra loudness into the final limiter (-1 dBFS, always on)");
+    auto* mb = new QHBoxLayout;
+    mb->addWidget(mute_);
+    mb->addWidget(boost_);
+    mb->addStretch(1);
+    dg->addLayout(mb, 2, 0, 1, 7);
+    meter_ = new SdrRxMeter(dyn);
+    dg->addWidget(meter_, 3, 0, 1, 7);
+    lay->addWidget(dyn);
+
     info_ = new QLabel(this);
     info_->setStyleSheet("QLabel { color: #c8d4e0; font-family: monospace; }");
     lay->addWidget(info_);
@@ -188,6 +325,15 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     for (size_t i = 0; i < s.eq.size(); ++i) eq_.bands[i] = s.eq[i];
     eqOn_->setChecked(s.eqOn);
     curve_->setSettings(eq_);
+    gateOn_->setChecked(s.gateOn);
+    gateThr_->setValue(s.gateThrDb);
+    gateFloor_->setValue(s.gateFloorDb);
+    compOn_->setChecked(s.compOn);
+    compThr_->setValue(s.compThrDb);
+    compRatio_->setValue(s.compRatio);
+    compMakeup_->setValue(s.compMakeupDb);
+    mute_->setChecked(s.mute);
+    boost_->setChecked(s.boost);
     loading_ = false;
 
     connect(on_, &QCheckBox::toggled, this, [this] { emitChanged(); });
@@ -197,6 +343,10 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     });
     for (QComboBox* c : {agc_, nb_, nr_})
         connect(c, &QComboBox::currentIndexChanged, this, [this] { emitChanged(); });
+    for (QDoubleSpinBox* b : {gateThr_, gateFloor_, compThr_, compRatio_, compMakeup_})
+        connect(b, &QDoubleSpinBox::valueChanged, this, [this] { emitChanged(); });
+    for (QCheckBox* c : {gateOn_, compOn_, mute_, boost_})
+        connect(c, &QCheckBox::toggled, this, [this] { emitChanged(); });
     for (QCheckBox* c : {snb_, anf_, rnn_})
         connect(c, &QCheckBox::toggled, this, [this] { emitChanged(); });
     connect(eqOn_, &QCheckBox::toggled, this, [this](bool v) {
@@ -226,6 +376,14 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
         if (status_) info_->setText(status_());
     });
     tick->start();
+    auto* mtick = new QTimer(this);
+    mtick->setInterval(50);
+    connect(mtick, &QTimer::timeout, this, [this] {
+        if (!levels_) return;
+        meter_->setLevels(levels_(), gateOn_->isChecked(), float(gateThr_->value()),
+                          compOn_->isChecked(), float(compThr_->value()));
+    });
+    mtick->start();
 }
 
 void SdrRxDialog::setOn(bool on) {
@@ -243,6 +401,15 @@ SdrRx::Settings SdrRxDialog::collect() const {
     s.anf = anf_->isChecked();
     s.rnnoise = rnn_->isChecked();
     s.eqOn = eq_.enabled;
+    s.gateOn = gateOn_->isChecked();
+    s.gateThrDb = float(gateThr_->value());
+    s.gateFloorDb = float(gateFloor_->value());
+    s.compOn = compOn_->isChecked();
+    s.compThrDb = float(compThr_->value());
+    s.compRatio = float(compRatio_->value());
+    s.compMakeupDb = float(compMakeup_->value());
+    s.mute = mute_->isChecked();
+    s.boost = boost_->isChecked();
     for (size_t i = 0; i < s.eq.size(); ++i) s.eq[i] = eq_.bands[i];
     return s;
 }

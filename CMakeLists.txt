@@ -424,7 +424,8 @@ endif()
 if(HAVE_WDSP)
   add_executable(sdrrxtest EXCLUDE_FROM_ALL
     tests/sdrrxtest.cpp src/sdr/SdrRx.cpp src/sdr/SdrRx.h
-    src/dsp/ClientEq.cpp)
+    src/dsp/ClientEq.cpp src/dsp/ClientGate.cpp src/dsp/ClientComp.cpp
+    src/dsp/ClientPhaseRotator.cpp src/dsp/ClientFinalLimiter.cpp)
   target_include_directories(sdrrxtest PRIVATE src)
   target_link_libraries(sdrrxtest PRIVATE Qt6::Core aether::wdsp rnnoise)
 endif()

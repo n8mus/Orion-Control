@@ -1317,6 +1317,7 @@ SdrRx::Settings loadSdrRxSettings() {
     s.compMakeupDb = std::clamp(float(q.value("sdrrx/compMakeupDb", s.compMakeupDb).toDouble()), 0.f, 18.f);
     s.mute = q.value("sdrrx/mute", false).toBool();
     s.boost = q.value("sdrrx/boost", false).toBool();
+    s.rade = q.value("sdrrx/rade", false).toBool();
     return s;
 }
 void saveSdrRxSettings(const SdrRx::Settings& s) {
@@ -1340,6 +1341,7 @@ void saveSdrRxSettings(const SdrRx::Settings& s) {
     q.setValue("sdrrx/compMakeupDb", s.compMakeupDb);
     q.setValue("sdrrx/mute", s.mute);
     q.setValue("sdrrx/boost", s.boost);
+    q.setValue("sdrrx/rade", s.rade);
     q.setValue("sdrrx/eq", QJsonDocument(v.toJson()).toJson(QJsonDocument::Compact));
 }
 }  // namespace
@@ -1413,6 +1415,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
                     : QStringLiteral("off");
             });
             dlg->setLevelSource([this] { return sdrRx_->levels(); });
+            dlg->setRadeSource([this] { return sdrRx_->radeStatus(); });
             connect(dlg, &SdrRxDialog::changed, this,
                     [this, setOn](bool on, const SdrRx::Settings& s) {
                 saveSdrRxSettings(s);
@@ -1441,6 +1444,20 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         sdrRx_->setMuted(tx);
     });
     txMute->start();
+
+    // RADE end-of-over callsigns to the status bar as they decode.
+    auto* radeCalls = new QTimer(this);
+    radeCalls->setInterval(500);
+    connect(radeCalls, &QTimer::timeout, this, [this, seen = 0]() mutable {
+        const SdrRx::RadeStatus r = sdrRx_->radeStatus();
+        if (r.calls == seen) return;
+        seen = r.calls;
+        if (r.calls > 0 && !r.lastCall.empty())
+            statusBar()->showMessage(QString("RADE: heard %1 (end of over, SNR %2 dB)")
+                                         .arg(QString::fromStdString(r.lastCall))
+                                         .arg(r.snrDb, 0, 'f', 0), 15000);
+    });
+    radeCalls->start();
 #endif
 }
 

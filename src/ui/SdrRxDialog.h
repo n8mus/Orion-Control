@@ -29,6 +29,7 @@ public:
     void setStatusSource(std::function<QString()> f) { status_ = std::move(f); }
     // Meter feed, polled ~20x a second while the window is open.
     void setLevelSource(std::function<SdrRx::Levels()> f) { levels_ = std::move(f); }
+    void setRadeSource(std::function<SdrRx::RadeStatus()> f) { radeSrc_ = std::move(f); }
 
 signals:
     void changed(bool on, const ttc::SdrRx::Settings& s);
@@ -61,6 +62,9 @@ private:
     QCheckBox* mute_ = nullptr;
     QCheckBox* boost_ = nullptr;
     SdrRxMeter* meter_ = nullptr;
+    QCheckBox* rade_ = nullptr;
+    QLabel*    radeInfo_ = nullptr;
+    std::function<SdrRx::RadeStatus()> radeSrc_;
     QLabel*    info_ = nullptr;
     std::function<QString()> status_;
     std::function<SdrRx::Levels()> levels_;

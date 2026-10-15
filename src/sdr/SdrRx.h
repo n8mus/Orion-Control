@@ -18,6 +18,7 @@
 #include "radio/RadioController.h"   // Mode
 
 struct DenoiseState;
+namespace ttc { class RadeRx; }
 
 namespace ttc {
 
@@ -70,6 +71,9 @@ public:
         float compMakeupDb = 4.f;
         bool mute = false;
         bool boost = false;                        // +kBoostDb into the limiter
+        // FreeDV RADE: the demodulated USB audio is the modem; what plays
+        // is RadeRx's decoded speech (then gate/EQ/comp/volume as usual).
+        bool rade = false;
     };
     static constexpr float kBoostDb = 6.f;
     static constexpr float kCeilingDb = -1.f;      // final limiter, always on
@@ -83,6 +87,16 @@ public:
         float outDb = -120.f;                      // to the speakers
     };
     Levels levels() const;
+
+    // RADE status (any thread; meaningless unless Settings::rade).
+    struct RadeStatus {
+        bool available = false;                    // built with RADE
+        bool sync = false;
+        float snrDb = 0.f, freqOffsetHz = 0.f;
+        std::string lastCall;                      // end-of-over callsign
+        int calls = 0;                             // bumps per decoded EOO
+    };
+    RadeStatus radeStatus() const;
 
     SdrRx();
     ~SdrRx();
@@ -172,6 +186,10 @@ private:
     ClientFinalLimiter limit_;
     void emitAudio(float* x, int n);               // dynamics -> writeAudio
     DenoiseState* rnn_ = nullptr;
+    std::atomic<RadeRx*> rade_{nullptr};           // DSP thread makes it; UI reads status
+    std::deque<float> radeOut_;                    // decoded speech, 48 kHz
+    bool radePrimed_ = false;
+    void radeBlock(const float* modem, int n);     // DSP thread
     std::vector<float> rnnIn_;                     // 480-sample frames
 
     // ---- output pipe (pacat) ----

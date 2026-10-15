@@ -3,6 +3,9 @@
 
 #include <aether_wdsp.h>
 #include <rnnoise.h>
+#ifdef HAVE_RADE
+#include "sdr/RadeRx.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -331,7 +334,9 @@ void SdrRx::dspLoop() {
         // peaks on real 40 m CW) — keep 6 dB of headroom under the volume.
         // The volume is applied at the end (emitAudio), after the dynamics.
         for (int i = 0; i < kOutSize; ++i) audio[size_t(i)] = float(out[size_t(2 * i)]) * 0.5f;
-        if (s.rnnoise && rnn_) {
+        if (s.rade) {
+            radeBlock(audio.data(), kOutSize);
+        } else if (s.rnnoise && rnn_) {
             // RNNoise works on 480-sample frames at 48 kHz, int16 scale.
             rnnIn_.insert(rnnIn_.end(), audio.begin(), audio.end());
             std::vector<float> done;
@@ -354,6 +359,11 @@ void SdrRx::dspLoop() {
     destroy_anbEXT(kCh);
     CloseChannel(kCh);
     if (rnn_) { rnnoise_destroy(rnn_); rnn_ = nullptr; }
+#ifdef HAVE_RADE
+    delete rade_.exchange(nullptr);
+#endif
+    radeOut_.clear();
+    radePrimed_ = false;
 }
 
 // pacat fed through our own pipe: one page of pipe (~43 ms) plus what we
@@ -415,6 +425,51 @@ void SdrRx::emitAudio(float* x, int n) {
     limit_.process(x, n, 1);
     if (s.mute) std::fill(x, x + n, 0.f);
     writeAudio(x, n);
+}
+
+// RADE: the block of modem audio in, one block of speech out — always
+// exactly n samples, so the player sees a steady stream. The decoder
+// hands speech over in 120 ms bursts (one modem frame = 12 vocoder
+// frames), so a FIFO primed to ~130 ms smooths them; silence while
+// unsynced or underrun (then it primes again).
+void SdrRx::radeBlock(const float* modem, int n) {
+    std::vector<float> blk(size_t(n), 0.f);
+#ifdef HAVE_RADE
+    if (!rade_.load()) rade_.store(new RadeRx);
+    std::vector<float> sp;
+    rade_.load()->process(modem, n, sp);
+    radeOut_.insert(radeOut_.end(), sp.begin(), sp.end());
+    if (radeOut_.size() > 48000) radeOut_.erase(radeOut_.begin(), radeOut_.end() - 12000);
+    if (!radePrimed_ && radeOut_.size() >= 6240) radePrimed_ = true;
+    if (radePrimed_) {
+        if (radeOut_.size() >= size_t(n)) {
+            std::copy(radeOut_.begin(), radeOut_.begin() + n, blk.begin());
+            radeOut_.erase(radeOut_.begin(), radeOut_.begin() + n);
+        } else {
+            radePrimed_ = false;                   // underrun: re-prime
+        }
+    }
+#else
+    (void)modem;
+#endif
+    emitAudio(blk.data(), n);
+}
+
+SdrRx::RadeStatus SdrRx::radeStatus() const {
+    RadeStatus st;
+#ifdef HAVE_RADE
+    st.available = true;
+    // rade_ is created and deleted on the DSP thread; its reads are atomic
+    // or locked, and stop() joins before the delete.
+    if (const RadeRx* r = rade_.load()) {
+        st.sync = r->sync();
+        st.snrDb = r->snrDb();
+        st.freqOffsetHz = r->freqOffsetHz();
+        st.lastCall = r->lastCallsign();
+        st.calls = r->callsignCount();
+    }
+#endif
+    return st;
 }
 
 SdrRx::Levels SdrRx::levels() const {

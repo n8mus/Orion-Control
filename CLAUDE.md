@@ -81,7 +81,8 @@ senders and weak-signal cases are the hard set.
 | `dcutest` | DCU-3 frame parser (streams-while-turning captures) + the rotctld server we put in front of it | — |
 | `watchtest` | DX-watch pattern matching | — |
 | `vkeqtest` | voice keyer audio chain (AetherSDR-ported gate → EQ → de-esser → compressor → final limiter, src/dsp): EQ vs its analytic curve, `snapToTargets()`, fitted presets on their targets, gate/comp/limiter/de-esser behaviour, look-ahead leveling, profiles + settings JSON (old curves load with dynamics off) | — |
-| `sdrrxtest` | SDR receive chain end to end on synthetic IQ (WDSP via the decimator + resampler, audio tapped, no device): USB tone, LSB rejection, CW carrier at the pitch, AM, RX EQ peak/bypass, limiter/MUTE/BOOST/compressor/gate, NR2 on noise (~30 s). Needs WDSP (FFTW3) | — |
+| `sdrrxtest` | SDR receive chain end to end on synthetic IQ (WDSP via the decimator + resampler, audio tapped, no device): USB tone, LSB rejection, CW carrier at the pitch, AM, RX EQ peak/bypass, limiter/MUTE/BOOST/compressor/gate, NR2 on noise, and (with RADE) rade_c's off-air recording on the dial through WDSP USB -> RADE sync + speech (~70 s). Needs WDSP (FFTW3) | — |
+| `raderxtest` | FreeDV RADE receive (`RadeRx`) on rade_c's own 5½-min off-air recording: sync (97%), speech, end-of-over callsigns (4, last VK5KVA), noise never syncs; ~6% of a core | — |
 | `tunetest` | tuner/amp settings table behind the pan's amber tuner box (238C + Titan III, per antenna/band, `tuning.json`): nearest-point lookup, same-kHz overwrite, knob clamping, file round trip | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
 | `pmtest` | PowerMaster wattmeter frame decode + CRC (pure parser, no hardware) | — |
@@ -194,6 +195,12 @@ that night's own capture).
   final limiter (-1 dBFS, always on) -> MUTE; thresholds are pre-volume
   dBFS so the volume never moves them; pacat with the LIVE
   mic's backlog control; muted on TX. Follows mode/filter/CW pitch.
+  **FreeDV RADE** (window's FREEDV RADE box, `sdrrx/rade`): the USB audio
+  is the modem -> `src/sdr/RadeRx` (48k->8k, rade_c `rade_rx`, FARGAN via
+  `third_party/rade/ttc_rade_shim`, 16k->48k) -> the same gate/EQ/comp/
+  limiter. `third_party/rade` FETCHES rade_c + Opus (SHA-pinned; Arch's
+  opus lacks the LPCNet/FARGAN symbols) and commits only the small EOO
+  callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
 - **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
   Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"
   personality). Quirks are documented where they're handled — grep

@@ -7,6 +7,8 @@
 // - CWU: a carrier ON the dial comes out at the sidetone pitch (600 Hz)
 // - AM: a 1 kHz-modulated carrier on the dial demodulates to 1 kHz
 // - NR2 runs on noise without falling over, and lowers it
+// - RADE (when built): rade_c's off-air recording on the dial, USB through
+//   WDSP, decodes to speech and syncs
 // - RX EQ: a +6 dB peak at 1 kHz lifts the USB tone ~6 dB; EQ off = bypass
 // - RX dynamics: the final limiter holds -1 dBFS, MUTE is silence, BOOST
 //   is +6 dB, the compressor narrows a 20 dB step, the gate turns a tone
@@ -15,6 +17,8 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -33,7 +37,7 @@ constexpr double kFs = 1e6, kLoOff = 260000.0;
 // Run `secs` of IQ through a fresh receiver; return the last second of audio.
 template <class Gen>
 static std::vector<float> run(Mode m, int lo, int hi, const SdrRx::Settings& st,
-                              double secs, Gen gen) {
+                              double secs, Gen gen, SdrRx::RadeStatus* rade = nullptr) {
     SdrRx rx;
     std::mutex mx;
     std::vector<float> audio;
@@ -55,6 +59,7 @@ static std::vector<float> run(Mode m, int lo, int hi, const SdrRx::Settings& st,
         std::this_thread::sleep_for(std::chrono::microseconds(1500));   // ~6x real time
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    if (rade) *rade = rx.radeStatus();
     rx.stop();
     std::lock_guard<std::mutex> lk(mx);
     if (audio.size() > 48000) audio.erase(audio.begin(), audio.end() - 48000);
@@ -189,6 +194,48 @@ int main(int argc, char** argv) {
     printf("  NR2 on noise: %.1f dB -> %.1f dB\n", rmsDb(n0), rmsDb(n2));
     check(!n2.empty() && std::isfinite(rmsDb(n2)), "NR2 runs");
     check(rmsDb(n0) - rmsDb(n2) > 3, "NR2 lowers steady noise");
+
+#ifdef HAVE_RADE
+    {
+        // The recording (48 kHz real audio) as a DSB signal on the dial:
+        // USB demod hands back exactly the audio, which is RADE's modem.
+        std::ifstream f(RADE_WAV_DIR "/FDV_offair.wav", std::ios::binary);
+        std::vector<char> b((std::istreambuf_iterator<char>(f)), {});
+        std::vector<float> wav;
+        for (size_t p = 12; p + 8 <= b.size();) {
+            uint32_t len;
+            std::memcpy(&len, &b[p + 4], 4);
+            if (std::memcmp(&b[p], "data", 4) == 0) {
+                const size_t n = std::min<size_t>(len, b.size() - p - 8) / 2;
+                wav.resize(n);
+                for (size_t i = 0; i < n; ++i) {
+                    int16_t v;
+                    std::memcpy(&v, &b[p + 8 + 2 * i], 2);
+                    wav[i] = v / 32768.f;
+                }
+                break;
+            }
+            p += 8 + len;
+        }
+        check(wav.size() > 48000 * 40, "RADE: off-air recording loaded");
+        SdrRx::Settings rs = st;
+        rs.agc = SdrRx::Agc::Medium;
+        rs.volumeDb = 0;
+        rs.rade = true;
+        SdrRx::RadeStatus rst;
+        auto speech = run(Mode::USB, 100, 2900, rs, 40.0, [&wav](double t) {
+            const double x = t * 48000.0;
+            const size_t i = size_t(x);
+            const float a = i + 1 < wav.size()
+                ? float(wav[i] + (wav[i + 1] - wav[i]) * (x - double(i))) : 0.f;
+            return at(t, 0, 0.002 * a);            // real audio x carrier = DSB
+        }, &rst);
+        printf("  RADE via WDSP USB: sync %d, SNR %.1f dB, foff %.1f Hz, last second %.1f dBFS rms\n",
+               int(rst.sync), rst.snrDb, rst.freqOffsetHz, rmsDb(speech));
+        check(rst.available && rst.sync, "RADE syncs through the SDR chain");
+        check(rmsDb(speech) > -45, "RADE speech comes out of the SDR chain");
+    }
+#endif
 
     if (fails == 0) printf("sdrrxtest: all checks passed\n");
     return fails ? 1 : 0;

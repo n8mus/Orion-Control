@@ -65,6 +65,13 @@ if(FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
   enable_language(C)
   add_subdirectory(third_party/wdsp)
   set(HAVE_WDSP TRUE)
+  # FreeDV RADE digital voice (SDR receive): fetches rade_c + Opus (see
+  # third_party/rade/TTC-VENDOR.md); needs autotools for Opus's build.
+  option(BUILD_RADE "FreeDV RADE digital voice on the SDR receiver" ON)
+  if(BUILD_RADE)
+    add_subdirectory(third_party/rade)
+    set(HAVE_RADE TRUE)
+  endif()
   message(STATUS "WDSP: SDR receive audio enabled")
 else()
   message(STATUS "WDSP: FFTW3 not found — building without SDR receive audio")
@@ -431,11 +438,24 @@ if(HAVE_WDSP)
   target_sources(tentec-console PRIVATE src/sdr/SdrRx.cpp src/sdr/SdrRx.h
     src/ui/SdrRxDialog.cpp src/ui/SdrRxDialog.h)
   target_compile_definitions(tentec-console PRIVATE HAVE_WDSP)
+  if(HAVE_RADE)
+    target_sources(tentec-console PRIVATE src/sdr/RadeRx.cpp src/sdr/RadeRx.h)
+    target_compile_definitions(tentec-console PRIVATE HAVE_RADE)
+    target_link_libraries(tentec-console PRIVATE ttc::rade)
+  endif()
   target_link_libraries(tentec-console PRIVATE aether::wdsp)
 endif()
 
 # SDR receive chain end to end on synthetic IQ (USB tone, LSB rejection,
 # CW pitch, AM) — WDSP through the decimator, audio captured from a pipe.
+if(HAVE_RADE)
+  # RADE receive on rade_c's off-air recording: sync, speech, EOO callsign.
+  add_executable(raderxtest EXCLUDE_FROM_ALL tests/raderxtest.cpp src/sdr/RadeRx.cpp src/sdr/RadeRx.h)
+  target_include_directories(raderxtest PRIVATE src)
+  target_compile_definitions(raderxtest PRIVATE RADE_WAV_DIR="${RADE_WAV_DIR}")
+  target_link_libraries(raderxtest PRIVATE ttc::rade)
+endif()
+
 if(HAVE_WDSP)
   add_executable(sdrrxtest EXCLUDE_FROM_ALL
     tests/sdrrxtest.cpp src/sdr/SdrRx.cpp src/sdr/SdrRx.h
@@ -443,6 +463,11 @@ if(HAVE_WDSP)
     src/dsp/ClientPhaseRotator.cpp src/dsp/ClientFinalLimiter.cpp)
   target_include_directories(sdrrxtest PRIVATE src)
   target_link_libraries(sdrrxtest PRIVATE Qt6::Core aether::wdsp rnnoise)
+  if(HAVE_RADE)
+    target_sources(sdrrxtest PRIVATE src/sdr/RadeRx.cpp)
+    target_compile_definitions(sdrrxtest PRIVATE HAVE_RADE RADE_WAV_DIR="${RADE_WAV_DIR}")
+    target_link_libraries(sdrrxtest PRIVATE ttc::rade)
+  endif()
 endif()
 
 if(BUILD_SDRPLAY)

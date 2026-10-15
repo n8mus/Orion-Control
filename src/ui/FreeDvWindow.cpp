@@ -113,6 +113,26 @@ FreeDvWindow::FreeDvWindow(QWidget* parent) : QDialog(parent) {
     strip->addWidget(modem_);
     lay->addLayout(strip);
 
+    // Mic into the RADE encoder (freedv-gui's "Level" gauge while talking):
+    // the vocoder measures the voice digitally, so a clipping mic distorts
+    // what the far end hears however clean the RF and ALC look. Speech
+    // peaks belong in the upper green; red = clipping, turn the mic down.
+    auto* micRow = new QHBoxLayout;
+    micRow->addWidget(new QLabel("Mic", this));
+    mic_ = new QProgressBar(this);
+    mic_->setRange(-40, 0);
+    mic_->setFixedWidth(300);
+    mic_->setToolTip("Mic level into the RADE vocoder (dBFS peak, held 1 s).\n"
+                     "Talk normally: peaks in the upper green (about -12 to -6 dB).\n"
+                     "Amber = hot, red = clipping — the far end hears it distorted.\n"
+                     "Set it with the mic's own gain (the Alesis), not the radio.");
+    micRow->addWidget(mic_);
+    micText_ = new QLabel("—", this);
+    micText_->setMinimumWidth(170);
+    micRow->addWidget(micText_);
+    micRow->addStretch(1);
+    lay->addLayout(micRow);
+
     // ---- controls -----------------------------------------------------
     auto* ctl = new QHBoxLayout;
     analog_ = new QCheckBox("Analog", this);
@@ -310,6 +330,29 @@ void FreeDvWindow::setStatus(const Status& s) {
         last_->setText(QString("heard: <b style='color:%1'>%2</b>")
                            .arg(callColor(statusFor_ ? statusFor_(s.lastCall, dialHz_) : '?'),
                                 s.lastCall));
+    // Mic: fast up, ~20 dB/s down, the peak held for 1 s (status ticks
+    // every 250 ms); a clip lights the readout red for 2 s.
+    micShown_ = std::max(s.micDb, micShown_ - 5.f);
+    if (s.micDb >= micHold_ || --micHoldTicks_ <= 0) { micHold_ = s.micDb; micHoldTicks_ = 4; }
+    if (s.micDb >= -1.f) clipTicks_ = 8;
+    mic_->setValue(int(std::clamp(micShown_, -40.f, 0.f)));
+    const char* micBar = micHold_ >= -1.f ? "QProgressBar::chunk { background: #e05050; }"
+                       : micHold_ >= -6.f ? kBarAmber : kBarGreen;
+    mic_->setStyleSheet(micBar);
+    if (s.micDb <= -119.f) {
+        micText_->setText("— (not transmitting RADE)");
+        micText_->setStyleSheet("QLabel { color: #8fa3b8; }");
+    } else if (clipTicks_ > 0) {
+        --clipTicks_;
+        micText_->setText(QString("CLIPPING — mic gain down (%1 dB)").arg(micHold_, 0, 'f', 0));
+        micText_->setStyleSheet("QLabel { color: #ff5c46; font-weight: bold; }");
+    } else {
+        micText_->setText(micHold_ >= -6.f ? QString("hot, %1 dB").arg(micHold_, 0, 'f', 0)
+                          : micHold_ >= -20.f ? QString("good, %1 dB").arg(micHold_, 0, 'f', 0)
+                                              : QString("low, %1 dB").arg(micHold_, 0, 'f', 0));
+        micText_->setStyleSheet(micHold_ >= -6.f ? "QLabel { color: #e8b04a; }"
+                                                 : "QLabel { color: #a8f0c0; }");
+    }
     modem_->setValue(int(std::clamp(s.modemOutDb, -40.f, 0.f)));
     modem_->setStyleSheet(s.modemOutDb > -3 ? kBarAmber : kBarGreen);
 }

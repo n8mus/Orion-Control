@@ -1372,8 +1372,8 @@ MainWindow::MainWindow(QWidget* parent)
     updateFreedvLink();
     // FreeDV reporting, freedv-gui's cadence: the dial and TX state as they
     // change, each end-of-over callsign at once (FreeDV Reporter + PSK
-    // Reporter), and while in sync with no call yet an empty-callsign
-    // rx_report every 10 s ("receiving something", freedv-gui's '--').
+    // Reporter), and while in sync an empty-callsign rx_report every
+    // second ("receiving something", freedv-gui's '--').
     auto* fdvTick = new QTimer(this);
     fdvTick->setInterval(250);
     connect(fdvTick, &QTimer::timeout, this, [this, seenCalls = 0, quietTicks = 0]() mutable {
@@ -1388,6 +1388,7 @@ MainWindow::MainWindow(QWidget* parent)
             st.freqOffsetHz = rs.freqOffsetHz;
             st.lastCall = QString::fromStdString(rs.lastCall);
             st.modemOutDb = live_ && live_->rade() ? live_->outputPeakDb() : -120.f;
+            st.micDb = live_ && live_->rade() ? live_->inputPeakDb() : -120.f;
             fdvWin_->setStatus(st);
             fdvWin_->setStations(freedv_.stations(), qint64(centerHz_));
             if (rs.calls > seenCalls && !rs.lastCall.empty())
@@ -1414,7 +1415,11 @@ MainWindow::MainWindow(QWidget* parent)
             }
             seenCalls = r.calls;
         }
-        if (r.sync && !radioTx_ && ++quietTicks >= 40) {
+        // Every second while in sync, as freedv-gui does: the Reporter
+        // highlights a receiving station's row only for 5 s after its
+        // last report (freedv_reporter.cpp RX_COLORING_SHORT_TIMEOUT_SEC)
+        // — live-found at 10 s: W4NMH saw our "green bar" mostly dark.
+        if (r.sync && !radioTx_ && ++quietTicks >= 4) {
             quietTicks = 0;
             freedv_.reportHeard(QString(), int(std::lround(r.snrDb)));
         }

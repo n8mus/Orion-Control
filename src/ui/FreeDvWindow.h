@@ -38,6 +38,7 @@ public:
         float snrDb = 0, freqOffsetHz = 0;
         QString lastCall;
         float modemOutDb = -120;                   // what goes to the SignaLink
+        float micDb = -120;                        // mic peak into the RADE encoder
     };
     void setStatus(const Status& s);
     void setStations(const QVector<FreeDvReporter::StationInfo>& st, qint64 dialHz);
@@ -70,6 +71,10 @@ private:
     QLabel* trx_ = nullptr;
     QLabel* last_ = nullptr;
     QProgressBar* modem_ = nullptr;
+    QProgressBar* mic_ = nullptr;
+    QLabel* micText_ = nullptr;
+    float micShown_ = -120.f, micHold_ = -120.f;
+    int micHoldTicks_ = 0, clipTicks_ = 0;
     QCheckBox* analog_ = nullptr;
     QSlider* txLevel_ = nullptr;
     QLabel* txLevelText_ = nullptr;

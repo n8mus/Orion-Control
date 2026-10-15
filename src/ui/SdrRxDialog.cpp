@@ -132,9 +132,13 @@ protected:
                                            : QString("%1 dB").arg(out_, 0, 'f', 0));
         mark(ro, SdrRx::kCeilingDb, QColor(230, 80, 70));
         if (gateOn_) {                             // the gate's state, in words
+            // On its own dark tag: over the green bar it vanished.
+            const QRectF tag(ri.left() + 3, ri.top() + 2, 70, ri.height() - 4);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(11, 16, 22, 220));
+            p.drawRoundedRect(tag, 3, 3);
             p.setPen(gateOpen_ ? QColor(80, 200, 120) : QColor(232, 176, 74));
-            p.drawText(QRectF(ri.left() + 4, ri.top(), 120, ri.height()),
-                       Qt::AlignLeft | Qt::AlignVCenter, gateOpen_ ? "gate open" : "gate closed");
+            p.drawText(tag, Qt::AlignCenter, gateOpen_ ? "gate open" : "gate closed");
         }
     }
 

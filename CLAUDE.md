@@ -76,6 +76,7 @@ senders and weak-signal cases are the hard set.
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `not1mmtest` | Not1MM contest dupe sheet (`Not1mmLog`) vs a synthetic not1mm.json + ham.db + plugin: dupe_type 1/2/3/4, other contests ignored, Band fallback, inert while Not1MM isn't running; `--real` reads this station's Not1MM read-only | — |
 | `rigctldtest` | the :4532 rigctld server over TCP, no radio attached (PTT only raises the signal): Pat's (Winlink) exact sequence — `dump_caps` ping, `\chk_vfo`, `\get_freq`, `\set_freq`, `t`, `\set_ptt 1/0`, ONE line back each, stream stays aligned — plus the `+` extended form unchanged | — |
+| `psktest` | FreeDV reporting, offline: the PSK Reporter IPFIX datagram byte-checked against freedv-gui's layout (templates, 5-byte freq, padding, lengths) and FreeDV Reporter's reporting role (connect payload; freq/tx/rx events only after connection_successful) | — |
 | `wltest` | Winlink session watching (`PatMonitor`): Pat's websocket JSON by hand — dialing/connected = session, gateway named, progress readout, disconnect ends it | — |
 | `freedvtest` | FreeDV Reporter Socket.IO frames offline (view-only connect, ping/pong, the connect snapshot as the station table: ON AIR / TX n min ago / hours / listening / RX only, band-map vs table-only, rx_report heard spots, clamps); `--live N` watches qso.freedv.org for N s | — |
 | `fldigitest` | fldigi XML-RPC client | `python3 tests/fake_fldigi.py 17362 &` (or `FLTEST_PORT`/`FLTEST_LOOSE` vs real fldigi) |
@@ -142,7 +143,10 @@ that night's own capture).
   'V' FreeDV orange (`FreeDvReporter`, qso.freedv.org view-only, Qt WebSockets:
   every online station, every band, in the spot table — ON AIR / TX n min
   ago / listening; only on-air or TX < 20 min reach the band map via
-  `SpotLabel::mapHidden`);
+  `SpotLabel::mapHidden`). SPOTS ▾ → Report my FreeDV station = freedv-gui's
+  reporting: role "report" (call/grid/freq/TX/rx_report) + PSK Reporter
+  (`PskReporter`, EOO calls, 5-min batches), ONLY while RADE decodes or is
+  armed to TX (`updateFreedvLink()` owns the link);
   call text is colored by cqrlog worked-before status (LogbookIndex),
   watch-list hits get an orange ring. While Not1MM runs, its current
   contest's dupes draw gray (`Not1mmLog`: reads not1mm.json + its SQLite

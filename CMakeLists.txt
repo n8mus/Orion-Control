@@ -119,6 +119,7 @@ add_executable(tentec-console
   src/net/PotaClient.cpp        src/net/PotaClient.h
   src/net/FreeDvReporter.cpp    src/net/FreeDvReporter.h
   src/net/PatMonitor.cpp        src/net/PatMonitor.h
+  src/net/PskReporter.cpp       src/net/PskReporter.h
   src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
@@ -196,6 +197,15 @@ add_executable(tentec-console
   resources/resources.qrc
 )
 target_include_directories(tentec-console PRIVATE src)
+# Version for what the console reports about itself (FreeDV Reporter, PSK
+# Reporter): git describe at configure time.
+execute_process(COMMAND git describe --tags --always
+  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR} OUTPUT_VARIABLE TTC_GIT_VERSION
+  OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+if(NOT TTC_GIT_VERSION)
+  set(TTC_GIT_VERSION ${PROJECT_VERSION})
+endif()
+target_compile_definitions(tentec-console PRIVATE TTC_VERSION="${TTC_GIT_VERSION}")
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql Qt6::WebSockets rnnoise)
 if(WIN32)
   # GUI subsystem: no stray console window on double-click. stderr then has
@@ -352,6 +362,12 @@ add_executable(not1mmtest EXCLUDE_FROM_ALL
   src/util/LogbookIndex.cpp src/util/CtyLookup.cpp src/log/LogDb.cpp src/log/Adif.cpp)
 target_include_directories(not1mmtest PRIVATE src)
 target_link_libraries(not1mmtest PRIVATE Qt6::Core Qt6::Sql)
+
+# FreeDV reporting offline: PSK Reporter datagram + FreeDV Reporter role.
+add_executable(psktest EXCLUDE_FROM_ALL tests/psktest.cpp
+  src/net/PskReporter.cpp src/net/PskReporter.h src/net/FreeDvReporter.cpp src/net/FreeDvReporter.h)
+target_include_directories(psktest PRIVATE src)
+target_link_libraries(psktest PRIVATE Qt6::Core Qt6::Network Qt6::WebSockets)
 
 # Winlink: Pat's websocket JSON -> session / progress, offline.
 add_executable(wltest EXCLUDE_FROM_ALL tests/wltest.cpp src/net/PatMonitor.cpp src/net/PatMonitor.h)

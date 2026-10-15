@@ -456,6 +456,12 @@ void SdrRx::radeBlock(const float* modem, int n) {
     emitAudio(blk.data(), n);
 }
 
+bool SdrRx::radeDecoding() const {
+    if (!running_.load()) return false;
+    std::lock_guard<std::mutex> lk(const_cast<std::mutex&>(setMux_));
+    return settings_.rade;
+}
+
 SdrRx::RadeStatus SdrRx::radeStatus() const {
     RadeStatus st;
 #ifdef HAVE_RADE

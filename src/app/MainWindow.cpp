@@ -747,6 +747,15 @@ MainWindow::MainWindow(QWidget* parent)
     fdvOn->setCheckable(true);
     fdvOn->setToolTip("Who is on FreeDV / RADE digital voice now, from qso.freedv.org\n"
                       "(orange labels; watch-only — nothing about this station is sent)");
+    fdvReportAct_ = spotsMenu->addAction("Report my FreeDV station (FreeDV Reporter + PSK Reporter)");
+    fdvReportAct_->setCheckable(true);
+    fdvReportAct_->setToolTip(
+        "As freedv-gui does: while RADE is decoding or armed to transmit, this station\n"
+        "appears on qso.freedv.org (call, grid, frequency, TX on/off, who it decodes\n"
+        "and at what SNR), and every callsign decoded from an end of over goes to\n"
+        "pskreporter.info as heard by you — so others see you on the air and see\n"
+        "where they are heard. Uses Setup's callsign and grid. Off = view-only.");
+    fdvSpotsAct_ = fdvOn;
     auto* n1Dupes = spotsMenu->addAction("Gray Not1MM contest dupes");
     n1Dupes->setCheckable(true);
     n1Dupes->setToolTip("While Not1MM runs, stations already worked in its current contest\n"
@@ -829,6 +838,7 @@ MainWindow::MainWindow(QWidget* parent)
         ft8On->setChecked(s.value("spots/ft8", true).toBool());
         fdvOn->setChecked(s.value("spots/freedv", false).toBool());
         n1Dupes->setChecked(s.value("spots/not1mmDupes", true).toBool());
+        fdvReportAct_->setChecked(s.value("freedv/report", false).toBool());
     }
     spotsBtn->setMenu(spotsMenu);
     topLay->addSpacing(8);
@@ -1268,7 +1278,7 @@ MainWindow::MainWindow(QWidget* parent)
         QSettings().setValue("spots/enabled", on);
         spotClient_.setEnabled(on);
         potaClient_.setEnabled(on && potaOn->isChecked());
-        freedv_.setEnabled(on && fdvOn->isChecked());
+        updateFreedvLink();
         pushSpots();
     });
     connect(potaOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
@@ -1297,8 +1307,12 @@ MainWindow::MainWindow(QWidget* parent)
             [this](const QString& s) { statusBar()->showMessage(s, 4000); });
     connect(fdvOn, &QAction::toggled, this, [this, pushSpots, spotsOn](bool on) {
         QSettings().setValue("spots/freedv", on);
-        freedv_.setEnabled(on && spotsOn->isChecked());
+        updateFreedvLink();
         pushSpots();
+    });
+    connect(fdvReportAct_, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("freedv/report", on);
+        updateFreedvLink();
     });
     connect(ft8On, &QAction::toggled, this, [this, pushSpots](bool on) {
         QSettings().setValue("spots/ft8", on);
@@ -1369,7 +1383,37 @@ MainWindow::MainWindow(QWidget* parent)
     spotClient_.setFt8Wanted(ft8On->isChecked());  // before connect: config
     spotClient_.setEnabled(spotsOn->isChecked());  // rides the login sequence
     potaClient_.setEnabled(spotsOn->isChecked() && potaOn->isChecked());
-    freedv_.setEnabled(spotsOn->isChecked() && fdvOn->isChecked());
+    updateFreedvLink();
+    // FreeDV reporting, freedv-gui's cadence: the dial and TX state as they
+    // change, each end-of-over callsign at once (FreeDV Reporter + PSK
+    // Reporter), and while in sync with no call yet an empty-callsign
+    // rx_report every 10 s ("receiving something", freedv-gui's '--').
+    auto* fdvTick = new QTimer(this);
+    fdvTick->setInterval(250);
+    connect(fdvTick, &QTimer::timeout, this, [this, seenCalls = 0, quietTicks = 0]() mutable {
+        updateFreedvLink();
+        if (!fdvReportingNow_) return;
+        freedv_.reportFrequency(qint64(centerHz_));
+        freedv_.reportTransmit(radeTxOn_ && radioTx_);
+#ifdef HAVE_WDSP
+        if (!sdrRx_) return;
+        const SdrRx::RadeStatus r = sdrRx_->radeStatus();
+        if (r.calls != seenCalls) {
+            if (r.calls > seenCalls && !r.lastCall.empty()) {
+                const QString call = QString::fromStdString(r.lastCall);
+                freedv_.reportHeard(call, int(std::lround(r.snrDb)));
+                psk_.addHeard(call, qint64(centerHz_), int(std::lround(r.snrDb)));
+                quietTicks = 0;
+            }
+            seenCalls = r.calls;
+        }
+        if (r.sync && !radioTx_ && ++quietTicks >= 40) {
+            quietTicks = 0;
+            freedv_.reportHeard(QString(), int(std::lround(r.snrDb)));
+        }
+#endif
+    });
+    fdvTick->start();
 
 #ifdef HAVE_SDRPLAY
     // Compact "SDR" dropdown for RSP2 hardware controls (hidden until clicked).

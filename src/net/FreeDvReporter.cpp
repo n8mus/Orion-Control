@@ -68,6 +68,7 @@ void FreeDvReporter::connectNow() {
         });
         connect(ws_, &QWebSocket::disconnected, this, [this] {
             alive_.stop();
+            fullyConnected_ = false;
             stations_.clear();                     // a reconnect re-sends it all
             emit spotsChanged();
             if (!enabled_) return;
@@ -85,7 +86,8 @@ void FreeDvReporter::handleFrame(const QString& f) {
     if (f.isEmpty()) return;
     switch (f[0].toLatin1()) {
     case '0':                                      // EIO open -> SIO connect
-        send(QStringLiteral(R"(40{"role":"view","protocol_version":2})"));
+        fullyConnected_ = false;
+        send(authPayload());
         return;
     case '2':                                      // ping
         send(QStringLiteral("3"));
@@ -105,6 +107,12 @@ void FreeDvReporter::handleFrame(const QString& f) {
     const QJsonArray a = d.array();
     if (a.size() < 1) return;
     const QString name = a.at(0).toString();
+    if (name == QLatin1String("connection_successful")) {
+        // freedv-backend sends nothing before this: the server is ready.
+        fullyConnected_ = true;
+        resendState();
+        return;
+    }
     static const QSet<QString> kStationEvents = {
         "bulk_update", "new_connection", "remove_connection", "freq_change",
         "tx_report", "rx_report"};
@@ -119,6 +127,65 @@ void FreeDvReporter::handleFrame(const QString& f) {
         handleEvent(name, a.at(1).toObject(), false);
     }
     if (kStationEvents.contains(name)) emit spotsChanged();
+}
+
+QString FreeDvReporter::authPayload() const {
+    QJsonObject o;
+    if (reporting_ && !call_.isEmpty() && !grid_.isEmpty()) {
+        o["role"] = "report";
+        o["callsign"] = call_;
+        o["grid_square"] = grid_;
+        o["version"] = software_;
+        o["rx_only"] = !txCapable_;
+        o["os"] = "linux";
+    } else {
+        o["role"] = "view";
+    }
+    o["protocol_version"] = 2;
+    return "40" + QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact));
+}
+
+void FreeDvReporter::setReporting(bool on, const QString& call, const QString& grid,
+                                  const QString& software, bool txCapable) {
+    const bool changed = on != reporting_ || call != call_ || grid != grid_
+                      || txCapable != txCapable_ || software != software_;
+    reporting_ = on;
+    call_ = call.toUpper();
+    grid_ = grid;
+    software_ = software;
+    txCapable_ = txCapable;
+    if (changed && ws_ && enabled_) {              // the role is fixed at connect
+        fullyConnected_ = false;
+        ws_->abort();                              // -> disconnected -> retry
+    }
+}
+
+void FreeDvReporter::sendEvent(const QString& name, const QJsonObject& o) {
+    if (!reporting_ || !fullyConnected_) return;
+    QJsonArray a{name, o};
+    send("42" + QString::fromUtf8(QJsonDocument(a).toJson(QJsonDocument::Compact)));
+}
+
+void FreeDvReporter::resendState() {
+    if (repHz_ > 0) sendEvent("freq_change", QJsonObject{{"freq", double(repHz_)}});
+    sendEvent("tx_report", QJsonObject{{"mode", "RADEV1"}, {"transmitting", repTx_}});
+}
+
+void FreeDvReporter::reportFrequency(qint64 hz) {
+    if (hz == repHz_) return;
+    repHz_ = hz;
+    sendEvent("freq_change", QJsonObject{{"freq", double(hz)}});
+}
+
+void FreeDvReporter::reportTransmit(bool tx) {
+    if (tx == repTx_) return;
+    repTx_ = tx;
+    sendEvent("tx_report", QJsonObject{{"mode", "RADEV1"}, {"transmitting", tx}});
+}
+
+void FreeDvReporter::reportHeard(const QString& call, int snrDb) {
+    sendEvent("rx_report", QJsonObject{{"callsign", call.toUpper()}, {"mode", "RADEV1"},
+                                       {"snr", snrDb}});
 }
 
 qint64 FreeDvReporter::isoSecs(const QJsonValue& v) {

@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     QObject::connect(&r, &FreeDvReporter::spotsChanged, [&] { ++changed; });
 
     r.handleFrame(R"(0{"sid":"x","upgrades":[],"pingInterval":25000,"pingTimeout":20000})");
-    check(out.value(0) == R"(40{"role":"view","protocol_version":2})", "open -> view-only connect");
+    check(out.value(0) == R"(40{"protocol_version":2,"role":"view"})", "open -> view-only connect");
     r.handleFrame("2");
     check(out.value(1) == "3", "ping -> pong");
     r.handleFrame(R"(40{"sid":"abc"})");

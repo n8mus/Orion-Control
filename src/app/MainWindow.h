@@ -26,6 +26,7 @@ class QVBoxLayout;
 #include "log/Not1mmLog.h"
 #include "net/FreeDvReporter.h"
 #include "net/PatMonitor.h"
+#include "net/PskReporter.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
 #include "app/Voacap.h"
@@ -328,6 +329,14 @@ private:
     void setupWinlinkUi(QMenu* audioMenu);
     void onWinlinkSession(bool active, const QString& remote);
     PatMonitor pat_;
+    // FreeDV reporting (SPOTS ▾ → Report my FreeDV station): FreeDV
+    // Reporter role "report" + PSK Reporter, only while RADE is decoding
+    // or armed to transmit. updateFreedvLink() owns freedv_.setEnabled.
+    PskReporter psk_;
+    QAction* fdvSpotsAct_ = nullptr;
+    QAction* fdvReportAct_ = nullptr;
+    bool fdvReportingNow_ = false;
+    void updateFreedvLink();
     bool winlinkActive_ = false, winlinkOwnsDig_ = false, winlinkStoppedLive_ = false;
     QLabel* wlLabel_ = nullptr;
     QProcess* ardop_ = nullptr;

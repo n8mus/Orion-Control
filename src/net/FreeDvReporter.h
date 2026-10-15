@@ -42,6 +42,20 @@ public:
 
     void setEnabled(bool on);
     bool enabled() const { return enabled_; }
+
+    // Reporting (freedv-gui's role "report"): this station appears on the
+    // map with call/grid/frequency, its TX state, and what it decodes.
+    // Off = view-only. A change reconnects (the role is set at connect).
+    // txCapable false = rx_only. The software name shows in the list.
+    void setReporting(bool on, const QString& call, const QString& grid,
+                      const QString& software, bool txCapable);
+    bool reporting() const { return reporting_; }
+    // While reporting: dial (Hz), keyed or not, and a decode — callsign
+    // from the end of over, or "" for "receiving RADE, no call yet".
+    void reportFrequency(qint64 hz);
+    void reportTransmit(bool tx);
+    void reportHeard(const QString& call, int snrDb);
+    QString authPayload() const;                   // the "40{...}" connect, for tests
     QVector<Spot> spots() const;
     int stationCount() const { return int(stations_.size()); }
 
@@ -71,6 +85,12 @@ private:
     static qint64 isoSecs(const QJsonValue& v);
     void expire();
 
+    void sendEvent(const QString& name, const QJsonObject& o);
+    void resendState();                            // after (re)connect
+    bool reporting_ = false, txCapable_ = true, fullyConnected_ = false;
+    QString call_, grid_, software_;
+    qint64 repHz_ = 0;
+    bool repTx_ = false;
     QWebSocket* ws_ = nullptr;
     QTimer retry_, alive_, expire_;
     int backoffS_ = 5;

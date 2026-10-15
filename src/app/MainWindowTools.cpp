@@ -1715,4 +1715,32 @@ void MainWindow::onWinlinkSession(bool active, const QString& remote) {
     }
 }
 
+// Who owns the qso.freedv.org link: the spot view (SPOTS ▾ → FreeDV
+// Reporter spots) and/or reporting (SPOTS ▾ → Report my FreeDV station,
+// which only counts while RADE is decoding or armed to transmit — like
+// freedv-gui, which reports only while it is started).
+void MainWindow::updateFreedvLink() {
+    const bool spotsWanted = spotsOnAct_ && spotsOnAct_->isChecked()
+                          && fdvSpotsAct_ && fdvSpotsAct_->isChecked();
+    bool onFreedv = radeTxOn_;
+#ifdef HAVE_WDSP
+    if (sdrRx_ && sdrRx_->radeDecoding()) onFreedv = true;
+#endif
+    const bool report = fdvReportAct_ && fdvReportAct_->isChecked() && onFreedv;
+    QSettings q;
+    const QString call = q.value("station/callsign", "N8EM").toString().toUpper();
+    const QString grid = q.value("station/grid", "EN83al").toString();
+    const QString sw = QStringLiteral("tentec-console " TTC_VERSION);
+    freedv_.setReporting(report, call, grid, sw, true);
+    psk_.setIdentity(call, grid, sw);
+    psk_.setEnabled(report);
+    freedv_.setEnabled(spotsWanted || report);
+    if (report != fdvReportingNow_) {
+        fdvReportingNow_ = report;
+        statusBar()->showMessage(report
+            ? QString("FreeDV: reporting as %1 (%2) to qso.freedv.org and PSK Reporter").arg(call, grid)
+            : QStringLiteral("FreeDV: reporting off"), 6000);
+    }
+}
+
 } // namespace ttc

@@ -97,6 +97,7 @@ public:
         int calls = 0;                             // bumps per decoded EOO
     };
     RadeStatus radeStatus() const;
+    bool radeDecoding() const;                     // running with Settings::rade
 
     SdrRx();
     ~SdrRx();

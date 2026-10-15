@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            cmake g++ make qt6-base-dev qt6-serialport-dev qt6-websockets-dev \
+            cmake g++ make qt6-base-dev qt6-serialport-dev qt6-websockets-dev libqt6sql6-sqlite \
             libgl1-mesa-dev autoconf automake libtool curl fonts-dejavu-core \
             libfftw3-dev patch
 

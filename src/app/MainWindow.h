@@ -345,7 +345,7 @@ private:
     bool fdvMode_ = false, fdvAnalog_ = false;
     struct FdvSaved {
         Mode mode = Mode::USB;
-        int bw = 2400, pbt = 0, txBw = 2850, power = 50;
+        int bw = 2400, pbt = 0, txBw = 2850;
         bool sdrOn = false, live = false;
     } fdvSaved_;
     QPointer<FreeDvWindow> fdvWin_;

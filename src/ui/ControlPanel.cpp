@@ -132,7 +132,7 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     // puts everything back when it's turned off.
     fdvBtn_ = makeButton("FreeDV");
     fdvBtn_->setToolTip("FreeDV digital voice (RADE): USB + wide filter, speech processor off,\n"
-                        "line input, FreeDV power level, SDR decoding RADE, transmit by MOX /\n"
+                        "line input, SDR decoding RADE (power stays yours), transmit by MOX /\n"
                         "space with your callsign at the end of each over, and the FreeDV\n"
                         "window (stations on the air, heard calls, Log QSO). Off restores\n"
                         "everything as it was.");

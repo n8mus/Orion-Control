@@ -219,8 +219,9 @@ that night's own capture).
   opus lacks the LPCNet/FARGAN symbols) and commits only the small EOO
   callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
   **FreeDV mode** (MODE panel → FreeDV, `setFdvMode`, like SAM a pseudo-
-  mode): saves mode/filter/PBT/TX filter/power/SDR-on/LIVE, sets USB +
-  2.8 kHz + TX filter >= 2.8 kHz + `fdv/powerPct` (50), arms RADE TX (LIVE
+  mode): saves mode/filter/PBT/TX filter/SDR-on/LIVE, sets USB +
+  2.8 kHz + TX filter >= 2.8 kHz (TX POWER is never touched — operator's
+  call, 2026-10-15), arms RADE TX (LIVE
   path, DIG), SDR decodes RADE with NR/NB/ANF/SNB/RNNoise forced off
   (`applySdrRxSettings`, never saved), opens `FreeDvWindow` (sync/SNR,
   Analog, TX level, Report my station, status message, freedv-gui's

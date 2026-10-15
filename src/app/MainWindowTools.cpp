@@ -1786,11 +1786,9 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
             panel_->showSam(false);
             panel_->setSamLabel("SAM");
         }
-        fdvSaved_ = {rigMode_, rigBwHz_, rigPbtHz_, txBwHz_, lastTxPwr_,
-                     sdrRx_->running(), liveMic_};
+        fdvSaved_ = {rigMode_, rigBwHz_, rigPbtHz_, txBwHz_, sdrRx_->running(), liveMic_};
         // Radio: USB with a filter wide enough for the modem (RADE sits at
-        // ~700-2300 Hz), TX filter likewise, the FreeDV power level (RADE
-        // averages ~40-50 % of PEP: far hotter than voice).
+        // ~700-2300 Hz), TX filter likewise.
         applyMode(Mode::USB);
         panel_->clearModeSelection();
         QTimer::singleShot(450, this, [this] {
@@ -1799,9 +1797,7 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
             radio_->setPbtHz(Rx::Main, 0);
         });
         if (txBwHz_ < 2800) { radio_->setTxFilter(2800); txBar_->showTxFilter(2800); }
-        const int pwr = std::clamp(QSettings().value("fdv/powerPct", 50).toInt(), 5, 100);
-        radio_->setTxPower(pwr);
-        txBar_->showTxPower(pwr);
+        // TX power is the operator's: FreeDV leaves it where he set it.
         // Transmit: voice LIVE makes way for RADE on the same path (DIG
         // comes with it: line input, mic + processor off).
         if (liveMic_) setLiveMic(false);
@@ -1819,9 +1815,9 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         panel_->showFdv(true);
         updateFreedvLink();
         openFreeDvWindow();
-        statusBar()->showMessage(QString("FreeDV: USB, wide filter, processor off, %1 % power. "
-                                         "Key with MOX / space; your call goes out at the end "
-                                         "of each over.").arg(pwr), 12000);
+        statusBar()->showMessage("FreeDV: USB, wide filter, processor off. Key with MOX / space; "
+                                 "your call goes out at the end of each over. (RADE runs a heavy "
+                                 "duty cycle — mind the power.)", 12000);
     } else {
         fdvMode_ = false;
         fdvAnalog_ = false;
@@ -1829,8 +1825,6 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         if (fdvSaved_.live) setLiveMic(true);
         applySdrRxSettings();
         if (!fdvSaved_.sdrOn && sdrRx_->running()) sdrRxSetOn_(false);
-        radio_->setTxPower(fdvSaved_.power);
-        txBar_->showTxPower(fdvSaved_.power);
         if (fdvSaved_.txBw != txBwHz_) {
             radio_->setTxFilter(fdvSaved_.txBw);
             txBar_->showTxFilter(fdvSaved_.txBw);
@@ -1846,7 +1840,7 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         panel_->showFdv(false);
         updateFreedvLink();
         if (fdvWin_) fdvWin_->close();
-        statusBar()->showMessage("FreeDV off — mode, filter, power, processor and audio restored", 8000);
+        statusBar()->showMessage("FreeDV off — mode, filter, processor and audio restored", 8000);
     }
 #endif
 }

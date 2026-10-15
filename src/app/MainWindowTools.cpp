@@ -34,6 +34,11 @@
 #include "sdr/SdrRx.h"
 #include "ui/SdrRxDialog.h"
 #include "audio/VoiceEq.h"
+#ifdef HAVE_WHISPER
+#include "asr/AsrEngine.h"
+#include "ui/CopyAssistWindow.h"
+#include "util/LogbookIndex.h"
+#endif
 #include <QJsonDocument>
 #include <QJsonObject>
 #endif
@@ -1430,6 +1435,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         sdrRxDlg_->raise();
         sdrRxDlg_->activateWindow();
     });
+    setupCopyAssistUi(sdrMenu);                    // its tap goes in before start
     if (QSettings().value("sdrrx/on", false).toBool()) setOn(true);
 
     // Silent while transmitting: the RSP2 hears our own carrier. TX context
@@ -1458,6 +1464,90 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
                                          .arg(r.snrDb, 0, 'f', 0), 15000);
     });
     radeCalls->start();
+#endif
+}
+
+// SDR ▾ → Copy Assist: speech-to-text on the SDR receive audio (whisper,
+// on this PC). Its tap sits before the gate/EQ/compressor and the MUTE,
+// so the operator can listen to the Orion and still read the SDR's copy.
+void MainWindow::setupCopyAssistUi(QMenu* sdrMenu) {
+#if !defined(HAVE_WDSP) || !defined(HAVE_WHISPER)
+    (void)sdrMenu;
+#else
+    asr_ = std::make_shared<AsrEngine>();
+    sdrRx_->setAsrTap([a = asr_](const float* x, int n, bool muted) { a->feed48k(x, n, muted); });
+    QAction* open = sdrMenu->addAction("Copy Assist (speech to text)…");
+    open->setToolTip("A running transcript of the SDR receive audio (whisper.cpp,\n"
+                     "on this PC), callsigns clickable into the log");
+    const auto setOn = [this](bool on, int threads) {
+        QSettings q;
+        q.setValue("asr/on", on);
+        q.setValue("asr/threads", threads);
+        asr_->stop();
+        if (!on) {
+            if (caWin_) caWin_->setStatus("off");
+            return;
+        }
+        const QString model = q.value("asr/model", AsrEngine::defaultModelPath()).toString();
+        QString err;
+        if (!asr_->start(model, threads, &err)) {
+            q.setValue("asr/on", false);
+            if (caWin_) { caWin_->setOn(false); caWin_->setStatus(err); }
+            statusBar()->showMessage("Copy Assist: " + err, 8000);
+            return;
+        }
+        if (caWin_)
+            caWin_->setStatus(sdrRx_->running()
+                ? QStringLiteral("listening…")
+                : QStringLiteral("listening — turn on SDR ▾ → Receive audio to feed it"));
+    };
+    connect(open, &QAction::triggered, this, [this, setOn] {
+        if (!caWin_) {
+            QSettings q;
+            auto* w = new CopyAssistWindow(asr_->running(), q.value("asr/threads", 8).toInt(), this);
+            w->setAttribute(Qt::WA_DeleteOnClose);
+            caWin_ = w;
+            w->setStatusFor([this](const QString& call, qint64 hz) {
+                return logbook_.ready()
+                    ? logbook_.status(call, LogbookIndex::bandForHz(hz)).toLatin1() : '?';
+            });
+            connect(w, &CopyAssistWindow::enableChanged, this, setOn);
+            connect(w, &CopyAssistWindow::callClicked, this,
+                    [this](const QString& c) { openLogWindow(c); });
+            w->setStatus(asr_->running() ? "listening…" : "off");
+        }
+        caWin_->show();
+        caWin_->raise();
+        caWin_->activateWindow();
+    });
+    connect(asr_.get(), &AsrEngine::transcribed, this, [this](const AsrEngine::Result& r) {
+        if (caWin_) caWin_->addResult(r);
+    });
+    // Prompt hints: the calls on the band map within 3 kHz of the dial,
+    // nearest first, plus our own (it gets said a lot).
+    auto* hints = new QTimer(this);
+    hints->setInterval(2000);
+    connect(hints, &QTimer::timeout, this, [this] {
+        if (!asr_->running()) return;
+        const qint64 dial = qint64(centerHz_);
+        QVector<QPair<qint64, QString>> near;
+        for (const SpotLabel& l : shownSpots_) {
+            const qint64 d = std::llabs(l.hz - dial);
+            if (d <= 3000) near.push_back({d, l.call});
+        }
+        std::sort(near.begin(), near.end());
+        QStringList calls;
+        for (const auto& n : near)
+            if (!calls.contains(n.second) && calls.size() < 8) calls << n.second;
+        calls << QSettings().value("station/callsign", "N8EM").toString();
+        asr_->setHints(calls, dial);
+        if (caWin_ && sdrRx_->running())
+            caWin_->setStatus(QString("listening — %1 s queued; hints: %2")
+                                  .arg(asr_->queuedSeconds(), 0, 'f', 0).arg(calls.join(' ')));
+    });
+    hints->start();
+    QSettings q;
+    if (q.value("asr/on", false).toBool()) setOn(true, q.value("asr/threads", 8).toInt());
 #endif
 }
 

@@ -438,6 +438,28 @@ if(HAVE_WDSP)
   target_sources(tentec-console PRIVATE src/sdr/SdrRx.cpp src/sdr/SdrRx.h
     src/ui/SdrRxDialog.cpp src/ui/SdrRxDialog.h)
   target_compile_definitions(tentec-console PRIVATE HAVE_WDSP)
+  # Copy Assist: speech-to-text via the system whisper.cpp (Arch's
+  # whisper-cpp; its ggml picks a CPU variant at runtime). Optional.
+  find_package(PkgConfig QUIET)
+  if(PKG_CONFIG_FOUND)
+    pkg_check_modules(WHISPER QUIET IMPORTED_TARGET whisper)
+  endif()
+  if(WHISPER_FOUND)
+    target_sources(tentec-console PRIVATE src/asr/AsrEngine.cpp src/asr/AsrEngine.h
+      src/asr/CallExtract.h src/ui/CopyAssistWindow.cpp src/ui/CopyAssistWindow.h)
+    target_compile_definitions(tentec-console PRIVATE HAVE_WHISPER)
+    target_link_libraries(tentec-console PRIVATE PkgConfig::WHISPER)
+    message(STATUS "Copy Assist: whisper ${WHISPER_VERSION} found")
+    add_executable(asrtest EXCLUDE_FROM_ALL tests/asrtest.cpp
+      src/asr/AsrEngine.cpp src/asr/AsrEngine.h src/asr/CallExtract.h)
+    target_include_directories(asrtest PRIVATE src)
+    target_link_libraries(asrtest PRIVATE Qt6::Core PkgConfig::WHISPER)
+    if(HAVE_RADE)
+      target_compile_definitions(asrtest PRIVATE RADE_WAV_DIR="${RADE_WAV_DIR}")
+    endif()
+  else()
+    message(STATUS "Copy Assist: no whisper (pkg-config whisper) — building without")
+  endif()
   if(HAVE_RADE)
     target_sources(tentec-console PRIVATE src/sdr/RadeRx.cpp src/sdr/RadeRx.h)
     target_compile_definitions(tentec-console PRIVATE HAVE_RADE)

@@ -109,6 +109,10 @@ public:
     // chain with no player at all (nothing reaches the speakers).
     void setAudioTap(std::function<void(const float*, int)> tap) { tap_ = std::move(tap); }
     bool startTapOnly();
+    // Copy Assist's feed: the audio before the gate/EQ/compressor (raw
+    // demod, or RADE's decoded speech) plus "we are transmitting". Set it
+    // before start(); called on the DSP thread.
+    void setAsrTap(std::function<void(const float*, int, bool muted)> f) { asrTap_ = std::move(f); }
     void stop();
     bool running() const { return running_.load(); }
     // The WDSP channel is open (the first open loads the NR3 models and
@@ -198,6 +202,7 @@ private:
     std::atomic<float> outPeakDb_{-120.f}, inPeakDb_{-120.f};
     std::atomic<int> dropped_{0};
     std::function<void(const float*, int)> tap_;
+    std::function<void(const float*, int, bool)> asrTap_;
 };
 
 } // namespace ttc

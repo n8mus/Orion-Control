@@ -82,6 +82,7 @@ senders and weak-signal cases are the hard set.
 | `watchtest` | DX-watch pattern matching | — |
 | `vkeqtest` | voice keyer audio chain (AetherSDR-ported gate → EQ → de-esser → compressor → final limiter, src/dsp): EQ vs its analytic curve, `snapToTargets()`, fitted presets on their targets, gate/comp/limiter/de-esser behaviour, look-ahead leveling, profiles + settings JSON (old curves load with dynamics off) | — |
 | `sdrrxtest` | SDR receive chain end to end on synthetic IQ (WDSP via the decimator + resampler, audio tapped, no device): USB tone, LSB rejection, CW carrier at the pitch, AM, RX EQ peak/bypass, limiter/MUTE/BOOST/compressor/gate, NR2 on noise, and (with RADE) rade_c's off-air recording on the dial through WDSP USB -> RADE sync + speech (~70 s). Needs WDSP (FFTW3) | — |
+| `asrtest` | Copy Assist: callsign extraction (one word / letter runs / hyphens / phonetics / trailing number words / non-calls), and with `~/.local/share/n8mus/tentec-console/models/ggml-base.en.bin`: G8SEZ's recording through the 48 kHz feed + VAD + whisper as ONE utterance, faster than real time, and the band-map hint turning "G-I-D-S-E-Z" into G8SEZ. Needs `pkg-config whisper` (Arch `whisper-cpp`); `TTC_ASRDBG=1` logs segments | — |
 | `raderxtest` | FreeDV RADE receive (`RadeRx`) on rade_c's own 5½-min off-air recording: sync (97%), speech, end-of-over callsigns (4, last VK5KVA), noise never syncs; ~6% of a core | — |
 | `tunetest` | tuner/amp settings table behind the pan's amber tuner box (238C + Titan III, per antenna/band, `tuning.json`): nearest-point lookup, same-kHz overwrite, knob clamping, file round trip | — |
 | `lptest` | LP-100A wattmeter frame decode (pure parser, no hardware) | — |
@@ -201,6 +202,15 @@ that night's own capture).
   limiter. `third_party/rade` FETCHES rade_c + Opus (SHA-pinned; Arch's
   opus lacks the LPCNet/FARGAN symbols) and commits only the small EOO
   callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
+  **Copy Assist** (SDR ▾ → Copy Assist, `src/asr`, AetherSDR's design):
+  SdrRx's asr tap (pre gate/EQ/MUTE) -> 16 kHz, noise-floor-tracking VAD
+  (1 s hangover) -> system whisper.cpp base.en on its own thread
+  (`ggml_backend_load_all()` first — Arch's ggml has loadable CPU
+  variants; this Xeon gets the Sandy Bridge one). Encoder window sized
+  to the over but never < 512 frames (short windows read garbage);
+  prompt = band-map calls within 3 kHz of the dial (measured: the only
+  thing that fixed callsign spelling). Optional: no whisper = no menu
+  entry (CI/release build without it).
 - **Radios**: both are carrier-at-dial in CW (no pitch math anywhere).
   Orion = ASCII CAT, dual RX; Omni VII = binary CAT ("omni8"
   personality). Quirks are documented where they're handled — grep

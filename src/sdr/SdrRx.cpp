@@ -417,6 +417,7 @@ void SdrRx::emitAudio(float* x, int n) {
     float pk = 0.f;                                // own meter: the gate's only
     for (int i = 0; i < n; ++i) pk = std::max(pk, std::fabs(x[i]));   // runs when on
     inPeakDb_.store(20.f * std::log10(std::max(pk, 1e-6f)));
+    if (asrTap_) asrTap_(x, n, muted_.load());
     if (s.gateOn) gate_.process(x, n, 1);
     if (eq_.isEnabled()) eq_.process(x, n, 1);
     if (s.compOn) comp_.process(x, n, 1);

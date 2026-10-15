@@ -1634,7 +1634,7 @@ void MainWindow::setupWinlinkUi(QMenu* audioMenu) {
             "  },\n"
             "  \"ardop\": {\n"
             "    \"addr\": \"localhost:8515\",\n"
-            "    \"arq_bandwidth\": {\"Forced\": false, \"Max\": 2000},\n"
+            "    \"arq_bandwidth\": {\"Forced\": false, \"Max\": 500},\n"
             "    \"rig\": \"console\",\n"
             "    \"ptt_ctrl\": true,\n"
             "    \"beacon_interval\": 0,\n"
@@ -1648,7 +1648,8 @@ void MainWindow::setupWinlinkUi(QMenu* audioMenu) {
             "In Pat (<b>pat configure</b>, or its web page → Config) set these fields — the\n"
             "rig is this console's rigctld on :4532, so Pat tunes and keys through it.\n"
             "Your Winlink password goes in <b>secure_login_password</b> — enter it yourself.\n"
-            "First time: <b>pat connect telnet</b> (internet, no radio) creates the account.", d);
+            "First time: <b>pat connect telnet</b> (internet, no radio) creates the account.\n"
+            "ARDOP starts at 500 Hz (sure to fit the Orion's TX filter); 1000/2000 once it works.", d);
         note->setTextFormat(Qt::RichText);
         note->setWordWrap(true);
         lay->addWidget(note);

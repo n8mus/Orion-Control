@@ -21,7 +21,8 @@ void main() {
     int count = int(p1.y);
     if (y >= count) { fragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }
     int rows = int(p1.z);
-    int row = ((int(p1.x) - 1 - y) % rows + rows) % rows;
+    // Non-negative left operand: GLSL % of a negative int is undefined.
+    int row = (int(p1.x) - 1 - y + 2 * rows) % rows;
     int binLo = int(p0.x), nv = int(p0.y) - binLo, w = int(p0.z);
     int b0 = binLo + (x * nv) / w;
     int b1 = binLo + ((x + 1) * nv) / w;

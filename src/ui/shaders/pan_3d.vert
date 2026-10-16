@@ -60,7 +60,10 @@ void main() {
     if (have) {
         // Each mesh column: max of its bins, then AetherSDR's 1-2-1 across
         // neighbouring columns (the rolling-wave texture of the noise).
-        int row = ((int(p0.z) - 1 - r) % ring + ring) % ring;
+        // Keep the left operand non-negative: GLSL leaves % of a negative
+        // int undefined, and Mesa answered differently from C++ — once per
+        // trip round the ring (~7.7 s) the stack jumped (live-found).
+        int row = (int(p0.z) - 1 - r + 2 * ring) % ring;
         float colBins = float(nv) * kSpan / 767.0;
         int span = max(1, int(colBins));
         int step = max(1, span / 6);

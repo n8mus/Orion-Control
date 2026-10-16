@@ -38,7 +38,7 @@ namespace {
 // WHICH signal hit the log (the session-log redirect works the same there);
 // a real trace comes from a debugger or WER, not from here.
 #ifndef Q_OS_WIN
-// TTC_STALLDBG=1: GUI-thread stall watchdog. A 5 ms heartbeat timer on the
+// TTC_STALLDBG=1 (or =<ms>, default 60): GUI-thread stall watchdog. A 5 ms heartbeat timer on the
 // GUI thread; a watchdog thread that, when the beat goes stale past 60 ms,
 // signals the GUI thread, whose handler prints its own backtrace — what the
 // event loop was stuck in (resolve with addr2line -Cfe build/tentec-console
@@ -50,27 +50,27 @@ long long steadyMs() {
                std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 void stallSignal(int) {
-    static const char head[] = "\n[stall] GUI thread busy > 60 ms, in:\n";
+    static const char head[] = "\n[stall] GUI thread busy past the threshold, in:\n";
     (void)!write(2, head, sizeof head - 1);
     void* frames[40];
     const int cnt = backtrace(frames, 40);
     backtrace_symbols_fd(frames, cnt, 2);
 }
-void startStallWatchdog(QApplication& app) {
+void startStallWatchdog(QApplication& app, int thresholdMs) {
     gGuiThread = pthread_self();
     signal(SIGUSR2, stallSignal);
     auto* beat = new QTimer(&app);
     QObject::connect(beat, &QTimer::timeout, [] { gBeatMs.store(steadyMs()); });
     beat->start(5);
     gBeatMs.store(steadyMs());
-    std::thread([] {
+    std::thread([thresholdMs] {
         bool reported = false;
         long long last = 0;
         for (;;) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             const long long b = gBeatMs.load();
             if (b != last) { last = b; reported = false; }
-            if (!reported && steadyMs() - b > 60) {
+            if (!reported && steadyMs() - b > thresholdMs) {
                 pthread_kill(gGuiThread, SIGUSR2);
                 reported = true;
             }
@@ -172,7 +172,8 @@ int main(int argc, char** argv) {
     signal(SIGABRT, fatalSignal);
     signal(SIGFPE, fatalSignal);
 #ifndef Q_OS_WIN
-    if (std::getenv("TTC_STALLDBG")) startStallWatchdog(app);
+    if (const char* sd = std::getenv("TTC_STALLDBG"))      // =1 -> 60 ms, or =<ms>
+        startStallWatchdog(app, atoi(sd) > 1 ? atoi(sd) : 60);
 #endif
     fprintf(stderr, "Orion console starting  %s  (built %s %s)\n",
             qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)),

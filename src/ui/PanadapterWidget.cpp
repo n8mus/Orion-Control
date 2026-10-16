@@ -1410,28 +1410,41 @@ void PanadapterWidget::ensureWaterfallImage(int w, int h, int binLo, int binHi) 
 void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
     const size_t n = magsDb.size();
     spectrum_ = magsDb;
+    // Real time since the last frame (20 fps = 50 ms is the reference every
+    // per-frame constant below was tuned at).
+    static QElapsedTimer clock;
+    if (!clock.isValid()) clock.start();
+    const qint64 nowNs = clock.nsecsElapsed();
+    const float dtMs = lastFrameNs_ ? std::clamp((nowNs - lastFrameNs_) / 1e6f, 1.0f, 250.0f) : 50.0f;
+    lastFrameNs_ = nowNs;
+    const float k = dtMs / 50.0f;
     if (avg_.size() != n) {                        // bin count changed: hard reset
         avg_ = magsDb;
         peaks_ = magsDb;
     } else {
-        const float a = 1.0f / std::max(1.0f, ds_.avgFrames * fpsScale_);   // EMA, real-time constant
+        // EMA with the 20 fps constant (1/avgFrames per 50 ms) in SECONDS.
+        const float a20 = 1.0f / std::max(1.0f, float(ds_.avgFrames));
+        const float a = 1.0f - std::pow(1.0f - a20, k);
         for (size_t i = 0; i < n; ++i) {
             avg_[i] += (magsDb[i] - avg_[i]) * a;
             if (ds_.peakHold)
-                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb / fpsScale_, avg_[i]);
+                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb * k, avg_[i]);
         }
     }
-    // Waterfall speed: max-merge wfSpeed frames into one committed row, so slow
-    // scroll keeps every blip instead of dropping frames.
+    // Waterfall speed: max-merge frames into one committed row every
+    // wfSpeed x 50 ms, so slow scroll keeps every blip instead of dropping
+    // frames, and rows/s is the same at any frame rate.
     if (wfAccum_.size() != n) {
         wfAccum_ = magsDb;
         wfAccumN_ = 1;
+        wfAccumMs_ = dtMs;
     } else {
         for (size_t i = 0; i < n; ++i) wfAccum_[i] = std::max(wfAccum_[i], magsDb[i]);
         ++wfAccumN_;
+        wfAccumMs_ += dtMs;
     }
-    if (view3d_ && gpu_ && n >= 2 && ++frames3d_ >= framesPerRow3d()) {
-        frames3d_ = 0;
+    if (view3d_ && gpu_ && n >= 2 && (acc3dMs_ += dtMs) >= k3dRowMs) {
+        acc3dMs_ = std::min(acc3dMs_ - k3dRowMs, k3dRowMs);
         if (bins3d_ != int(n)) {
             bins3d_ = int(n);
             hist3d_.assign(size_t(k3dRows) * n, -200.0f);
@@ -1440,13 +1453,27 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
             ++reset3d_;
         }
         std::copy(avg_.begin(), avg_.end(), hist3d_.begin() + size_t(serial3d_ % k3dRows) * n);
+        // The surface's floor follows the view's noise (median bin), as
+        // AetherSDR's does: noise always sits blue at the baseline and only
+        // real signals rise and warm, whatever REF/RANGE are.
+        {
+            const PanView v = panView();
+            std::vector<float> s(avg_.begin() + v.binLo, avg_.begin() + v.binHi);
+            if (s.size() >= 8) {
+                std::nth_element(s.begin(), s.begin() + s.size() / 2, s.end());
+                const float med = s[s.size() / 2];
+                floor3dDb_ = count3d_ == 0 ? med : floor3dDb_ + 0.2f * (med - floor3dDb_);
+            }
+        }
         ++serial3d_;
         count3d_ = std::min(count3d_ + 1, k3dRows);
     }
-    if (wfAccumN_ >= std::max(1, int(std::lround(ds_.wfSpeed * fpsScale_)))) {   // same rows/s at any fps
+    const float rowMs = std::max(1, ds_.wfSpeed) * 50.0f;
+    if (wfAccumMs_ >= rowMs - 0.5f * dtMs) {       // nearest frame to the row time
         pushWaterfallRow(wfAccum_);
         std::fill(wfAccum_.begin(), wfAccum_.end(), kNoRow);
         wfAccumN_ = 0;
+        wfAccumMs_ = std::min(wfAccumMs_ - rowMs, rowMs);
     }
     frame();
 }
@@ -2024,7 +2051,8 @@ QColor PanadapterWidget::heatColor(float t) {
 void PanadapterWidget::set3D(bool on) {
     if (on == view3d_) return;
     view3d_ = on;
-    bins3d_ = count3d_ = frames3d_ = 0;           // start the stack fresh
+    bins3d_ = count3d_ = 0;                        // start the stack fresh
+    acc3dMs_ = 0.0f;
     serial3d_ = 0;
     ++reset3d_;
     changed(__func__);

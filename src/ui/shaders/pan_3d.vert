@@ -1,14 +1,16 @@
 #version 440
-// 3D stacked traces: a static mesh (u across, row back to front, tag) whose
-// heights come from the 3D history ring, sampled here per vertex. Drawn back
-// to front with opaque curtains, so nearer rows hide farther ones without a
-// depth buffer. Region = the spectrum area, in widget pixels.
+// 3D stacked traces, after AetherSDR's dss_mesh.vert (GPL-3): a static mesh
+// (u across, row back to front, tag) whose heights come from the 3D history
+// ring, sampled per vertex. Drawn back to front with opaque coloured
+// curtains, so nearer rows hide farther ones without a depth buffer, and a
+// neutral ridge ribbon on each. Region = the spectrum area, widget pixels.
 //   p0 = (binLo, binHi, head, count)          view bins / ring state
-//   p1 = (dbMin, dbMax, regionW, regionH)
-//   p2 = (ringRows, meshRows, phase, heat?)   phase 0..1 = smooth scroll
-// tag: 0 curtain base, 1 curtain top, 2 ridge top, 3 ridge bottom
+//   p1 = (floorDb, rangeDb, regionW, regionH) floor = noise floor - 6 dB
+//   p2 = (ringRows, totalBins, phase, heat?)  phase 0..1 = smooth scroll
+// tag: 0 curtain foot, 1 curtain top, 2 / 3 ridge ribbon sides
 layout(location = 0) in vec3 mesh;             // (u 0..1, row 0 = newest, tag)
 layout(location = 0) out vec4 v_color;
+layout(location = 1) out float v_rib;          // -1..1 across the ribbon, 0 curtain
 layout(std140, binding = 0) uniform Quad {
     mat4 mvp;
     vec4 p0;
@@ -17,6 +19,15 @@ layout(std140, binding = 0) uniform Quad {
 };
 layout(binding = 1) uniform sampler2D hist;    // R32F, bins x ringRows
 layout(binding = 2) uniform sampler2D palette;
+// AetherSDR's geometry + colour constants (DssRenderer.h / SpectrumWidget).
+const float kBackWidth = 0.60;                 // back row width / front
+const float kDepthSpan = 0.58;                 // baseline rise to the back
+const float kRidge = 0.46;                     // front max ridge / plot height
+const float kHaze = 0.16;
+const float kColorSpanDb = 45.0;               // colour aperture above the floor
+const float kGamma = 0.574;                    // "3D Gain" 70
+const float kZCurve = 0.70;                    // height lift of the floor band
+const float kSpan = 1.0 / kBackWidth;          // rows overhang: no side wedges
 vec3 heat(float t) {
     t = clamp(t, 0.0, 1.0);
     if (t < 0.25) return vec3(0.0, t / 0.25, 1.0);
@@ -24,47 +35,64 @@ vec3 heat(float t) {
     if (t < 0.75) return vec3((t - 0.5) / 0.25, 1.0, 0.0);
     return vec3(1.0, 1.0 - (t - 0.75) / 0.25, 0.0);
 }
+vec3 pal(float s) {
+    float t = pow(clamp(s, 0.0, 1.0), kGamma);
+    return p2.w > 0.5 ? heat(t) : texture(palette, vec2(t, 0.5)).rgb;
+}
 void main() {
     float u = mesh.x;
     int r = int(mesh.y + 0.5);
     float tag = mesh.z;
-    int count = int(p0.w), ring = int(p2.x), nRows = int(p2.y);
+    int count = int(p0.w), ring = int(p2.x), total = int(p2.y);
     float W = p1.z, H = p1.w;
+    float floorDb = p1.x, rangeDb = max(p1.y, 1.0);
     // Depth 0 (front) .. 1 (back); the phase slides every row back smoothly
     // between pushes, so the stack flows instead of stepping.
-    float d = (float(r) + p2.z) / float(max(nRows - 1, 1));
-    float widthScale = 1.0 - 0.36 * d;
-    float ampScale = 1.0 - 0.45 * d;
-    float yFront = H - 3.0;
-    float yBack = H * 0.30;
-    float baseY = yFront - (yFront - yBack) * pow(d, 0.85);
-    float amp = (yFront - 18.0) * 0.80 * ampScale;
-    // Level: max of this mesh column's bins (<= 8 fetches).
-    float level = 0.0;
-    bool have = r < count;
+    float d = (float(r) + p2.z) / float(max(ring - 1, 1));
+    // The row covers kSpan x the view's span (the capture holds it); the
+    // perspective walks the overhang back in, so frequency lines up with the
+    // front row and the far rows still reach the sides.
+    float f = 0.5 + (u - 0.5) * kSpan;         // view units, 0..1 on screen
+    int binLo = int(p0.x), nv = int(p0.y) - binLo;
+    float bf = float(binLo) + f * float(nv);
+    bool have = r < count && bf >= 0.0 && bf < float(total);
+    float dB = floorDb;
     if (have) {
-        int binLo = int(p0.x), nv = int(p0.y) - binLo;
         int row = ((int(p0.z) - 1 - r) % ring + ring) % ring;
-        int b0 = binLo + int(u * float(nv - 1));
-        int span = max(1, nv / 512);
+        int b0 = int(bf);
+        int span = max(1, int(float(nv) * kSpan / 767.0));
         int step = max(1, span / 8);
         float m = -1000.0;
-        for (int b = b0; b < min(b0 + span, binLo + nv); b += step)
+        for (int b = b0; b < min(b0 + span, total); b += step)
             m = max(m, texelFetch(hist, ivec2(b, row), 0).r);
-        level = clamp((m - p1.x) / (p1.y - p1.x), 0.0, 1.0);
+        dB = m;
     }
-    float x = W * 0.5 + (u - 0.5) * W * widthScale;
-    float topY = baseY - level * amp;
-    float y = tag < 0.5 ? baseY : tag < 2.5 ? topY : topY + 1.6;
-    if (!have) y = baseY;                      // not filled yet: flat, hidden
-    vec3 c = p2.w > 0.5 ? heat(level) : texture(palette, vec2(level, 0.5)).rgb;
+    float sLin = clamp((dB - floorDb) / rangeDb, 0.0, 1.0);
+    float cs = clamp((dB - floorDb) / min(rangeDb, kColorSpanDb), 0.0, 1.0);
+    float w = mix(1.0, kBackWidth, clamp(d, 0.0, 1.0));
+    float x = (0.5 + (f - 0.5) * w) * W;
+    float baseY = mix(1.0, 1.0 - kDepthSpan, clamp(d, 0.0, 1.0)) * H;
+    float topY = baseY - pow(sLin, kZCurve) * kRidge * w * H;
     vec3 bg = vec3(12.0, 16.0, 22.0) / 255.0;
-    float fog = 0.55 * clamp(d, 0.0, 1.0);
+    float fade = 1.0 - clamp(d, 0.0, 1.0);
+    float y;
     vec3 col;
-    if (tag < 0.5)      col = bg;                              // curtain foot
-    else if (tag < 1.5) col = mix(c * 0.45, bg, 0.25);         // curtain top
-    else                col = mix(c, vec3(1.0), 0.15);         // ridge line
-    col = mix(col, bg, fog);
-    v_color = vec4(have ? col : bg, have ? 1.0 : 0.0);
+    float a = have ? 1.0 : 0.0;
+    v_rib = 0.0;
+    if (tag < 0.5) {                           // curtain foot: dimmer share
+        y = baseY;
+        col = mix(pal(cs * 0.6), bg, d * kHaze);
+    } else if (tag < 1.5) {                    // curtain top: full colour
+        y = topY;
+        col = mix(pal(cs), bg, d * kHaze);
+    } else {                                   // neutral ridge ribbon, 2 px
+        float side = tag < 2.5 ? -1.0 : 1.0;
+        y = topY + side;
+        v_rib = side;
+        col = mix(bg, vec3(0.92), 0.45 + 0.55 * fade);
+        float flatScale = mix(1.0, 0.42, 1.0 - smoothstep(0.0, 0.035, cs));
+        a *= (0.12 + 0.5 * fade) * flatScale;
+    }
+    v_color = vec4(col, a);
     gl_Position = mvp * vec4(x / W * 2.0 - 1.0, 1.0 - y / H * 2.0, 0.0, 1.0);
 }

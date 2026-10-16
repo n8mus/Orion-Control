@@ -22,7 +22,7 @@ QShader loadShader(const char* name) {
 constexpr int kQuadUbo = 64 + 3 * 16;              // mat4 + 3 vec4 (std140)
 constexpr int kLineUbo = 64 + 2 * 16;              // mat4 + 2 vec4
 constexpr int kLabelStripPx = 160;                 // waterfall label strip width
-constexpr int k3dCols = 512;                       // 3D mesh columns (pan_3d.vert's span)
+constexpr int k3dCols = 768;                       // 3D mesh columns (pan_3d.vert: 767 steps)
 // TTC_PANPROF=1: GPU frame cost on the CPU side (layer rebuilds + uploads
 // + command recording), same cadence as the CPU path's [panprof].
 struct GpuProf {
@@ -437,9 +437,9 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     if (want3d) {
         const float d0[4] = {float(v.binLo), float(v.binHi),
                              float(p->serial3d_ % PanadapterWidget::k3dRows), float(p->count3d_)};
-        const float d1[4] = {p->dbMin_, p->dbMax_, float(W), float(hSpec)};
-        const float d2[4] = {float(PanadapterWidget::k3dRows), float(PanadapterWidget::k3dRows),
-                             std::clamp(float(p->frames3d_) / float(p->framesPerRow3d()), 0.f, 1.f),
+        const float d1[4] = {p->floor3dDb_ - 6.0f, p->dbMax_ - p->dbMin_, float(W), float(hSpec)};
+        const float d2[4] = {float(PanadapterWidget::k3dRows), float(p->bins3d_),
+                             std::clamp(p->acc3dMs_ / PanadapterWidget::k3dRowMs, 0.f, 1.f),
                              p->ds_.traceStyle == 1 ? 1.f : 0.f};
         quadUbo(u3D, d0, d1, d2);
     }

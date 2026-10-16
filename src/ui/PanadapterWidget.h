@@ -133,14 +133,16 @@ public:
     // GPU panadapter (PanGpuView) on/off — falls back to the CPU paint by itself.
     void setGpuEnabled(bool on);
     bool gpuEnabled() const { return gpu_ != nullptr; }
-    // Frames per second of spectrum data: the per-frame behaviours (trace
-    // averaging, waterfall row merge, peak-hold droop) are scaled so they
-    // keep their 20 fps feel in real time at 30 or 60.
+    // Requested spectrum frame rate. The time-based behaviours (trace
+    // averaging, waterfall rows/s, peak-hold droop, 3D scroll) run off the
+    // MEASURED interval between frames, not this number: a 60 fps request
+    // that delivers 45 must not stretch every time constant by a third
+    // (live-found 2026-10-16: 60 fps looked slower than 20).
     void setFrameRate(int fps) { fpsScale_ = std::max(0.25f, fps / 20.0f); }
     // 3D stacked traces (GPU only; the CPU paint stays 2D): the last k3dRows
     // averaged traces in perspective over the spectrum area, newest in front,
     // scrolling back smoothly at ~10 rows/s. The waterfall stays below.
-    static constexpr int k3dRows = 48;
+    static constexpr int k3dRows = 96;             // AetherSDR's visible depth
     void set3D(bool on);
     bool is3D() const { return view3d_; }
     explicit PanadapterWidget(QWidget* parent = nullptr);
@@ -460,9 +462,14 @@ private:
     // 3D history ring (k3dRows x bins, dB of avg_), fed while 3D is on.
     bool view3d_ = false;
     std::vector<float> hist3d_;
-    int bins3d_ = 0, count3d_ = 0, frames3d_ = 0;
+    int bins3d_ = 0, count3d_ = 0;
+    float acc3dMs_ = 0.0f;                         // time since the last 3D row
+    float floor3dDb_ = -120.0f;                    // view noise floor (median), smoothed
+    static constexpr float k3dRowMs = 100.0f;      // ~10 rows/s
     uint64_t serial3d_ = 0, reset3d_ = 0;
-    int framesPerRow3d() const { return std::max(1, int(std::lround(2.0f * fpsScale_))); }
+    // Spectrum frame clock (see setFrameRate).
+    qint64 lastFrameNs_ = 0;
+    float wfAccumMs_ = 0.0f;
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.

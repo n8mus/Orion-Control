@@ -68,6 +68,7 @@
 #include "ui/DigiWindow.h"
 #include "ui/SkimmerWindow.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -3361,7 +3362,14 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             }
         }
+        // Never queue frames behind a busy GUI thread: with one still
+        // waiting, drop this one (the display's smoothing is time-based, so
+        // a dropped frame costs nothing but a queued backlog is pure lag).
+        static std::atomic<int> inFlight{0};
+        if (inFlight.load(std::memory_order_relaxed) >= 2) return;
+        inFlight.fetch_add(1, std::memory_order_relaxed);
         QMetaObject::invokeMethod(pan_, [this, spanHz, copy = db]() mutable {
+            inFlight.fetch_sub(1, std::memory_order_relaxed);
             pan_->setSpectrum(copy);
             // SDR-source S-meter: integrate power across the RX passband.
             // These bins never pass through the radio's AGC or RF gain, so

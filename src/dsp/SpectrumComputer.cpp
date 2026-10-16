@@ -51,13 +51,15 @@ void SpectrumComputer::addSamples(const IqBlock& iq) {
 
     const double t = now_ms();
     if (psCount_ == 0 || t - lastEmitMs_ < minInterval_) return;
+    const double dt = lastEmitMs_ > 0.0 ? std::clamp(t - lastEmitMs_, 1.0, 250.0) : 50.0;
     lastEmitMs_ = t;
+    const float smooth = float(std::pow(0.5, dt / 50.0));   // 0.5 per 50 ms
 
     const float inv = 1.0f / static_cast<float>(psCount_);
     for (int i = 0; i < n_; ++i) {
         const int k = (i + n_ / 2) % n_;          // fftshift: DC to center
         const float db = 10.0f * std::log10(psAcc_[k] * inv + 1e-12f);
-        outDb_[i] = smooth_ * outDb_[i] + (1.0f - smooth_) * db;  // temporal smoothing
+        outDb_[i] = smooth * outDb_[i] + (1.0f - smooth) * db;  // temporal smoothing
     }
     // Zero-IF DC removal: the RSP2's residual LO leakage survives the API's
     // DC correction as a narrow spike parked on the display center (= the

@@ -135,6 +135,15 @@ public:
     // GPU panadapter (PanGpuView) on/off — falls back to the CPU paint by itself.
     void setGpuEnabled(bool on);
     bool gpuEnabled() const { return gpu_ != nullptr; }
+    // Whether this build has the GPU panadapter at all (Qt >= 6.7 with
+    // ShaderTools + GuiPrivate; CI's Ubuntu Qt 6.4 builds the CPU paint only).
+    static constexpr bool gpuAvailable() {
+#ifdef HAVE_GPU_PAN
+        return true;
+#else
+        return false;
+#endif
+    }
     // Requested spectrum frame rate. The time-based behaviours (trace
     // averaging, waterfall rows/s, peak-hold droop, 3D scroll) run off the
     // MEASURED interval between frames, not this number: a 60 fps request

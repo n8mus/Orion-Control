@@ -29,7 +29,10 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QWidget>
+#include <QtGlobal>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
 #include <QChronoTimer>
+#endif
 #include <QTimer>
 #include <QToolButton>
 #include <QMenu>
@@ -515,6 +518,7 @@ MainWindow::MainWindow(QWidget* parent)
     auto* gpuAct = dispMenu->addAction("GPU panadapter (video card draws it)");
     gpuAct->setCheckable(true);
     gpuAct->setChecked(pan_->gpuEnabled());
+    gpuAct->setEnabled(PanadapterWidget::gpuAvailable());   // Qt < 6.7 builds: CPU only
     gpuAct->setToolTip("Waterfall, trace and fill on the video card (OpenGL); the labels\n"
                        "and scales redrawn only when they change. Off = the CPU paint.\n"
                        "Falls back to the CPU paint by itself if the GPU can't start.");
@@ -4150,10 +4154,10 @@ void MainWindow::maybeRunVoacap() {
 void MainWindow::startSpecPacer() {
     if (!specPresent_) return;                     // before the SDR chain exists
     if (!specPacer_) {
-        specPacer_ = new QChronoTimer(this);
+        specPacer_ = new SpecPacerTimer(this);
         specPacer_->setTimerType(Qt::PreciseTimer);
         specPacer_->setSingleShot(true);
-        connect(specPacer_, &QChronoTimer::timeout, this, [this] {
+        connect(specPacer_, &SpecPacerTimer::timeout, this, [this] {
             // One frame per tick; beyond 3 queued (the display is 60 Hz, the
             // FFT 61; a late tick) the extras are CONSUMED in the same tick —
             // their data still reaches the averaging, waterfall and 3D rows,
@@ -4169,14 +4173,23 @@ void MainWindow::startSpecPacer() {
                 left = specQ_.size();
             }
             const double scale = std::clamp(1.0 - 0.12 * (double(left) - 2.0), 0.6, 1.25);
-            specPacer_->setInterval(std::chrono::nanoseconds(
-                qint64(spectrum_.framePeriodMs() * 1e6 * scale)));
+            setPacerInterval(spectrum_.framePeriodMs() * scale);
             specPacer_->start();
             for (auto& f : take) specPresent_(f);
         });
     }
-    specPacer_->setInterval(std::chrono::nanoseconds(qint64(spectrum_.framePeriodMs() * 1e6)));
+    setPacerInterval(spectrum_.framePeriodMs());
     specPacer_->start();
+}
+
+// QChronoTimer (Qt 6.8+) takes the 16.384 ms frame period exactly; a plain
+// QTimer (older Qt) rounds to whole ms and the queue steering absorbs it.
+void MainWindow::setPacerInterval(double ms) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    specPacer_->setInterval(std::chrono::nanoseconds(qint64(ms * 1e6)));
+#else
+    specPacer_->setInterval(std::max(1, int(std::lround(ms))));
+#endif
 }
 
 } // namespace ttc

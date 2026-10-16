@@ -1,5 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
+#ifndef HAVE_GPU_PAN
+// Built without the GPU panadapter (Qt < 6.7, or no ShaderTools/GuiPrivate):
+// an inert stand-in so PanadapterWidget compiles the same; it is never made.
+#include <QWidget>
+namespace ttc {
+class PanadapterWidget;
+class PanGpuView : public QWidget {
+public:
+    explicit PanGpuView(QWidget* parent) : QWidget(parent) {}
+};
+}  // namespace ttc
+#else
 #include <QImage>
 #include <QRhiWidget>
 #include <QVector>
@@ -96,3 +108,4 @@ private:
 };
 
 } // namespace ttc
+#endif  // HAVE_GPU_PAN

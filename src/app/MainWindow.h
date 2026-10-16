@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <cmath>
 #include <condition_variable>
+#include <QtGlobal>
 #include <deque>
 #include <functional>
 #include <mutex>
@@ -599,7 +600,13 @@ private:
     // its own clock — 60 fps is then 60 evenly spaced frames, not 23 clumps.
     std::mutex specQMux_;
     std::deque<std::vector<float>> specQ_;
-    QChronoTimer* specPacer_ = nullptr;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    using SpecPacerTimer = QChronoTimer;
+#else
+    using SpecPacerTimer = QTimer;
+#endif
+    SpecPacerTimer* specPacer_ = nullptr;
+    void setPacerInterval(double ms);
     std::function<void(std::vector<float>&)> specPresent_;
     void startSpecPacer();
     // IQ fan-out worker: the USB callback only enqueues into iqRing_;

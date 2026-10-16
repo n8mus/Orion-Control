@@ -2139,7 +2139,11 @@ void PanadapterWidget::resizeEvent(QResizeEvent* e) {
 // The GPU panadapter (PanGpuView) on or off; any GPU failure drops back to
 // this widget's own CPU paint, for good, with a note on stderr.
 void PanadapterWidget::setGpuEnabled(bool on) {
+#ifndef HAVE_GPU_PAN
+    on = false;                                    // this build has no GPU path
+#endif
     if (on == (gpu_ != nullptr)) return;
+#ifdef HAVE_GPU_PAN
     if (on) {
         gpu_ = new PanGpuView(this);
         connect(gpu_, &QRhiWidget::renderFailed, this, [this] {
@@ -2150,7 +2154,9 @@ void PanadapterWidget::setGpuEnabled(bool on) {
         gpu_->setGeometry(rect());
         gpu_->lower();                             // any child controls stay on top
         gpu_->show();
-    } else {
+    } else
+#endif
+    {
         gpu_->deleteLater();
         gpu_ = nullptr;
     }

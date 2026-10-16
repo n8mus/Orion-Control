@@ -28,15 +28,27 @@ const char* kStyle =
     "QDialog { background: #141b24; }"
     "QLabel { color: #8fa3b8; font-size: 12px; }"
     "QCheckBox { color: #c8d4e0; }"
+    "QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #4a5e76;"
+    " background: #1c2430; border-radius: 2px; }"
+    "QCheckBox::indicator:hover { border-color: #6a86a6; }"
+    "QCheckBox::indicator:checked { background: #e8b04a; border-color: #e8b04a; }"
+    "QCheckBox::indicator:disabled { border-color: #2a3644; }"
+    "QCheckBox::indicator:checked:disabled { background: #7a6230; border-color: #7a6230; }"
     "QGroupBox { color: #e8b04a; font-weight: bold; border: 1px solid #2a3644;"
     " margin-top: 12px; padding-top: 6px; }"
     "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }"
     "QComboBox, QPushButton { background: #1c2430; color: #c8d4e0;"
     " border: 1px solid #2a3644; padding: 3px 8px; }"
     "QDoubleSpinBox { background: #1c2430; color: #c8d4e0; }"
-    "QDoubleSpinBox:disabled { color: #4a5868; }"
+    "QPushButton:hover, QComboBox:hover { border-color: #3d5068; }"
+    "QComboBox::drop-down { border: none; width: 18px; }"
+    "QComboBox::down-arrow { image: url(:/combo-down.png); width: 10px; height: 6px; }"
+    "QComboBox::down-arrow:disabled { image: url(:/combo-down-off.png); }"
+    "QDoubleSpinBox:disabled, QComboBox:disabled { color: #6f7f92; background: #18202a; }"
+    "QPushButton:disabled { color: #66768a; border-color: #232c38; }"
     "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
-    " selection-background-color: #2b5c8a; }";
+    " border: 1px solid #3d5068; outline: 0;"
+    " selection-background-color: #2b5c8a; selection-color: #ffffff; }";
 
 // Listening shapes, tune-by-ear starting points (slots: 0 HP, 1 LS,
 // 2-5 peaks, 6 HS, 7 LP). Each starts from flat, so a slot not named

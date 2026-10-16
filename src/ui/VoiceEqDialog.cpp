@@ -34,6 +34,12 @@ const char* kStyle =
     "QDialog { background: #141b24; }"
     "QLabel { color: #8fa3b8; font-size: 12px; }"
     "QCheckBox { color: #c8d4e0; }"
+    "QCheckBox::indicator { width: 13px; height: 13px; border: 1px solid #4a5e76;"
+    " background: #1c2430; border-radius: 2px; }"
+    "QCheckBox::indicator:hover { border-color: #6a86a6; }"
+    "QCheckBox::indicator:checked { background: #e8b04a; border-color: #e8b04a; }"
+    "QCheckBox::indicator:disabled { border-color: #2a3644; }"
+    "QCheckBox::indicator:checked:disabled { background: #7a6230; border-color: #7a6230; }"
     // Group headings carry their own colour: unstyled, they take the
     // desktop theme's (live-found on Cinnamon: dark grey on the dark
     // dialog, unreadable).
@@ -46,9 +52,19 @@ const char* kStyle =
     "QPushButton:default { border-color: #3ecf7a; }"
     // Colors only on the spin boxes: a border rule drops the arrows.
     "QSpinBox, QDoubleSpinBox { background: #1c2430; color: #c8d4e0; }"
-    "QPushButton:disabled { color: #4a5868; border-color: #222b36; }"
+    "QPushButton:hover, QComboBox:hover { border-color: #3d5068; }"
+    // The open list: unstyled it took the desktop theme — pale grey text on
+    // white, unreadable (operator, 2026-10-16).
+    "QComboBox QAbstractItemView { background: #1c2430; color: #c8d4e0;"
+    " border: 1px solid #3d5068; outline: 0;"
+    " selection-background-color: #2b5c8a; selection-color: #ffffff; }"
+    "QComboBox::drop-down { border: none; width: 18px; }"
+    "QComboBox::down-arrow { image: url(:/combo-down.png); width: 10px; height: 6px; }"
+    "QComboBox::down-arrow:disabled { image: url(:/combo-down-off.png); }"
+    // A section that is switched off still reads: dimmer, not invisible.
+    "QPushButton:disabled { color: #66768a; border-color: #232c38; }"
     "QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled"
-    " { color: #4a5868; }";
+    " { color: #6f7f92; background: #18202a; }";
 }  // namespace
 
 VoiceEqCurve::VoiceEqCurve(QWidget* parent) : QWidget(parent) {

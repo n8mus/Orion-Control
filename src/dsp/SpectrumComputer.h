@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <cmath>
 #include "sdr/SdrSource.h"      // IqBlock
 #include "dsp/Fft.h"
 #include <functional>
@@ -17,6 +18,17 @@ public:
 
     void setOutput(std::function<void(const std::vector<float>&)> cb) { out_ = std::move(cb); }
     void setFrameIntervalMs(double ms) { minInterval_ = ms; }
+    // Display frame rate: every block is FFT'd regardless (Welch); this sets
+    // how often an averaged frame goes out, and keeps the temporal smoothing
+    // the same in SECONDS (0.5 per frame at 20 fps).
+    void setFrameRateHz(int fps) {
+        fps = fps < 5 ? 5 : fps > 60 ? 60 : fps;
+        // Emits ride block arrivals (one FFT block = 16.4 ms at 1 MS/s): 0.8
+        // lets 60 fps take every block instead of every other one (measured
+        // ~49 fps at 0.9).
+        minInterval_ = 1000.0 / fps * 0.8;
+        smooth_ = float(std::pow(0.5, 20.0 / fps));
+    }
     int  bins() const { return n_; }
 
     void addSamples(const IqBlock& iq);

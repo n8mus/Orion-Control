@@ -1356,11 +1356,11 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
         avg_ = magsDb;
         peaks_ = magsDb;
     } else {
-        const float a = 1.0f / ds_.avgFrames;      // EMA; avgFrames==1 -> raw
+        const float a = 1.0f / std::max(1.0f, ds_.avgFrames * fpsScale_);   // EMA, real-time constant
         for (size_t i = 0; i < n; ++i) {
             avg_[i] += (magsDb[i] - avg_[i]) * a;
             if (ds_.peakHold)
-                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb, avg_[i]);
+                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb / fpsScale_, avg_[i]);
         }
     }
     // Waterfall speed: max-merge wfSpeed frames into one committed row, so slow
@@ -1372,7 +1372,7 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
         for (size_t i = 0; i < n; ++i) wfAccum_[i] = std::max(wfAccum_[i], magsDb[i]);
         ++wfAccumN_;
     }
-    if (wfAccumN_ >= ds_.wfSpeed) {
+    if (wfAccumN_ >= std::max(1, int(std::lround(ds_.wfSpeed * fpsScale_)))) {   // same rows/s at any fps
         pushWaterfallRow(wfAccum_);
         std::fill(wfAccum_.begin(), wfAccum_.end(), kNoRow);
         wfAccumN_ = 0;
@@ -1980,6 +1980,7 @@ void PanadapterWidget::setGpuEnabled(bool on) {
         connect(gpu_, &QRhiWidget::renderFailed, this, [this] {
             std::fprintf(stderr, "[pan] GPU panadapter failed — back to the CPU paint\n");
             setGpuEnabled(false);
+            emit gpuFellBack();
         });
         gpu_->setGeometry(rect());
         gpu_->lower();                             // any child controls stay on top

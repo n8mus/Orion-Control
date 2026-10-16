@@ -120,6 +120,10 @@ public:
     // GPU panadapter (PanGpuView) on/off — falls back to the CPU paint by itself.
     void setGpuEnabled(bool on);
     bool gpuEnabled() const { return gpu_ != nullptr; }
+    // Frames per second of spectrum data: the per-frame behaviours (trace
+    // averaging, waterfall row merge, peak-hold droop) are scaled so they
+    // keep their 20 fps feel in real time at 30 or 60.
+    void setFrameRate(int fps) { fpsScale_ = std::max(0.25f, fps / 20.0f); }
     explicit PanadapterWidget(QWidget* parent = nullptr);
 
     void setSpanHz(int spanHz);                    // full captured span
@@ -257,6 +261,7 @@ public:
     static QStringList backgroundNames();
 
 signals:
+    void gpuFellBack();                            // the GPU view failed; CPU paint now
     // Click-to-tune (offset from center). exact = Shift held: tune the raw
     // clicked frequency, bypassing owner-side snapping (CW zap).
     void tuneRequested(int offsetHz, bool exact = false);
@@ -423,6 +428,7 @@ private:
     void changedTop();
     void frame();
     PanGpuView* gpu_ = nullptr;
+    float fpsScale_ = 1.0f;
     bool gpuDirtyUnder_ = true, gpuDirtyMid_ = true, gpuDirtyTop_ = true, gpuDirtyLabels_ = true;
     uint64_t wfSerial_ = 0, wfReset_ = 0;          // rows pushed / history resets
 

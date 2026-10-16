@@ -507,6 +507,48 @@ MainWindow::MainWindow(QWidget* parent)
     auto* dispAction = new QWidgetAction(dispMenu);
     dispAction->setDefaultWidget(dispPanel);
     dispMenu->addAction(dispAction);
+    // GPU panadapter + frame rate (the drawing's on the video card, so 60 fps
+    // costs the CPU next to nothing; the CPU paint stays at 20).
+    dispMenu->addSeparator();
+    auto* gpuAct = dispMenu->addAction("GPU panadapter (video card draws it)");
+    gpuAct->setCheckable(true);
+    gpuAct->setChecked(pan_->gpuEnabled());
+    gpuAct->setToolTip("Waterfall, trace and fill on the video card (OpenGL); the labels\n"
+                       "and scales redrawn only when they change. Off = the CPU paint.\n"
+                       "Falls back to the CPU paint by itself if the GPU can't start.");
+    QMenu* fpsMenu = dispMenu->addMenu("Frame rate");
+    auto* fpsGroup = new QActionGroup(fpsMenu);
+    const int fpsNow = std::clamp(QSettings().value("display/panFps", 20).toInt(), 20, 60);
+    for (int f : {20, 30, 60}) {
+        QAction* a = fpsMenu->addAction(QString("%1 fps").arg(f));
+        a->setCheckable(true);
+        a->setData(f);
+        a->setChecked(f == fpsNow);
+        fpsGroup->addAction(a);
+    }
+    const auto applyFps = [this, fpsMenu](int f) {
+        if (!pan_->gpuEnabled()) f = 20;           // the CPU paint can't afford more
+        spectrum_.setFrameRateHz(f);
+        pan_->setFrameRate(f);
+        fpsMenu->setEnabled(pan_->gpuEnabled());
+    };
+    connect(fpsGroup, &QActionGroup::triggered, this, [applyFps](QAction* a) {
+        QSettings().setValue("display/panFps", a->data().toInt());
+        applyFps(a->data().toInt());
+    });
+    connect(gpuAct, &QAction::toggled, this, [this, applyFps](bool on) {
+        QSettings().setValue("display/gpuPan", on);
+        pan_->setGpuEnabled(on);
+        applyFps(QSettings().value("display/panFps", 20).toInt());
+        statusBar()->showMessage(on ? "GPU panadapter on" : "GPU panadapter off — CPU paint", 4000);
+    });
+    connect(pan_, &PanadapterWidget::gpuFellBack, this, [this, gpuAct, applyFps] {
+        const QSignalBlocker b(gpuAct);
+        gpuAct->setChecked(false);
+        applyFps(20);
+        statusBar()->showMessage("GPU panadapter couldn't start — using the CPU paint", 8000);
+    });
+    applyFps(fpsNow);
     dispBtn->setMenu(dispMenu);
     topLay->addSpacing(8);
     topLay->addWidget(dispBtn);

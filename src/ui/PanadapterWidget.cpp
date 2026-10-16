@@ -1865,8 +1865,8 @@ namespace {
 struct PanProf {
     bool on = qEnvironmentVariableIsSet("TTC_PANPROF");
     static constexpr int kStages = 7;
-    const char* names[kStages] = {"backdrop", "waterfall", "fill", "grid+scale",
-                                  "trace+vfo", "overlays", "total"};
+    const char* names[kStages] = {"backdrop", "waterfall", "fill", "mid",
+                                  "trace", "top", "total"};
     double acc[kStages] = {};
     int frames = 0;
     QElapsedTimer window, lap, whole;
@@ -1891,10 +1891,41 @@ struct PanProf {
 PanProf gPanProf;
 }  // namespace
 
+// The panadapter as layers — the CPU paint below calls them in order, and
+// the GPU view (PanGpuView) draws the same QPainter layers into cached
+// overlay images and does the waterfall, fill and trace on the card:
+//   under   background, map backdrop, VOACAP, callsign watermark
+//   wf      waterfall (+ its timestamps / WF ref label)
+//   fill    KE9NS gradient under the trace
+//   mid     grid, dB scale, band zones, passband, notch, scale strip,
+//           privileges, SWR, VFO lines + flags
+//   trace   peak-hold + the live trace
+//   top     markers, spots, cursor, tuner box, solar panel, compass rose
 void PanadapterWidget::paintEvent(QPaintEvent*) {
     gPanProf.begin();
     QPainter p(this);
     const int hSpec = spectrumHeight();
+    paintUnder(p, hSpec);
+    const PanView v = panView();
+    gPanProf.mark(0);
+    paintWaterfallCpu(p, hSpec, v);
+    gPanProf.mark(1);
+    const std::vector<float> colT = columnLevels(v);
+    paintFillCpu(p, hSpec, colT);
+    gPanProf.mark(2);
+    paintMid(p, hSpec);
+    gPanProf.mark(3);
+    paintTraceCpu(p, hSpec, v, colT);
+    gPanProf.mark(4);
+    paintTop(p, hSpec, v.n);
+    // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
+    // and the gestures are muscle memory by now — removed 2026-08-26 at the
+    // operator's request, it only ate spectrum.)
+    gPanProf.mark(5);
+    gPanProf.end();
+}
+
+void PanadapterWidget::paintUnder(QPainter& p, int hSpec) {
     p.fillRect(rect(), QColor(12, 16, 22));
     if (ds_.background != 0 && hSpec > 1)          // KE9NS-style backdrop
         p.drawImage(0, 0, backgroundImage(width(), hSpec));
@@ -1916,6 +1947,9 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.setFont(saved);
     }
 
+}
+
+PanadapterWidget::PanView PanadapterWidget::panView() const {
     const int n = static_cast<int>(spectrum_.size());
     // Visible bin window: view span centered inside the full captured span.
     int binLo = 0, binHi = n;
@@ -1932,7 +1966,11 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         binHi = std::clamp(binHi, binLo + 2, n);
     }
 
-    gPanProf.mark(0);
+    return {n, binLo, binHi};
+}
+
+void PanadapterWidget::paintWaterfallCpu(QPainter& p, int hSpec, const PanView& v) {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
     // Waterfall (below the scale band): raw history, 1 row = 1 pixel line.
     const int wfTop = hSpec + kScaleBandH;
     if (wfBins_ >= 2 && n >= 2 && height() > wfTop) {
@@ -1951,7 +1989,10 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
     }
 
-    gPanProf.mark(1);
+}
+
+std::vector<float> PanadapterWidget::columnLevels(const PanView& v) const {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
     // Per-pixel-column signal level (0..1 of the scale): max of the column's
     // bins when zoomed out (narrow signals never vanish), linear interpolation
     // between bins when zoomed deep (no staircase). Drives both fill and trace,
@@ -1980,6 +2021,11 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
     }
 
+    return colT;
+}
+
+void PanadapterWidget::paintFillCpu(QPainter& p, int hSpec, const std::vector<float>& colT) {
+    const int w = width();
     // KE9NS-style fill: color keyed to the dB AXIS, so the bands run
     // horizontally and a signal climbs through blue -> green -> yellow -> red
     // as it gets stronger (per-column coloring made vertical streaks instead).
@@ -2002,23 +2048,13 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
         p.drawImage(0, 0, fillImg_);
     }
-    gPanProf.mark(2);
+}
 
+void PanadapterWidget::paintMid(QPainter& p, int hSpec) {
     // Frequency gridlines and the (draggable) dB scale, over the fill.
     drawFreqGrid(p, hSpec);
     drawDbScale(p, hSpec);
     drawBandZones(p, hSpec);
-    gPanProf.mark(3);
-
-    QPainterPath tracePath;
-    if (!colT.empty()) {
-        for (int x = 0; x < w; ++x) {
-            const double y = hSpec * (1.0 - colT[x]);
-            if (x == 0) tracePath.moveTo(x, y);
-            else        tracePath.lineTo(x, y);
-        }
-    }
-
     // Passband highlight across spectrum AND waterfall (SmartSDR-style).
     const int xLo = hzToX(pbLoHz_), xHi = hzToX(pbHiHz_);
     p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, height())), QColor(60, 120, 200, 55));
@@ -2106,6 +2142,22 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.setBrush(Qt::NoBrush);
     }
 
+}
+
+void PanadapterWidget::paintTraceCpu(QPainter& p, int hSpec, const PanView& v,
+                                     const std::vector<float>& colT) {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
+    const float range = dbMax_ - dbMin_;
+    const int w = width();
+    QPainterPath tracePath;
+    if (!colT.empty()) {
+        for (int x = 0; x < w; ++x) {
+            const double y = hSpec * (1.0 - colT[x]);
+            if (x == 0) tracePath.moveTo(x, y);
+            else        tracePath.lineTo(x, y);
+        }
+    }
+
     // Peak-hold trace (under the live trace), then the spectrum trace itself.
     if (n >= 2) {
         if (ds_.peakHold && peaks_.size() == spectrum_.size()) {
@@ -2130,7 +2182,11 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         };
         p.setPen(kTraceColors[std::clamp(ds_.traceColor, 0, 4)]);
         p.drawPath(tracePath);
-        gPanProf.mark(4);
+    }
+}
+
+void PanadapterWidget::paintTop(QPainter& p, int hSpec, int n) {
+    if (n >= 2) {
         drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
         drawCursor(p, hSpec);                      // hover line + zap preview
@@ -2144,11 +2200,6 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
     }
 
-    // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
-    // and the gestures are muscle memory by now — removed 2026-08-26 at the
-    // operator's request, it only ate spectrum.)
-    gPanProf.mark(5);
-    gPanProf.end();
 }
 
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {

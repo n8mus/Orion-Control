@@ -391,6 +391,18 @@ private:
     bool     bodyPbt_ = false;                     // Ctrl held at body grab -> PBT slide
     char     wheelVfo_ = 'A';                      // wheel follows the last-tuned VFO
 
+    // The paint, as layers (see paintEvent) — shared by the CPU paint and
+    // the GPU view's cached overlays.
+    struct PanView { int n = 0, binLo = 0, binHi = 0; };   // visible bin window
+    PanView panView() const;
+    std::vector<float> columnLevels(const PanView& v) const;   // 0..1 per pixel column
+    void paintUnder(QPainter& p, int hSpec);
+    void paintWaterfallCpu(QPainter& p, int hSpec, const PanView& v);
+    void paintFillCpu(QPainter& p, int hSpec, const std::vector<float>& colT);
+    void paintMid(QPainter& p, int hSpec);
+    void paintTraceCpu(QPainter& p, int hSpec, const PanView& v, const std::vector<float>& colT);
+    void paintTop(QPainter& p, int hSpec, int n);
+
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.
     const QImage& backgroundImage(int w, int h);

@@ -1461,6 +1461,20 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         const bool tx = radioTx_ || dvrTxPlayback_
             || now - txCtxMs_.load(std::memory_order_relaxed) < 300;
         sdrRx_->setMuted(tx);
+        // TTC_RXDBG=1: where the SDR receive audio stops (mute cause, WDSP
+        // level into RADE, RADE sync), every 2 s.
+        static const bool dbg = qEnvironmentVariableIsSet("TTC_RXDBG");
+        static qint64 lastDbg = 0;
+        if (dbg && now - lastDbg > 2000) {
+            lastDbg = now;
+            const SdrRx::RadeStatus r = sdrRx_->radeStatus();
+            std::fprintf(stderr, "[rxdbg] run %d rade %d muted %d (radioTx %d dvr %d txCtx %lld ms ago) | "
+                                 "WDSP %.0f dBFS  in %.0f  out %.0f | sync %d snr %.1f off %.0f Hz\n",
+                         int(sdrRx_->running()), int(sdrRx_->radeDecoding()), int(tx), int(radioTx_),
+                         int(dvrTxPlayback_), (long long)(now - txCtxMs_.load()),
+                         sdrRx_->modemPeakDb(), sdrRx_->inputPeakDb(), sdrRx_->outputPeakDb(),
+                         int(r.sync), r.snrDb, r.freqOffsetHz);
+        }
     });
     txMute->start();
 

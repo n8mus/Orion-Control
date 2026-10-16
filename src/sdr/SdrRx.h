@@ -137,6 +137,8 @@ public:
     // For the RX menu's readouts.
     double backlogMs() const;
     float outputPeakDb() const { return outPeakDb_.load(); }
+    float modemPeakDb() const { return modemPeakDb_.load(); }   // WDSP out, before RADE
+    float inputPeakDb() const { return inPeakDb_.load(); }      // into gate/EQ (RADE speech in FDV)
     int droppedBlocks() const { return dropped_.load(); }
 
     static constexpr double kDecimRate = 125000.0; // after our FIR decimator
@@ -203,7 +205,7 @@ private:
     // ---- output pipe (pacat) ----
     int pipeW_ = -1, pipeProbe_ = -1;
     int playerPid_ = -1;
-    std::atomic<float> outPeakDb_{-120.f}, inPeakDb_{-120.f};
+    std::atomic<float> outPeakDb_{-120.f}, inPeakDb_{-120.f}, modemPeakDb_{-120.f};
     std::atomic<int> dropped_{0};
     std::function<void(const float*, int)> tap_;
     std::function<void(const float*, int, bool)> asrTap_;

@@ -435,6 +435,11 @@ void SdrRx::emitAudio(float* x, int n) {
 // unsynced or underrun (then it primes again).
 void SdrRx::radeBlock(const float* modem, int n) {
     std::vector<float> blk(size_t(n), 0.f);
+    {
+        float pk = 0.f;
+        for (int i = 0; i < n; ++i) pk = std::max(pk, std::fabs(modem[i]));
+        modemPeakDb_.store(20.f * std::log10(std::max(pk, 1e-6f)));
+    }
 #ifdef HAVE_RADE
     if (!rade_.load()) rade_.store(new RadeRx);
     std::vector<float> sp;

@@ -231,7 +231,9 @@ that night's own capture).
   (`applySdrRxSettings`, never saved), opens `FreeDvWindow` (sync/SNR,
   Analog, TX level, Report my station, status message, freedv-gui's
   Reporter columns: double-click QSY, right-click rotor/QRZ/QSY request;
-  heard log -> Log QSO). Off (or any real mode) restores it all. In FDV:
+  heard log -> Log QSO). Off (or any real mode) restores it all — SSB
+  on the CURRENT band's sideband, and the SDR audio always OFF (back to
+  the Orion; FDV switches SDR audio without saving `sdrrx/on`). In FDV:
   voice LIVE, VK, over-air replay, DIG-off refused; a Winlink session ends
   FDV. The 30 px FreeDV row made layout-min height 809.
   **RADE transmit** (internal `setRadeTx`, driven by FDV): LIVE in RADE mode —

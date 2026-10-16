@@ -1399,11 +1399,14 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
     open->setToolTip("SDR receive audio: the panadapter's IQ demodulated by WDSP\n"
                      "(Thetis's DSP) with its noise blankers and noise reduction,\n"
                      "on the PC speakers/headset.");
-    const auto setOn = [this, open](bool v) -> bool {
-        QSettings().setValue("sdrrx/on", v);
+    // persist = the operator's own on/off (remembered for next start);
+    // FreeDV mode switches it without touching that (live-found: a session
+    // that ended inside FreeDV came back with the SDR audio on, loud).
+    const auto setOn = [this, open](bool v, bool persist = true) -> bool {
+        if (persist) QSettings().setValue("sdrrx/on", v);
         if (v) {
             if (!sdrRx_->start(std::string())) {
-                QSettings().setValue("sdrrx/on", false);
+                if (persist) QSettings().setValue("sdrrx/on", false);
                 statusBar()->showMessage("SDR RX: could not start pacat", 8000);
                 return false;
             }
@@ -1415,7 +1418,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
         open->setText(v ? "Receive audio (WDSP) — ON…" : "Receive audio (WDSP)…");
         return v;
     };
-    sdrRxSetOn_ = setOn;
+    sdrRxSetOn_ = [setOn](bool v) { return setOn(v, false); };   // FreeDV's, unsaved
     connect(open, &QAction::triggered, this, [this, setOn] {
         if (!sdrRxDlg_) {
             auto* dlg = new SdrRxDialog(QSettings().value("sdrrx/on", false).toBool(),
@@ -1834,14 +1837,22 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         setRadeTx(false);                          // DIG goes back with LIVE
         if (fdvSaved_.live) setLiveMic(true);
         applySdrRxSettings();
-        if (!fdvSaved_.sdrOn && sdrRx_->running()) sdrRxSetOn_(false);
+        // Back to the Orion: the SDR audio goes off whatever it was before
+        // (operator's call — outside FreeDV he listens to the radio).
+        if (sdrRx_->running()) sdrRxSetOn_(false);
+        if (sdrRxDlg_) sdrRxDlg_->setOn(false);
         if (fdvSaved_.txBw != txBwHz_) {
             radio_->setTxFilter(fdvSaved_.txBw);
             txBar_->showTxFilter(fdvSaved_.txBw);
         }
         if (!keepMode) {
-            applyMode(fdvSaved_.mode);
-            panel_->showMode(fdvSaved_.mode);
+            // SSB comes back on the sideband for the band we're on NOW
+            // (entered on 20 m USB, left on 40 m -> LSB: live-found USB
+            // on 40); CW/AM/FM come back as they were.
+            Mode back = fdvSaved_.mode;
+            if (back == Mode::USB || back == Mode::LSB) back = fdvSideband(centerHz_);
+            applyMode(back);
+            panel_->showMode(back);
             QTimer::singleShot(450, this, [this, bw = fdvSaved_.bw, pbt = fdvSaved_.pbt] {
                 radio_->setBandwidthHz(Rx::Main, bw);
                 radio_->setPbtHz(Rx::Main, pbt);
@@ -1850,7 +1861,8 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         panel_->showFdv(false);
         updateFreedvLink();
         if (fdvWin_) fdvWin_->close();
-        statusBar()->showMessage("FreeDV off — mode, filter, processor and audio restored", 8000);
+        statusBar()->showMessage("FreeDV off — back on the Orion: mode for this band, filter, "
+                                 "processor restored; SDR audio off", 8000);
     }
 #endif
 }

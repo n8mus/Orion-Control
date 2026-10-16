@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui/PanadapterWidget.h"
+#include "ui/PanGpuView.h"
 
 #include <QElapsedTimer>
+#include <QHash>
 #include <cstdio>
 
 #include <QPainter>
@@ -21,15 +23,11 @@
 namespace ttc {
 
 namespace {
-constexpr int   kWfHistRows   = 1024;    // raw dB rows kept for re-render on zoom
 constexpr int   kMinViewSpanHz = 4000;   // deep enough to edit a CW filter
-constexpr int   kScaleBandH    = 32;     // freq-scale strip between spectrum and wf
                                          // (doubled 2026-07-31: bigger labels +
                                          // license-class letters live in it now)
 constexpr int   kDbAxisW       = 40;     // grab width of the left dB scale
 constexpr float kPeakDecayDb   = 0.15f;  // peak-hold droop per frame (~2-3 dB/s)
-constexpr float kFillGamma     = 0.6f;   // compresses the ramp: warm colors arrive
-                                         // ~60% up the scale (KE9NS look)
 constexpr float kNoRow         = -300.0f;
 
 // Color palettes. All stops interpolate linearly; t=0 is the scale bottom
@@ -55,12 +53,46 @@ const Stop kThermal[] = {
 const Stop kGray[] = {
     {0.00f,   0,   0,   0}, {1.00f, 255, 255, 255},
 };
+// AetherSDR's waterfall colormaps (default-dark theme), appended — the
+// palette index is stored, so never reorder.
+const Stop kAether[] = {
+    {0.00f,   0,   0,   0}, {0.15f,   0,   0, 128}, {0.30f,   0,  64, 255},
+    {0.45f,   0, 200, 255}, {0.60f,   0, 220,   0}, {0.80f, 255, 255,   0},
+    {1.00f, 255,   0,   0},
+};
+const Stop kBlueGreen[] = {
+    {0.00f,   0,   0,   0}, {0.25f,   0,  30, 120}, {0.50f,   0, 100, 180},
+    {0.75f,   0, 200, 130}, {1.00f, 220, 255, 220},
+};
+const Stop kFire[] = {
+    {0.00f,   0,   0,   0}, {0.25f, 128,   0,   0}, {0.50f, 220,  80,   0},
+    {0.75f, 255, 200,   0}, {1.00f, 255, 255, 220},
+};
+const Stop kPlasma[] = {
+    {0.00f,   0,   0,   0}, {0.25f,  80,   0, 140}, {0.50f, 200,   0, 120},
+    {0.75f, 240, 120,   0}, {1.00f, 255, 255,  80},
+};
+const Stop kPurple[] = {
+    {0.00f,   0,   0,   0}, {0.15f,   0,   0, 255}, {0.30f,   0, 255,   0},
+    {0.45f, 255, 255,   0}, {0.60f, 255,   0,   0}, {0.75f, 128,   0, 128},
+    {1.00f, 255, 255, 255},
+};
+const Stop kGlacier[] = {
+    {0.00f,   5,  24,  60}, {0.30f,  10,  90, 210}, {0.55f,  60, 160, 255},
+    {0.80f, 168, 220, 255}, {1.00f, 255, 255, 255},
+};
 struct Palette { const Stop* stops; size_t n; };
 const Palette kPalettes[] = {
     {kEnhanced, std::size(kEnhanced)},
     {kClassic,  std::size(kClassic)},
     {kThermal,  std::size(kThermal)},
     {kGray,     std::size(kGray)},
+    {kAether,   std::size(kAether)},
+    {kBlueGreen, std::size(kBlueGreen)},
+    {kFire,     std::size(kFire)},
+    {kPlasma,   std::size(kPlasma)},
+    {kPurple,   std::size(kPurple)},
+    {kGlacier,  std::size(kGlacier)},
 };
 
 // A "nice" grid step (1/2/5 x 10^k) giving ~8 divisions across the view.
@@ -74,7 +106,9 @@ double niceStep(double span) {
 } // namespace
 
 QStringList PanadapterWidget::paletteNames() {
-    return {"Enhanced", "Classic", "Thermal", "Grayscale"};
+    // Stored by index: append only. 4.. are AetherSDR's colormaps.
+    return {"Enhanced", "Classic", "Thermal", "Grayscale",
+            "Aether", "Blue-Green", "Fire", "Plasma", "Purple", "Glacier"};
 }
 
 QStringList PanadapterWidget::backgroundNames() {
@@ -517,7 +551,7 @@ PanadapterWidget::PanadapterWidget(QWidget* parent) : QWidget(parent) {
 void PanadapterWidget::setSpanHz(int spanHz) {
     fullSpanHz_ = std::max(1000, spanHz);
     viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
-    update();
+    changed(__func__);
 }
 
 int PanadapterWidget::minViewSpanHz() const { return kMinViewSpanHz; }
@@ -528,7 +562,7 @@ void PanadapterWidget::setDialOffsetHz(int hz) {
     clampViewShift();
     viewSpanHz_ = std::clamp(viewSpanHz_, kMinViewSpanHz, maxViewSpanHz());
     wfDirty_ = true;
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setViewSpanHz(int spanHz) {
@@ -538,7 +572,7 @@ void PanadapterWidget::setViewSpanHz(int spanHz) {
     if (spanHz < viewSpanHz_ && viewShiftHz_ != 0) viewShiftHz_ = 0;
     viewSpanHz_ = std::clamp(spanHz, kMinViewSpanHz, maxViewSpanHz());
     clampViewShift();
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setViewShiftHz(int hz) {
@@ -546,7 +580,7 @@ void PanadapterWidget::setViewShiftHz(int hz) {
     viewShiftHz_ = hz;
     clampViewShift();
     wfDirty_ = true;
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::clampViewShift() {
@@ -564,7 +598,7 @@ void PanadapterWidget::clampViewShift() {
 void PanadapterWidget::setCenterHz(uint64_t hz) {
     if (hz == centerHz_) return;
     centerHz_ = hz;
-    update();
+    changed(__func__);
 }
 
 namespace {
@@ -638,34 +672,46 @@ void PanadapterWidget::setQth(double latDeg, double lonDeg) {
     qthLon_ = lonDeg;
     roseKey_.clear();                              // disc re-projects
     bgMode_ = -1;                                  // globe backdrop recenters
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::pointRoseAt(double lat, double lon, const QString& label) {
     greatCircle(qthLat_, qthLon_, lat, lon, roseBearing_, roseDistKm_);
     roseLabel_ = label;
     emit roseBearingChanged(roseBearing_, roseLabel_);
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setRotorAz(double azDeg) {
     if (azDeg == rotorAz_) return;
     rotorAz_ = azDeg;
-    update();
+    changed(__func__);
+}
+
+// The rose lives bottom-left of the WATERFALL (operator, 2026-10-16: the
+// spectrum keeps its room), clear of the UTC timestamps down its left edge.
+// Null point = no room for it (waterfall shorter than the disc).
+QPoint PanadapterWidget::roseCenter() const {
+    const int R = ds_.roseR;
+    const int wfH = height() - spectrumHeight() - kScaleBandH;
+    if (wfH < 2 * R + 20) return QPoint();
+    const int left = ds_.showWfTime ? 66 : 10;
+    return QPoint(left + R, height() - R - 10);
 }
 
 bool PanadapterWidget::overRose(int x, int y) const {
     if (!ds_.showRose) return false;
-    const int hSpec = spectrumHeight();
-    if (hSpec < 2 * ds_.roseR + 30) return false;
-    const int cx = 10 + ds_.roseR, cy = hSpec - ds_.roseR - 10;
-    return std::hypot(double(x - cx), double(y - cy)) <= ds_.roseR;
+    const QPoint c = roseCenter();
+    if (c.isNull()) return false;
+    return std::hypot(double(x - c.x()), double(y - c.y())) <= ds_.roseR;
 }
 
 void PanadapterWidget::drawCompassRose(QPainter& p, int hSpec) {
-    if (!ds_.showRose || hSpec < 2 * ds_.roseR + 30) return;
+    (void)hSpec;
+    const QPoint c = roseCenter();
+    if (!ds_.showRose || c.isNull()) return;
     const int R = ds_.roseR;
-    const int cx = 10 + R, cy = hSpec - R - 10;
+    const int cx = c.x(), cy = c.y();
     const qint64 minute = QDateTime::currentSecsSinceEpoch() / 60;
     const QString key = QString("%1|%2|%3").arg(R).arg(qthLat_).arg(qthLon_);
     if (roseKey_ != key || roseMinute_ != minute) {
@@ -768,13 +814,15 @@ void PanadapterWidget::setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
     solSsn_ = ssn;
     solXray_ = xray;
     bgMinute_ = -1;                                // sun caption re-renders
-    update();
+    changed(__func__);
 }
 
-// Thetis-style green space-weather block, bottom-right of the spectrum,
-// over the trace floor where it doesn't fight signals or spot labels.
+// Thetis-style green space-weather block, bottom-right of the WATERFALL
+// (operator, 2026-10-16: out of the spectrum, where the 3D view and the
+// trace need the room), beside the tuner box.
 void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
-    if (!ds_.showSolar || solSfi_ < 0 || hSpec < 90) return;
+    const int wfH = height() - hSpec - kScaleBandH;
+    if (!ds_.showSolar || solSfi_ < 0 || wfH < 90) return;
     QFont f = p.font();
     f.setPixelSize(10);
     f.setBold(true);
@@ -810,7 +858,7 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
     // The tuner box owns the corner when it is up; solar sits to its left.
     const int right = tuneBoxRect_.isEmpty() ? width() - 8
                                              : tuneBoxRect_.left() - 6;
-    const QRect box(right - wBox, hSpec - hBox - 6, wBox, hBox);
+    const QRect box(right - wBox, height() - hBox - 8, wBox, hBox);
     p.fillRect(box, QColor(4, 12, 6, 175));
     p.setPen(QColor(30, 90, 45));
     p.drawRect(box.adjusted(0, 0, -1, -1));
@@ -826,15 +874,17 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
 
 void PanadapterWidget::setTuneBox(const TuneBox& b) {
     tuneBox_ = b;
-    update();
+    changedTop();                                  // drawn in the top layer
+    if (!gpu_) update();
 }
 
-// Amber tuner/amp card, bottom-right: what to set the 238C and the Titan
-// III to here, read at a glance across the shack — so a larger face than
-// the solar block's, labels dim and values bright.
+// Amber tuner/amp card, bottom-right of the waterfall: what to set the 238C
+// and the Titan III to here, read at a glance across the shack — so a larger
+// face than the solar block's, labels dim and values bright.
 void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
     tuneBoxRect_ = QRect();
-    if (!ds_.showTuneBox || tuneBox_.title.isEmpty() || hSpec < 110) return;
+    const int wfH = height() - hSpec - kScaleBandH;
+    if (!ds_.showTuneBox || tuneBox_.title.isEmpty() || wfH < 110) return;
     QFont f = p.font();
     f.setPixelSize(13);
     f.setBold(true);
@@ -873,7 +923,7 @@ void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
     }
     wBox = std::min(wBox + 2 * pad + 4, width() / 2);   // +4: elide rounding
     const int hBox = (static_cast<int>(rows.size()) + 1) * lineH + 2 * pad - 4;
-    const QRect box(width() - wBox - 8, hSpec - hBox - 6, wBox, hBox);
+    const QRect box(width() - wBox - 8, height() - hBox - 8, wBox, hBox);
     tuneBoxRect_ = box;
     p.fillRect(box, QColor(22, 15, 4, 200));
     p.setPen(QColor(120, 86, 32));
@@ -918,13 +968,27 @@ void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
 }
 
 void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
+    // The spot feeds re-push the whole list several times a second (live-
+    // measured: 22-30 per 5 s), mostly unchanged. Identical = nothing to do;
+    // otherwise only the top layer (where spots are drawn) is stale.
+    const auto same = [](const SpotLabel& a, const SpotLabel& b) {
+        return a.call == b.call && a.hz == b.hz && a.atSecs == b.atSecs && a.kind == b.kind
+            && a.tag == b.tag && a.status == b.status && a.alert == b.alert
+            && a.needC == b.needC && a.needB == b.needB && a.needM == b.needM
+            && a.contest == b.contest && a.mapHidden == b.mapHidden
+            && a.spotter == b.spotter && a.comment == b.comment;
+    };
+    if (s.size() == spots_.size()
+        && std::equal(s.cbegin(), s.cend(), spots_.cbegin(), same))
+        return;
     spots_ = s;
-    update();
+    changedTop();
+    if (!gpu_) update();
 }
 
 void PanadapterWidget::setMarkers(const QVector<FreqMarker>& m) {
     markers_ = m;
-    update();
+    changed(__func__);
 }
 
 // Pinned frequency markers (SDR-Console/Thetis style): a dashed amber line
@@ -969,6 +1033,7 @@ void PanadapterWidget::drawMarkers(QPainter& p, int hSpec) {
 // operator sees BEFORE clicking whether the zap grabs the intended
 // signal or its louder neighbor.
 void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
+    cursorRect_ = QRect();                         // what was drawn (GPU partial upload)
     if (!ds_.showCursor || hoverX_ < 0 || drag_ != Drag::None
         || centerHz_ == 0)
         return;
@@ -992,6 +1057,7 @@ void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
     p.drawRect(box);
     p.setPen(QColor(235, 216, 100));
     p.drawText(box, Qt::AlignCenter, txt);
+    cursorRect_ = QRect(hoverX_ - 1, 12, 3, height() - 12).united(box.adjusted(-2, -2, 2, 2));
     // zap snap preview: where the click would actually land
     if (snapFn_) {
         const int snapped = snapFn_(offHz);
@@ -1001,6 +1067,8 @@ void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
             p.drawLine(sx, 34, sx, 34 + 16);
             if (std::abs(sx - hoverX_) > 3)        // caret when it differs
                 p.drawLine(hoverX_, 42, sx, 42);
+            cursorRect_ = cursorRect_.united(QRect(QPoint(std::min(sx, hoverX_) - 3, 31),
+                                                   QPoint(std::max(sx, hoverX_) + 3, 53)));
         }
     }
 }
@@ -1034,12 +1102,12 @@ void PanadapterWidget::drawWfTimes(QPainter& p, int wfTop) {
 
 void PanadapterWidget::setCallsign(const QString& call) {
     callsign_ = call;
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setVfoBVisible(bool on) {
     vfoBVisible_ = on;
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setVfoLocks(bool a, bool b) {
@@ -1056,7 +1124,7 @@ void PanadapterWidget::setVfoB(uint64_t hz, char role, int loHz, int hiHz) {
     vfoBRole_ = role;
     vfoBLo_ = loHz;
     vfoBHi_ = hiHz;
-    update();
+    changed(__func__);
 }
 
 bool PanadapterWidget::overVfoB(int x) const {
@@ -1208,25 +1276,28 @@ void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
     ds_.avgFrames = std::max(1, ds_.avgFrames);
     ds_.wfSpeed   = std::max(1, ds_.wfSpeed);
     ds_.split     = std::clamp(ds_.split, 0.15f, 0.85f);
+    ds_.lineWidth = std::clamp(ds_.lineWidth, 1.0f, 4.0f);
+    ds_.smoothPx  = std::clamp(ds_.smoothPx, 0, 16);   // AetherSDR's ceiling
+    ds_.decombHz  = std::clamp(ds_.decombHz, 0, 600);
     dbMax_ = ds_.refDb;
     dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
     wfDbMax_ = ds_.wfRefDb;
     wfDbMin_ = ds_.wfRefDb - std::max(10.0f, ds_.rangeDb);
     if (scaleChanged)
         wfDirty_ = true;       // history re-renders in the new scale/palette
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setPassband(int loHz, int hiHz) {
     if (drag_ != Drag::None) return;               // never fight an active edge drag
     pbLoHz_ = std::min(loHz, hiHz);
     pbHiHz_ = std::max(loHz, hiHz);
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setBandZones(const QVector<BandZone>& zones) {
     zones_ = zones;
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setBwAnchor(int a) {
@@ -1239,7 +1310,7 @@ void PanadapterWidget::setNotch(bool on, int rfOffsetHz, int widthHz, bool peak)
     notchPeak_ = peak;
     notchRfHz_ = rfOffsetHz;
     notchWidthHz_ = widthHz;
-    update();
+    changed(__func__);
 }
 
 bool PanadapterWidget::overNotch(int x) const {
@@ -1291,12 +1362,16 @@ void PanadapterWidget::pushWaterfallRow(const std::vector<float>& db) {
         wfHist_.assign(static_cast<size_t>(kWfHistRows) * n, kNoRow);
         wfTimes_.assign(kWfHistRows, 0);
         wfHead_ = wfCount_ = wfPending_ = 0;
+        wfSerial_ = 0;
+        ++wfReset_;
         wfDirty_ = true;
     }
     std::memcpy(&wfHist_[static_cast<size_t>(wfHead_) * n], db.data(),
                 sizeof(float) * n);
     wfTimes_[static_cast<size_t>(wfHead_)] = QDateTime::currentMSecsSinceEpoch();
     wfHead_ = (wfHead_ + 1) % kWfHistRows;
+    ++wfSerial_;                                   // GPU: rows to upload
+    if (ds_.showWfTime) gpuDirtyLabels_ = true;    // the timestamps move
     wfCount_ = std::min(wfCount_ + 1, kWfHistRows);
     ++wfPending_;
 }
@@ -1350,32 +1425,93 @@ void PanadapterWidget::ensureWaterfallImage(int w, int h, int binLo, int binHi) 
 void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
     const size_t n = magsDb.size();
     spectrum_ = magsDb;
+    profTaken.fetch_add(1, std::memory_order_relaxed);
+    // Real time since the last frame (20 fps = 50 ms is the reference every
+    // per-frame constant below was tuned at).
+    if (!frameClock_.isValid()) frameClock_.start();
+    const qint64 nowNs = frameClock_.nsecsElapsed();
+    const float dtMs = lastFrameNs_ ? std::clamp((nowNs - lastFrameNs_) / 1e6f, 1.0f, 250.0f) : 50.0f;
+    lastFrameNs_ = nowNs;
+    const float k = dtMs / 50.0f;
     if (avg_.size() != n) {                        // bin count changed: hard reset
         avg_ = magsDb;
         peaks_ = magsDb;
     } else {
-        const float a = 1.0f / ds_.avgFrames;      // EMA; avgFrames==1 -> raw
+        // EMA with the 20 fps constant (1/avgFrames per 50 ms) in SECONDS.
+        const float a20 = 1.0f / std::max(1.0f, float(ds_.avgFrames));
+        const float a = 1.0f - std::pow(1.0f - a20, k);
         for (size_t i = 0; i < n; ++i) {
             avg_[i] += (magsDb[i] - avg_[i]) * a;
             if (ds_.peakHold)
-                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb, avg_[i]);
+                peaks_[i] = std::max(peaks_[i] - kPeakDecayDb * k, avg_[i]);
         }
     }
-    // Waterfall speed: max-merge wfSpeed frames into one committed row, so slow
-    // scroll keeps every blip instead of dropping frames.
+    // Waterfall speed: max-merge frames into one committed row every
+    // wfSpeed x 50 ms, so slow scroll keeps every blip instead of dropping
+    // frames, and rows/s is the same at any frame rate.
     if (wfAccum_.size() != n) {
         wfAccum_ = magsDb;
         wfAccumN_ = 1;
+        wfAccumMs_ = dtMs;
     } else {
         for (size_t i = 0; i < n; ++i) wfAccum_[i] = std::max(wfAccum_[i], magsDb[i]);
         ++wfAccumN_;
+        wfAccumMs_ += dtMs;
     }
-    if (wfAccumN_ >= ds_.wfSpeed) {
+    if (view3d_ && gpu_ && n >= 2) {
+        if (raw3dAcc_.size() != n) raw3dAcc_.assign(n, kNoRow);
+        for (size_t i = 0; i < n; ++i) raw3dAcc_[i] = std::max(raw3dAcc_[i], magsDb[i]);
+    }
+    if (view3d_ && gpu_ && n >= 2 && (acc3dMs_ += dtMs) >= k3dRowMs) {
+        acc3dMs_ = std::min(acc3dMs_ - k3dRowMs, k3dRowMs);
+        if (bins3d_ != int(n)) {
+            bins3d_ = int(n);
+            hist3d_.assign(size_t(k3dRows) * n, -200.0f);
+            count3d_ = 0;
+            serial3d_ = 0;
+            raw3dHist_ = 0;
+            ++reset3d_;
+        }
+        constexpr float kTemporalAlpha = 0.60f;    // AetherSDR: fraction of the new row
+        if (row3d_.size() != n) row3d_.assign(n, -200.0f);
+        const bool blend = count3d_ > 0;           // first row: nothing to blend with
+        for (size_t i = 0; i < n; ++i) {
+            const float a = raw3dAcc_[i];
+            float v = a;
+            if (raw3dHist_ >= 2) {
+                const float b = raw3dPrev1_[i], c = raw3dPrev2_[i];
+                v = std::max(std::min(a, b), std::min(std::max(a, b), c));   // median3
+            }
+            row3d_[i] = blend ? kTemporalAlpha * v + (1.0f - kTemporalAlpha) * row3d_[i] : v;
+        }
+        raw3dPrev2_.swap(raw3dPrev1_);
+        raw3dPrev1_ = raw3dAcc_;
+        raw3dHist_ = std::min(raw3dHist_ + 1, 2);
+        std::fill(raw3dAcc_.begin(), raw3dAcc_.end(), kNoRow);
+        std::copy(row3d_.begin(), row3d_.end(), hist3d_.begin() + size_t(serial3d_ % k3dRows) * n);
+        // The surface's floor follows the view's noise (median bin), as
+        // AetherSDR's does: noise always sits blue at the baseline and only
+        // real signals rise and warm, whatever REF/RANGE are.
+        {
+            const PanView v = panView();
+            std::vector<float> s(avg_.begin() + v.binLo, avg_.begin() + v.binHi);
+            if (s.size() >= 8) {
+                std::nth_element(s.begin(), s.begin() + s.size() / 2, s.end());
+                const float med = s[s.size() / 2];
+                floor3dDb_ = count3d_ == 0 ? med : floor3dDb_ + 0.2f * (med - floor3dDb_);
+            }
+        }
+        ++serial3d_;
+        count3d_ = std::min(count3d_ + 1, k3dRows);
+    }
+    const float rowMs = std::max(1, ds_.wfSpeed) * 50.0f;
+    if (wfAccumMs_ >= rowMs - 0.5f * dtMs) {       // nearest frame to the row time
         pushWaterfallRow(wfAccum_);
         std::fill(wfAccum_.begin(), wfAccum_.end(), kNoRow);
         wfAccumN_ = 0;
+        wfAccumMs_ = std::min(wfAccumMs_ - rowMs, rowMs);
     }
-    update();
+    frame();
 }
 
 int PanadapterWidget::hzToX(int hz) const {
@@ -1538,7 +1674,7 @@ void PanadapterWidget::setPropForecast(const QVector<PropContour>& contours,
                                        const QString& legend) {
     propContours_ = contours;
     propLegend_ = legend;
-    update();
+    changed(__func__);
 }
 
 // VOACAP coverage contours over the world-map backdrops (KE9NS's map
@@ -1658,13 +1794,13 @@ void PanadapterWidget::drawVoacap(QPainter& p, int hSpec) {
 
 void PanadapterWidget::setSwrRuns(const QVector<SwrRun>& runs) {
     swrRuns_ = runs;
-    update();
+    changed(__func__);
 }
 
 void PanadapterWidget::setShowSwr(bool on) {
     if (on == showSwr_) return;
     showSwr_ = on;
-    update();
+    changed(__func__);
 }
 
 // SWR sweep curves (right-click TUNE): amber, newest run bright with a
@@ -1865,8 +2001,8 @@ namespace {
 struct PanProf {
     bool on = qEnvironmentVariableIsSet("TTC_PANPROF");
     static constexpr int kStages = 7;
-    const char* names[kStages] = {"backdrop", "waterfall", "fill", "grid+scale",
-                                  "trace+vfo", "overlays", "total"};
+    const char* names[kStages] = {"backdrop", "waterfall", "fill", "mid",
+                                  "trace", "top", "total"};
     double acc[kStages] = {};
     int frames = 0;
     QElapsedTimer window, lap, whole;
@@ -1891,10 +2027,143 @@ struct PanProf {
 PanProf gPanProf;
 }  // namespace
 
+// The panadapter as layers — the CPU paint below calls them in order, and
+// the GPU view (PanGpuView) draws the same QPainter layers into cached
+// overlay images and does the waterfall, fill and trace on the card:
+//   under   background, map backdrop, VOACAP, callsign watermark
+//   wf      waterfall (+ its timestamps / WF ref label)
+//   fill    KE9NS gradient under the trace
+//   mid     grid, dB scale, band zones, passband, notch, scale strip,
+//           privileges, SWR, VFO lines + flags
+//   trace   peak-hold + the live trace
+//   top     markers, spots, cursor, tuner box, solar panel, compass rose
 void PanadapterWidget::paintEvent(QPaintEvent*) {
+    if (gpu_) return;                              // PanGpuView draws the layers
     gPanProf.begin();
     QPainter p(this);
     const int hSpec = spectrumHeight();
+    paintUnder(p, hSpec);
+    const PanView v = panView();
+    gPanProf.mark(0);
+    paintWaterfallCpu(p, hSpec, v);
+    gPanProf.mark(1);
+    const std::vector<float> colT = columnLevels(v);
+    paintFillCpu(p, hSpec, colT);
+    gPanProf.mark(2);
+    paintMid(p, hSpec);
+    gPanProf.mark(3);
+    paintTraceCpu(p, hSpec, v, colT);
+    gPanProf.mark(4);
+    paintTop(p, hSpec, v.n);
+    // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
+    // and the gestures are muscle memory by now — removed 2026-08-26 at the
+    // operator's request, it only ate spectrum.)
+    gPanProf.mark(5);
+    gPanProf.end();
+}
+
+QColor PanadapterWidget::traceColor(int i) {
+    static const QColor kTraceColors[] = {
+        QColor(210, 245, 215),                     // soft (the original)
+        QColor(242, 244, 248),                     // white
+        QColor(80, 230, 120),                      // green
+        QColor(255, 216, 50),                      // yellow
+        QColor(96, 200, 255),                      // cyan
+    };
+    return kTraceColors[std::clamp(i, 0, 4)];
+}
+
+QColor PanadapterWidget::heatColor(float t) {
+    // AetherSDR FftHeatMap::heatColor.
+    t = std::clamp(t, 0.0f, 1.0f);
+    float r, g, b;
+    if (t < 0.25f)      { const float s = t / 0.25f;          r = 0; g = s;     b = 1; }
+    else if (t < 0.5f)  { const float s = (t - 0.25f) / 0.25f; r = 0; g = 1;     b = 1 - s; }
+    else if (t < 0.75f) { const float s = (t - 0.5f) / 0.25f;  r = s; g = 1;     b = 0; }
+    else                { const float s = (t - 0.75f) / 0.25f; r = 1; g = 1 - s; b = 0; }
+    return QColor::fromRgbF(r, g, b);
+}
+
+void PanadapterWidget::set3D(bool on) {
+    if (on == view3d_) return;
+    view3d_ = on;
+    bins3d_ = count3d_ = 0;                        // start the stack fresh
+    acc3dMs_ = 0.0f;
+    raw3dHist_ = 0;
+    raw3dAcc_.clear();
+    serial3d_ = 0;
+    ++reset3d_;
+    changed(__func__);
+}
+
+void PanadapterWidget::changed(const char* who) {
+    if (qEnvironmentVariableIsSet("TTC_PANDBG") && who) {
+        static QHash<QString, int> n;
+        static QElapsedTimer t;
+        if (!t.isValid()) t.start();
+        ++n[QString::fromLatin1(who)];
+        if (t.elapsed() > 5000) {
+            for (auto it = n.cbegin(); it != n.cend(); ++it)
+                std::fprintf(stderr, "[pandbg] changed() by %s: %d in 5 s\n", qPrintable(it.key()), it.value());
+            n.clear();
+            t.restart();
+        }
+    }
+    gpuDirtyUnder_ = gpuDirtyMid_ = gpuDirtyTop_ = gpuDirtyLabels_ = gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update(); else update();
+}
+
+void PanadapterWidget::changedTop() {
+    gpuDirtyTop_ = true;
+    if (gpu_) gpu_->update();
+}
+
+void PanadapterWidget::changedCursor() {
+    gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update();
+}
+
+void PanadapterWidget::frame() {
+    // The zap preview follows the carrier under the cursor: refresh it a
+    // few times a second while hovering (the cursor layer is a small upload).
+    if (gpu_ && hoverX_ >= 0 && snapFn_ && ++cursorFrame_ % 4 == 0) gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update(); else update();
+}
+
+void PanadapterWidget::resizeEvent(QResizeEvent* e) {
+    QWidget::resizeEvent(e);
+    if (gpu_) gpu_->setGeometry(rect());
+    changed(__func__);
+}
+
+// The GPU panadapter (PanGpuView) on or off; any GPU failure drops back to
+// this widget's own CPU paint, for good, with a note on stderr.
+void PanadapterWidget::setGpuEnabled(bool on) {
+#ifndef HAVE_GPU_PAN
+    on = false;                                    // this build has no GPU path
+#endif
+    if (on == (gpu_ != nullptr)) return;
+#ifdef HAVE_GPU_PAN
+    if (on) {
+        gpu_ = new PanGpuView(this);
+        connect(gpu_, &QRhiWidget::renderFailed, this, [this] {
+            std::fprintf(stderr, "[pan] GPU panadapter failed — back to the CPU paint\n");
+            setGpuEnabled(false);
+            emit gpuFellBack();
+        });
+        gpu_->setGeometry(rect());
+        gpu_->lower();                             // any child controls stay on top
+        gpu_->show();
+    } else
+#endif
+    {
+        gpu_->deleteLater();
+        gpu_ = nullptr;
+    }
+    changed(__func__);
+}
+
+void PanadapterWidget::paintUnder(QPainter& p, int hSpec) {
     p.fillRect(rect(), QColor(12, 16, 22));
     if (ds_.background != 0 && hSpec > 1)          // KE9NS-style backdrop
         p.drawImage(0, 0, backgroundImage(width(), hSpec));
@@ -1916,6 +2185,9 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.setFont(saved);
     }
 
+}
+
+PanadapterWidget::PanView PanadapterWidget::panView() const {
     const int n = static_cast<int>(spectrum_.size());
     // Visible bin window: view span centered inside the full captured span.
     int binLo = 0, binHi = n;
@@ -1932,12 +2204,25 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         binHi = std::clamp(binHi, binLo + 2, n);
     }
 
-    gPanProf.mark(0);
+    return {n, binLo, binHi};
+}
+
+void PanadapterWidget::paintWaterfallCpu(QPainter& p, int hSpec, const PanView& v) {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
     // Waterfall (below the scale band): raw history, 1 row = 1 pixel line.
     const int wfTop = hSpec + kScaleBandH;
     if (wfBins_ >= 2 && n >= 2 && height() > wfTop) {
         ensureWaterfallImage(width(), height() - wfTop, binLo, binHi);
         if (!wfImg_.isNull()) p.drawImage(0, wfTop, wfImg_);
+        paintWfLabels(p, hSpec, v);
+    }
+}
+
+// The waterfall's timestamps and its "WF n dB" reference label — their own
+// GPU layer (they move with every row, the rest of the waterfall doesn't).
+void PanadapterWidget::paintWfLabels(QPainter& p, int hSpec, const PanView& v) {
+    const int wfTop = hSpec + kScaleBandH;
+    if (!(wfBins_ >= 2 && v.n >= 2 && height() > wfTop)) return;
         drawWfTimes(p, wfTop);
         if (std::abs(ds_.wfRefDb - ds_.refDb) > 0.5f) {
             QFont wf = p.font(); wf.setPixelSize(9); wf.setBold(true);
@@ -1949,9 +2234,10 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
             p.drawText(kDbAxisW + 6, wfTop + 12,
                        QString("WF %1 dB").arg(qRound(ds_.wfRefDb)));
         }
-    }
+}
 
-    gPanProf.mark(1);
+std::vector<float> PanadapterWidget::columnLevels(const PanView& v) const {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
     // Per-pixel-column signal level (0..1 of the scale): max of the column's
     // bins when zoomed out (narrow signals never vanish), linear interpolation
     // between bins when zoomed deep (no staircase). Drives both fill and trace,
@@ -1962,6 +2248,23 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     if (n >= 2 && w > 1) {
         colT.resize(w);
         const int nv = binHi - binLo;
+        const double hzPerPx = double(viewSpanHz_) / w;
+        const double binHz = double(fullSpanHz_) / n;
+        // Zoomed deep (bins coarser than pixels) De-comb runs on the view's
+        // own bins — far fewer points than columns, and where the comb
+        // really lives; the columns then interpolate the shaped bins.
+        const float* src = avg_.data();
+        int srcLo = binLo;
+        std::vector<float> shaped;
+        const bool decombBins = ds_.decombHz > 0 && nv < w;
+        if (decombBins) {
+            const int hi = std::min(binHi + 1, n);
+            shaped.assign(avg_.begin() + binLo, avg_.begin() + hi);
+            if (ds_.decombHz >= 2.0 * binHz) decomb_.apply(shaped, ds_.decombHz / binHz);
+            src = shaped.data();
+            srcLo = 0;
+        }
+        auto at = [&](int b) { return src[b - binLo + srcLo]; };
         for (int x = 0; x < w; ++x) {
             float v;
             if (nv >= w) {
@@ -1974,12 +2277,24 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                 const double pos = binLo + static_cast<double>(x) * (nv - 1) / (w - 1);
                 const int b = static_cast<int>(pos);
                 const float f = static_cast<float>(pos - b);
-                v = avg_[b] * (1.0f - f) + avg_[std::min(b + 1, n - 1)] * f;
+                v = at(b) * (1.0f - f) + at(std::min(b + 1, n - 1)) * f;
             }
-            colT[x] = std::clamp((v - dbMin_) / range, 0.0f, 1.0f);
+            colT[x] = v;                           // dB until shaped
         }
+        // AetherSDR's FFT De-comb, then FFT Smooth. Zoomed out, De-comb runs
+        // on the columns (each the max of its bins); its width must span two
+        // of them, or the trace cannot hold a comb at that spacing.
+        if (ds_.decombHz > 0 && !decombBins && ds_.decombHz >= 2.0 * hzPerPx)
+            decomb_.apply(colT, ds_.decombHz / hzPerPx);
+        if (ds_.smoothPx > 0) smoothTraceLinearPower(colT, ds_.smoothPx, smoothScratch_);
+        for (float& c : colT) c = std::clamp((c - dbMin_) / range, 0.0f, 1.0f);
     }
 
+    return colT;
+}
+
+void PanadapterWidget::paintFillCpu(QPainter& p, int hSpec, const std::vector<float>& colT) {
+    const int w = width();
     // KE9NS-style fill: color keyed to the dB AXIS, so the bands run
     // horizontally and a signal climbs through blue -> green -> yellow -> red
     // as it gets stronger (per-column coloring made vertical streaks instead).
@@ -1993,6 +2308,28 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         std::vector<int> colY(w);
         for (int x = 0; x < w; ++x)
             colY[x] = static_cast<int>(hSpec * (1.0f - colT[x]));
+        if (ds_.traceStyle == 1) {
+            // AetherSDR heat fill: per column, the heat colour of its level at
+            // the trace (faint) fading to a dark-blue base at the bottom.
+            const float base[4] = {0.f, 0.f, 77.f / 255.f, kHeatFillAlpha};
+            std::vector<QColor> top(w);
+            for (int x = 0; x < w; ++x) top[x] = heatColor(colT[x]);
+            for (int y = 0; y < hSpec; ++y) {
+                QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
+                for (int x = 0; x < w; ++x) {
+                    if (y < colY[x]) { line[x] = qRgba(0, 0, 0, 0); continue; }
+                    const float f = float(y - colY[x]) / float(std::max(1, hSpec - colY[x]));
+                    const float ta = kHeatFillAlpha * kHeatTopAlpha;
+                    const float a = ta + f * (base[3] - ta);
+                    const float r = float(top[x].redF()) * (1 - f) + base[0] * f;
+                    const float g = float(top[x].greenF()) * (1 - f) + base[1] * f;
+                    const float b = float(top[x].blueF()) * (1 - f) + base[2] * f;
+                    line[x] = qRgba(int(r * a * 255), int(g * a * 255), int(b * a * 255), int(a * 255));
+                }
+            }
+            p.drawImage(0, 0, fillImg_);
+            return;
+        }
         for (int y = 0; y < hSpec; ++y) {
             const float t = 1.0f - static_cast<float>(y) / (hSpec - 1);
             const QRgb c = mapColor(std::pow(t, kFillGamma));
@@ -2002,23 +2339,13 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
         p.drawImage(0, 0, fillImg_);
     }
-    gPanProf.mark(2);
+}
 
+void PanadapterWidget::paintMid(QPainter& p, int hSpec) {
     // Frequency gridlines and the (draggable) dB scale, over the fill.
     drawFreqGrid(p, hSpec);
     drawDbScale(p, hSpec);
     drawBandZones(p, hSpec);
-    gPanProf.mark(3);
-
-    QPainterPath tracePath;
-    if (!colT.empty()) {
-        for (int x = 0; x < w; ++x) {
-            const double y = hSpec * (1.0 - colT[x]);
-            if (x == 0) tracePath.moveTo(x, y);
-            else        tracePath.lineTo(x, y);
-        }
-    }
-
     // Passband highlight across spectrum AND waterfall (SmartSDR-style).
     const int xLo = hzToX(pbLoHz_), xHi = hzToX(pbHiHz_);
     p.fillRect(QRect(QPoint(xLo, 0), QPoint(xHi, height())), QColor(60, 120, 200, 55));
@@ -2106,6 +2433,22 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         p.setBrush(Qt::NoBrush);
     }
 
+}
+
+void PanadapterWidget::paintTraceCpu(QPainter& p, int hSpec, const PanView& v,
+                                     const std::vector<float>& colT) {
+    const int n = v.n, binLo = v.binLo, binHi = v.binHi;
+    const float range = dbMax_ - dbMin_;
+    const int w = width();
+    QPainterPath tracePath;
+    if (!colT.empty()) {
+        for (int x = 0; x < w; ++x) {
+            const double y = hSpec * (1.0 - colT[x]);
+            if (x == 0) tracePath.moveTo(x, y);
+            else        tracePath.lineTo(x, y);
+        }
+    }
+
     // Peak-hold trace (under the live trace), then the spectrum trace itself.
     if (n >= 2) {
         if (ds_.peakHold && peaks_.size() == spectrum_.size()) {
@@ -2121,19 +2464,33 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                 prev = pt;
             }
         }
-        static const QColor kTraceColors[] = {
-            QColor(210, 245, 215),                 // soft (the original)
-            QColor(242, 244, 248),                 // white
-            QColor(80, 230, 120),                  // green
-            QColor(255, 216, 50),                  // yellow
-            QColor(96, 200, 255),                  // cyan
-        };
-        p.setPen(kTraceColors[std::clamp(ds_.traceColor, 0, 4)]);
+        if (ds_.traceStyle == 1) {
+            // Heat trace: colour by height, so a vertical gradient pen is
+            // exactly the per-segment heat colour.
+            QLinearGradient g(0, hSpec, 0, 0);
+            for (float t : {0.f, 0.25f, 0.5f, 0.75f, 1.f}) g.setColorAt(t, heatColor(t));
+            QPen pen(QBrush(g), ds_.lineWidth);
+            pen.setJoinStyle(Qt::RoundJoin);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(pen);
+        } else {
+            QPen pen(traceColor(ds_.traceColor), ds_.lineWidth);
+            if (ds_.lineWidth > 1.0f) {
+                pen.setJoinStyle(Qt::RoundJoin);
+                p.setRenderHint(QPainter::Antialiasing, true);
+            }
+            p.setPen(pen);
+        }
         p.drawPath(tracePath);
-        gPanProf.mark(4);
+        p.setRenderHint(QPainter::Antialiasing, false);
+    }
+}
+
+void PanadapterWidget::paintTop(QPainter& p, int hSpec, int n, bool withCursor) {
+    if (n >= 2) {
         drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
-        drawCursor(p, hSpec);                      // hover line + zap preview
+        if (withCursor) drawCursor(p, hSpec);      // hover line + zap preview
         drawTuneBox(p, hSpec);                     // tuner/amp settings, corner
         drawSolarPanel(p, hSpec);                  // space weather, left of it
         drawCompassRose(p, hSpec);                 // bearing rose, bottom-left
@@ -2144,11 +2501,6 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
                    "panadapter — no IQ source (build with -DBUILD_SDRPLAY=ON)");
     }
 
-    // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
-    // and the gestures are muscle memory by now — removed 2026-08-26 at the
-    // operator's request, it only ate spectrum.)
-    gPanProf.mark(5);
-    gPanProf.end();
 }
 
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {
@@ -2169,7 +2521,7 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
         clampViewShift();
         wfDirty_ = true;
         emit viewSpanChanged(viewSpanHz_);
-        update();
+        changed(__func__);
     } else {
         const int n = static_cast<int>(steps > 0 ? std::ceil(steps) : std::floor(steps));
         // Wheel over the notch marker widens/narrows it; elsewhere it tunes
@@ -2186,7 +2538,8 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
 
 void PanadapterWidget::leaveEvent(QEvent*) {
     hoverX_ = -1;
-    update();
+    changedCursor();
+    if (!gpu_) update();
 }
 
 void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
@@ -2216,7 +2569,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             roseBearing_ = -1.0;
             roseLabel_.clear();
             emit roseBearingChanged(-1.0, QString());
-            update();
+            changed(__func__);
             return;
         }
         if (inScaleBand(y)) {
@@ -2226,7 +2579,7 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
             // visible under the finger that made it.
             dividerPan_ = !dividerPan_;
             setCursor(dividerPan_ ? Qt::SizeHorCursor : Qt::SizeVerCursor);
-            update();
+            changed(__func__);
             return;
         }
         if (!inDbAxis(x, y)) {
@@ -2266,14 +2619,14 @@ void PanadapterWidget::mousePressEvent(QMouseEvent* e) {
     // Click inside the compass rose = manual heading (right-click clears).
     if (overRose(x, y)) {
         drag_ = Drag::None;
-        const int hSpec = spectrumHeight();
-        const int cx = 10 + ds_.roseR, cy = hSpec - ds_.roseR - 10;
+        const QPoint c = roseCenter();
+        const int cx = c.x(), cy = c.y();
         roseBearing_ = std::atan2(double(x - cx), double(cy - y)) * 180.0 / M_PI;
         if (roseBearing_ < 0.0) roseBearing_ += 360.0;
         roseDistKm_ = -1.0;
         roseLabel_ = "MAN";
         emit roseBearingChanged(roseBearing_, roseLabel_);
-        update();
+        changed(__func__);
         return;
     }
     // A click on a spot callsign tunes to the spotted frequency — and swings
@@ -2405,6 +2758,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         else if (overVfoB(hx) || onAEdge
                  || std::abs(hx - hzToX(0)) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();
+        changedCursor();                         // GPU: the cursor's own layer
         return;
     }
     const int x = e->pos().x();
@@ -2427,7 +2781,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         ds_.split = std::clamp(
             dragStartSplit_ + static_cast<float>(e->pos().y() - dragStartY_) / usable,
             0.15f, 0.85f);
-        update();
+        changed(__func__);
         emit displaySettingsEdited(ds_);
         return;
     }
@@ -2442,7 +2796,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         wfDbMax_ = ds_.wfRefDb;
         wfDbMin_ = ds_.wfRefDb - ds_.rangeDb;
         wfDirty_ = true;
-        update();
+        changed(__func__);
         emit displaySettingsEdited(ds_);
         return;
     }
@@ -2455,20 +2809,20 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         dbMax_ = ds_.refDb;
         dbMin_ = ds_.refDb - ds_.rangeDb;
         wfDirty_ = true;
-        update();
+        changed(__func__);
         emit displaySettingsEdited(ds_);
         return;
     }
     if (drag_ == Drag::Notch) {
         notchRfHz_ = hz;
-        update();
+        changed(__func__);
         emit notchDragged(notchRfHz_);              // drag-to-notch
         return;
     }
     if (drag_ == Drag::VfoB) {
         const qint64 off = dragStartBOff_ + (hz - xToHz(dragStartX_));
         vfoBHz_ = static_cast<uint64_t>(static_cast<qint64>(centerHz_) + off);
-        update();
+        changed(__func__);
         emit vfoBDragged(static_cast<int>(off));    // consumer streams *BF
         return;
     }
@@ -2496,7 +2850,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         } else {
             vfoBHi_ = std::max(hzB, vfoBLo_ + 50);
         }
-        update();
+        changed(__func__);
         emit vfoBPassbandChanged(vfoBLo_, vfoBHi_);
         return;
     }
@@ -2549,7 +2903,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
     } else {
         pbHiHz_ = std::max(hz, pbLoHz_ + 50);
     }
-    update();
+    changed(__func__);
     emit passbandChanged(pbLoHz_, pbHiHz_);         // drag-to-filter
 }
 

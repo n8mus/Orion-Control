@@ -29,6 +29,10 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QWidget>
+#include <QtGlobal>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+#include <QChronoTimer>
+#endif
 #include <QTimer>
 #include <QToolButton>
 #include <QMenu>
@@ -68,6 +72,7 @@
 #include "ui/DigiWindow.h"
 #include "ui/SkimmerWindow.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -135,6 +140,14 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle(shipName());
 
     pan_ = new PanadapterWidget(this);
+    // GPU panadapter (display/gpuPan; TTC_GPUPAN=0/1 overrides). Falls back
+    // to the CPU paint by itself if the GPU path can't start.
+    {
+        bool gpu = QSettings().value("display/gpuPan", true).toBool();
+        const QByteArray env = qgetenv("TTC_GPUPAN");
+        if (!env.isEmpty()) gpu = env != "0";
+        pan_->setGpuEnabled(gpu);
+    }
     pan_->setPassband(-1200, 1200);
     pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
     smeter_ = new SMeterWidget(this);
@@ -499,6 +512,65 @@ MainWindow::MainWindow(QWidget* parent)
     auto* dispAction = new QWidgetAction(dispMenu);
     dispAction->setDefaultWidget(dispPanel);
     dispMenu->addAction(dispAction);
+    // GPU panadapter + frame rate (the drawing's on the video card, so 60 fps
+    // costs the CPU next to nothing; the CPU paint stays at 20).
+    dispMenu->addSeparator();
+    auto* gpuAct = dispMenu->addAction("GPU panadapter (video card draws it)");
+    gpuAct->setCheckable(true);
+    gpuAct->setChecked(pan_->gpuEnabled());
+    gpuAct->setEnabled(PanadapterWidget::gpuAvailable());   // Qt < 6.7 builds: CPU only
+    gpuAct->setToolTip("Waterfall, trace and fill on the video card (OpenGL); the labels\n"
+                       "and scales redrawn only when they change. Off = the CPU paint.\n"
+                       "Falls back to the CPU paint by itself if the GPU can't start.");
+    // 3D stacked traces (GPU only): the recent sweeps in perspective over
+    // the spectrum area, AetherSDR's 3D view. Off = the flat trace.
+    auto* act3d = dispMenu->addAction("3D stacked traces (GPU)");
+    act3d->setCheckable(true);
+    act3d->setChecked(QSettings().value("display/pan3d", false).toBool());
+    act3d->setToolTip("The last few seconds of spectrum stacked in perspective, newest\n"
+                      "in front, scrolling back. Uses the PALETTE (or the heat colours\n"
+                      "with TRACE = Heat map). Needs the GPU panadapter.");
+    pan_->set3D(act3d->isChecked());
+    act3d->setEnabled(pan_->gpuEnabled());
+    connect(act3d, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("display/pan3d", on);
+        pan_->set3D(on);
+    });
+    QMenu* fpsMenu = dispMenu->addMenu("Frame rate");
+    auto* fpsGroup = new QActionGroup(fpsMenu);
+    const int fpsNow = std::clamp(QSettings().value("display/panFps", 20).toInt(), 20, 60);
+    for (int f : {20, 30, 60}) {
+        QAction* a = fpsMenu->addAction(QString("%1 fps").arg(f));
+        a->setCheckable(true);
+        a->setData(f);
+        a->setChecked(f == fpsNow);
+        fpsGroup->addAction(a);
+    }
+    const auto applyFps = [this, fpsMenu, act3d](int f) {
+        if (!pan_->gpuEnabled()) f = 20;           // the CPU paint can't afford more
+        spectrum_.setFrameRateHz(f);
+        pan_->setFrameRate(f);
+        startSpecPacer();
+        fpsMenu->setEnabled(pan_->gpuEnabled());
+        act3d->setEnabled(pan_->gpuEnabled());
+    };
+    connect(fpsGroup, &QActionGroup::triggered, this, [applyFps](QAction* a) {
+        QSettings().setValue("display/panFps", a->data().toInt());
+        applyFps(a->data().toInt());
+    });
+    connect(gpuAct, &QAction::toggled, this, [this, applyFps](bool on) {
+        QSettings().setValue("display/gpuPan", on);
+        pan_->setGpuEnabled(on);
+        applyFps(QSettings().value("display/panFps", 20).toInt());
+        statusBar()->showMessage(on ? "GPU panadapter on" : "GPU panadapter off — CPU paint", 4000);
+    });
+    connect(pan_, &PanadapterWidget::gpuFellBack, this, [this, gpuAct, applyFps] {
+        const QSignalBlocker b(gpuAct);
+        gpuAct->setChecked(false);
+        applyFps(20);
+        statusBar()->showMessage("GPU panadapter couldn't start — using the CPU paint", 8000);
+    });
+    applyFps(fpsNow);
     dispBtn->setMenu(dispMenu);
     topLay->addSpacing(8);
     topLay->addWidget(dispBtn);
@@ -525,6 +597,10 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/bandplan",   d.showBandPlan);
         s.setValue("display/privileges", d.showPrivileges);
         s.setValue("display/trace",      d.traceColor);
+        s.setValue("display/traceStyle", d.traceStyle);
+        s.setValue("display/lineWidth",  d.lineWidth);
+        s.setValue("display/fftSmooth",  d.smoothPx);
+        s.setValue("display/decombHz",   d.decombHz);
         s.setValue("display/bigVfo",     d.bigVfo);
         s.setValue("display/clock",      d.showClock);
         s.setValue("display/wfTime",     d.showWfTime);
@@ -602,6 +678,10 @@ MainWindow::MainWindow(QWidget* parent)
         d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
         d.showPrivileges = s.value("display/privileges", d.showPrivileges).toBool();
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();
+        d.traceStyle = s.value("display/traceStyle", d.traceStyle).toInt();
+        d.lineWidth  = s.value("display/lineWidth",  d.lineWidth).toFloat();
+        d.smoothPx   = s.value("display/fftSmooth",  d.smoothPx).toInt();
+        d.decombHz   = s.value("display/decombHz",   d.decombHz).toInt();
         d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
         d.showWfTime = s.value("display/wfTime",     d.showWfTime).toBool();
@@ -3288,7 +3368,23 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             }
         }
-        QMetaObject::invokeMethod(pan_, [this, spanHz, copy = db]() mutable {
+        // To the pacer: a short queue, newest kept (more than ~12 frames =
+        // the GUI fell behind; a backlog is pure lag, the smoothing is
+        // time-based so a dropped frame costs nothing).
+        PanadapterWidget::profEmitted.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lk(specQMux_);
+            specQ_.push_back(db);
+            if (int(specQ_.size()) > PanadapterWidget::profMaxQueue.load())
+                PanadapterWidget::profMaxQueue.store(int(specQ_.size()));
+            while (specQ_.size() > 12) {
+                specQ_.pop_front();
+                PanadapterWidget::profDropped.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    specPresent_ = [this, spanHz](std::vector<float>& copy) {
+        {
             pan_->setSpectrum(copy);
             // SDR-source S-meter: integrate power across the RX passband.
             // These bins never pass through the radio's AGC or RF gain, so
@@ -3334,8 +3430,11 @@ MainWindow::MainWindow(QWidget* parent)
             lastSdrMeasDb_ = meas;
             smeter_->setSdrLevel(meas + sdrCalDb_);
             lastSpectrum_ = std::move(copy);          // CW zap reads this
-        }, Qt::QueuedConnection);
-    });
+        }
+    };
+    spectrum_.setSampleClocked(true);
+    spectrum_.setSampleRateHz(spanHz);
+    startSpecPacer();
     // CW reader taps the same IQ stream (SDR thread; a no-op until the CW
     // window turns it on). The tuned carrier is always -kLoOffsetHz from
     // the SDR LO, so the decoder's mixer never moves.
@@ -3403,6 +3502,10 @@ MainWindow::MainWindow(QWidget* parent)
             std::lock_guard<std::mutex> lg(iqRingMux_);
             iqRing_.push_back(iq);
             iqRingSamples_ += iq.size();
+            {
+                const int ms = int(iqRingSamples_ / 1000);   // 1 MS/s: samples/1000 = ms
+                if (ms > PanadapterWidget::profMaxIqMs.load()) PanadapterWidget::profMaxIqMs.store(ms);
+            }
             const size_t cap = size_t(sdrSpanHz_ > 0 ? sdrSpanHz_
                                                      : kSdrCaptureHz) * 2;
             while (iqRingSamples_ > cap && iqRing_.size() > 1) {
@@ -3441,6 +3544,8 @@ MainWindow::MainWindow(QWidget* parent)
             if (int(fRate) != spanHz) {
                 pan_->setSpanHz(int(fRate));
                 sdrSpanHz_ = int(fRate);
+                spectrum_.setSampleRateHz(fRate);    // frame period follows
+                startSpecPacer();
                 cwDec_->setInputRate(fRate);
                 skim_->setInputRate(fRate);
                 skimStft_->setInputRate(fRate);
@@ -3565,6 +3670,14 @@ MainWindow::MainWindow(QWidget* parent)
                 if (skimView_) skimView_->grab().save(png);
             });
         }
+    }
+    // TTC_PANSPAN=<Hz>: zoom the panadapter to that span shortly after
+    // startup (headless trace-look review on a capture, e.g. 12000 to see
+    // an SSB voice's harmonic comb for De-comb).
+    if (const char* ps = std::getenv("TTC_PANSPAN")) {
+        const int span = atoi(ps);
+        if (span > 0)
+            QTimer::singleShot(2500, this, [this, span] { pan_->setViewSpanHz(span); });
     }
     // TTC_CONTEST=1: flip contest mode on at startup (pairs with
     // TTC_SCREENSHOT to review the deck headless; a pre-seeded
@@ -3852,6 +3965,9 @@ MainWindow::MainWindow(QWidget* parent)
             connect(txMeter_, &ttc::TxMeter::reading, this,
                     [this](const ttc::TxMeter::Reading& r) {
                 if (tuneEntryDlg_ && r.valid) tuneEntryDlg_->setLiveSwr(r.swr);
+                // The SmartMTR face reads TX from the meter (10 Hz, |Z|/phase).
+                smeter_->setExtTx(r.watts, r.swr, r.zOhm, r.phaseDeg, r.valid, r.zValid,
+                                  meterName_);
             });
             connect(txMeter_, &ttc::TxMeter::aliveChanged, this,
                     [this, name](bool up) {
@@ -4027,4 +4143,53 @@ void MainWindow::maybeRunVoacap() {
         (kBands[curBand_].loHz + kBands[curBand_].hiHz) / 2.0 / 1e6;
     voacap_.request(la, lo, fMHz, ssn, std::clamp(lastTxPwr_, 1, 200));
 }
+
+// The GUI side of the spectrum pacer (see specQ_): one frame per tick on a
+// precise timer whose interval steers the queue toward 2 frames of slack —
+// a little faster when frames pile up (a late tick, the sample clock a hair
+// ahead), a little slower when it runs dry. Steering instead of dropping:
+// the first cut shed ~3 frames/s whenever a tick ran late, and each shed
+// frame was a visible skip in the 3D scroll (live, 2026-10-16). Frames are
+// only thrown away after a real stall (> 8 queued).
+void MainWindow::startSpecPacer() {
+    if (!specPresent_) return;                     // before the SDR chain exists
+    if (!specPacer_) {
+        specPacer_ = new SpecPacerTimer(this);
+        specPacer_->setTimerType(Qt::PreciseTimer);
+        specPacer_->setSingleShot(true);
+        connect(specPacer_, &SpecPacerTimer::timeout, this, [this] {
+            // One frame per tick; beyond 3 queued (the display is 60 Hz, the
+            // FFT 61; a late tick) the extras are CONSUMED in the same tick —
+            // their data still reaches the averaging, waterfall and 3D rows,
+            // they just share one repaint. Nothing is thrown away.
+            std::vector<std::vector<float>> take;
+            size_t left = 0;
+            {
+                std::lock_guard<std::mutex> lk(specQMux_);
+                const size_t n = specQ_.empty() ? 0 : std::max<size_t>(1, specQ_.size() - 2);
+                for (size_t i = 0; i < n && i < specQ_.size(); ++i)
+                    take.push_back(std::move(specQ_[i]));
+                specQ_.erase(specQ_.begin(), specQ_.begin() + qsizetype(take.size()));
+                left = specQ_.size();
+            }
+            const double scale = std::clamp(1.0 - 0.12 * (double(left) - 2.0), 0.6, 1.25);
+            setPacerInterval(spectrum_.framePeriodMs() * scale);
+            specPacer_->start();
+            for (auto& f : take) specPresent_(f);
+        });
+    }
+    setPacerInterval(spectrum_.framePeriodMs());
+    specPacer_->start();
+}
+
+// QChronoTimer (Qt 6.8+) takes the 16.384 ms frame period exactly; a plain
+// QTimer (older Qt) rounds to whole ms and the queue steering absorbs it.
+void MainWindow::setPacerInterval(double ms) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    specPacer_->setInterval(std::chrono::nanoseconds(qint64(ms * 1e6)));
+#else
+    specPacer_->setInterval(std::max(1, int(std::lround(ms))));
+#endif
+}
+
 } // namespace ttc

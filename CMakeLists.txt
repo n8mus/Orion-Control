@@ -121,6 +121,7 @@ add_executable(tentec-console
   src/net/PatMonitor.cpp        src/net/PatMonitor.h
   src/net/PskReporter.cpp       src/net/PskReporter.h
   src/ui/FreeDvWindow.cpp       src/ui/FreeDvWindow.h
+  src/ui/PanGpuView.h
   src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
@@ -177,6 +178,7 @@ add_executable(tentec-console
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
   src/ui/AudioPanel.cpp         src/ui/AudioPanel.h
   src/ui/SMeterWidget.cpp       src/ui/SMeterWidget.h
+  src/ui/SMeterSmartMtr.cpp
   src/ui/ControlPanel.cpp       src/ui/ControlPanel.h
   src/ui/FrequencyDisplay.cpp   src/ui/FrequencyDisplay.h
   src/ui/TxBar.cpp              src/ui/TxBar.h
@@ -191,6 +193,7 @@ add_executable(tentec-console
   src/dsp/ClientFinalLimiter.cpp src/dsp/ClientFinalLimiter.h
   src/ui/VoiceEqDialog.cpp      src/ui/VoiceEqDialog.h
   src/dsp/Fft.cpp               src/dsp/Fft.h
+  src/dsp/TraceShaping.cpp      src/dsp/TraceShaping.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
   src/sdr/IqRecorder.cpp        src/sdr/IqRecorder.h
@@ -207,6 +210,43 @@ if(NOT TTC_GIT_VERSION)
   set(TTC_GIT_VERSION ${PROJECT_VERSION})
 endif()
 target_compile_definitions(tentec-console PRIVATE TTC_VERSION="${TTC_GIT_VERSION}")
+# GPU panadapter (PanGpuView): QRhiWidget is Qt 6.7+, QRhi needs the
+# semi-public Qt GUI headers (Qt6::GuiPrivate), and its shaders are compiled
+# to .qsb at build time (Qt ShaderTools). GLSL 330 — texelFetch and integer
+# maths in the shaders; the station's Mesa radeonsi does 4.6. Optional: an
+# older Qt (Ubuntu 24.04's 6.4, i.e. CI and the AppImage) builds the CPU paint.
+option(BUILD_GPU_PAN "GPU panadapter when Qt allows it (OFF = CPU paint only)" ON)
+set(TTC_GPU_PAN OFF)
+if(BUILD_GPU_PAN AND Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
+  find_package(Qt6 QUIET COMPONENTS GuiPrivate ShaderTools)
+  if(TARGET Qt6::GuiPrivate AND COMMAND qt_add_shaders)
+    set(TTC_GPU_PAN ON)
+  endif()
+endif()
+if(TTC_GPU_PAN)
+  message(STATUS "GPU panadapter: on (Qt ${Qt6_VERSION})")
+  target_sources(tentec-console PRIVATE src/ui/PanGpuView.cpp)
+  target_compile_definitions(tentec-console PRIVATE HAVE_GPU_PAN)
+  qt_add_shaders(tentec-console "pan_shaders"
+  PREFIX "/shaders"
+  BASE src/ui/shaders
+  GLSL "330"
+  NOHLSL NOMSL
+  FILES
+    src/ui/shaders/pan_quad.vert
+    src/ui/shaders/pan_overlay.frag
+    src/ui/shaders/pan_waterfall.frag
+    src/ui/shaders/pan_fill.frag
+    src/ui/shaders/pan_line.vert
+    src/ui/shaders/pan_line.frag
+    src/ui/shaders/pan_trace.vert
+    src/ui/shaders/pan_trace.frag
+    src/ui/shaders/pan_3d.vert
+    src/ui/shaders/pan_3d.frag)
+target_link_libraries(tentec-console PRIVATE Qt6::GuiPrivate)
+else()
+  message(STATUS "GPU panadapter: off (needs Qt >= 6.7 with ShaderTools; have ${Qt6_VERSION})")
+endif()
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql Qt6::WebSockets rnnoise)
 if(WIN32)
   # GUI subsystem: no stray console window on double-click. stderr then has

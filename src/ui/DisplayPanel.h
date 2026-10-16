@@ -66,6 +66,10 @@ private:
     QCheckBox* cursor_ = nullptr;
     QCheckBox* zap_    = nullptr;
     QComboBox* trace_  = nullptr;
+    QComboBox* style_  = nullptr;  // trace style: classic / heat map
+    QComboBox* width_  = nullptr;  // trace line width
+    QComboBox* smooth_ = nullptr;  // FFT Smooth
+    QComboBox* decomb_ = nullptr;  // FFT De-comb
     QCheckBox* call_   = nullptr;
     QLineEdit* callEdit_ = nullptr;
     QLineEdit* gridEdit_ = nullptr;

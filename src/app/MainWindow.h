@@ -7,10 +7,13 @@
 #include <QDateTime>
 #include <cmath>
 #include <condition_variable>
+#include <QtGlobal>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <vector>
 class QTimer;
+class QChronoTimer;
 class QSlider;
 class QLabel;
 class QToolButton;
@@ -592,6 +595,20 @@ private:
 #ifdef HAVE_SDRPLAY
     SdrPlaySource    sdr_;
     SpectrumComputer spectrum_{16384};  // 61 Hz/bin at 1 MHz capture — survives deep zoom
+    // Spectrum frame pacer: the FFT emits on the SAMPLE clock (the IQ comes in
+    // ~43 ms USB bursts), and the GUI presents one frame per frame period on
+    // its own clock — 60 fps is then 60 evenly spaced frames, not 23 clumps.
+    std::mutex specQMux_;
+    std::deque<std::vector<float>> specQ_;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 8, 0)
+    using SpecPacerTimer = QChronoTimer;
+#else
+    using SpecPacerTimer = QTimer;
+#endif
+    SpecPacerTimer* specPacer_ = nullptr;
+    void setPacerInterval(double ms);
+    std::function<void(std::vector<float>&)> specPresent_;
+    void startSpecPacer();
     // IQ fan-out worker: the USB callback only enqueues into iqRing_;
     // this thread runs the FFT/decoders/recorder with ~1 s of elastic
     // buffer. Running the consumers inside the callback let ordinary

@@ -5,11 +5,16 @@
 #include <QStringList>
 #include <QVector>
 #include <QRect>
+#include <QElapsedTimer>
 #include <algorithm>
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <cstdlib>
+#include <cmath>
 #include <vector>
+
+#include "dsp/TraceShaping.h"
 
 namespace ttc {
 
@@ -50,6 +55,11 @@ struct DisplaySettings {
     // Shares rangeDb (one contrast knob). Dragged on the WATERFALL's own
     // left edge, same gesture as the spectrum's dB axis.
     float wfRefDb   = -55.0f;
+    // AetherSDR trace look; the defaults are the original look.
+    int   traceStyle = 0;       // 0 classic (palette fill, flat line), 1 heat map
+    float lineWidth  = 1.0f;    // spectrum trace width, px
+    int   smoothPx   = 0;       // FFT Smooth half-width, px (0 = off)
+    int   decombHz   = 0;       // FFT De-comb width, Hz (0 = off)
 };
 
 // A user-pinned frequency marker (SDR-Console/Thetis style): a labeled
@@ -105,9 +115,51 @@ struct SpotLabel {
 // The waterfall keeps raw dB rows (not pixels) so zoom/resize/palette changes
 // re-render history crisply — each display row maps pixel columns to bins with
 // a max-pick, never smooth image scaling.
+class PanGpuView;
+
 class PanadapterWidget : public QWidget {
     Q_OBJECT
+    friend class PanGpuView;
 public:
+    static constexpr int kWfHistRows = 1024;       // raw dB rows kept for re-render on zoom
+    static constexpr int kScaleBandH = 32;         // freq-scale strip between spectrum and wf
+    // The fill's colour ramp is gamma-compressed: warm colours arrive partway
+    // up the scale, not only at the very top.
+    static constexpr float kFillGamma = 0.6f;
+    static QColor traceColor(int i);               // DisplaySettings::traceColor
+    // AetherSDR's heat-map ramp for the heat trace style: blue (noise floor,
+    // t = 0) -> cyan -> green -> yellow -> red (top of the scale, t = 1).
+    static QColor heatColor(float t);
+    static constexpr float kHeatFillAlpha = 0.70f; // fill opacity at the base
+    static constexpr float kHeatTopAlpha  = 0.30f; // x fill alpha at the trace
+    // GPU panadapter (PanGpuView) on/off — falls back to the CPU paint by itself.
+    void setGpuEnabled(bool on);
+    bool gpuEnabled() const { return gpu_ != nullptr; }
+    // Whether this build has the GPU panadapter at all (Qt >= 6.7 with
+    // ShaderTools + GuiPrivate; CI's Ubuntu Qt 6.4 builds the CPU paint only).
+    static constexpr bool gpuAvailable() {
+#ifdef HAVE_GPU_PAN
+        return true;
+#else
+        return false;
+#endif
+    }
+    // Requested spectrum frame rate. The time-based behaviours (trace
+    // averaging, waterfall rows/s, peak-hold droop, 3D scroll) run off the
+    // MEASURED interval between frames, not this number: a 60 fps request
+    // that delivers 45 must not stretch every time constant by a third
+    // (live-found 2026-10-16: 60 fps looked slower than 20).
+    void setFrameRate(int fps) { fpsScale_ = std::max(0.25f, fps / 20.0f); }
+    // 3D stacked traces (GPU only; the CPU paint stays 2D): the last k3dRows
+    // averaged traces in perspective over the spectrum area, newest in front,
+    // scrolling back smoothly at ~10 rows/s. The waterfall stays below.
+    // TTC_PANPROF frame accounting: FFT frames produced / dropped before the
+    // GUI / taken by setSpectrum (read + reset by the GPU profiler).
+    static inline std::atomic<int> profEmitted{0}, profDropped{0}, profTaken{0};
+    static inline std::atomic<int> profMaxQueue{0}, profMaxIqMs{0};   // pacer depth / IQ backlog
+    static constexpr int k3dRows = 96;             // AetherSDR's visible depth
+    void set3D(bool on);
+    bool is3D() const { return view3d_; }
     explicit PanadapterWidget(QWidget* parent = nullptr);
 
     void setSpanHz(int spanHz);                    // full captured span
@@ -245,6 +297,7 @@ public:
     static QStringList backgroundNames();
 
 signals:
+    void gpuFellBack();                            // the GPU view failed; CPU paint now
     // Click-to-tune (offset from center). exact = Shift held: tune the raw
     // clicked frequency, bypassing owner-side snapping (CW zap).
     void tuneRequested(int offsetHz, bool exact = false);
@@ -288,6 +341,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;
     void leaveEvent(QEvent*) override;
+    void resizeEvent(QResizeEvent* e) override;
     void wheelEvent(QWheelEvent*) override;
 
 private:
@@ -368,6 +422,9 @@ private:
     int  lastBinLo_ = -1, lastBinHi_ = -1;         // geometry key for wfImg_
     bool wfDirty_ = true;                          // settings changed: full re-render
     QImage fillImg_;                               // level-colored fill (reused buffer)
+    // FFT Smooth / De-comb state for columnLevels() (display only).
+    mutable Decomb decomb_;
+    mutable std::vector<double> smoothScratch_;
 
     // DX-cluster spots: markers + callsigns in the spectrum area; hit rects
     struct SpotHit { QRect rect; qint64 hz; QString call; double lat, lon;
@@ -390,6 +447,61 @@ private:
     uint64_t dragStartCenter_ = 0;                 // A dial at grab time
     bool     bodyPbt_ = false;                     // Ctrl held at body grab -> PBT slide
     char     wheelVfo_ = 'A';                      // wheel follows the last-tuned VFO
+
+    // The paint, as layers (see paintEvent) — shared by the CPU paint and
+    // the GPU view's cached overlays.
+    struct PanView { int n = 0, binLo = 0, binHi = 0; };   // visible bin window
+    PanView panView() const;
+    std::vector<float> columnLevels(const PanView& v) const;   // 0..1 per pixel column
+    void paintUnder(QPainter& p, int hSpec);
+    void paintWaterfallCpu(QPainter& p, int hSpec, const PanView& v);
+    void paintFillCpu(QPainter& p, int hSpec, const std::vector<float>& colT);
+    void paintMid(QPainter& p, int hSpec);
+    void paintTraceCpu(QPainter& p, int hSpec, const PanView& v, const std::vector<float>& colT);
+    void paintTop(QPainter& p, int hSpec, int n, bool withCursor = true);
+    void paintWfLabels(QPainter& p, int hSpec, const PanView& v);
+    // Repaint requests: changed() = state moved, every cached GPU layer is
+    // stale; changedTop() = only the top layer (cursor); frame() = new
+    // spectrum data, no layer redraw.
+    void changed(const char* who = nullptr);
+    void changedTop();
+    void changedCursor();                          // the hover cursor only
+    void frame();
+    PanGpuView* gpu_ = nullptr;
+    float fpsScale_ = 1.0f;
+    bool gpuDirtyUnder_ = true, gpuDirtyMid_ = true, gpuDirtyTop_ = true, gpuDirtyLabels_ = true,
+         gpuDirtyCursor_ = true;
+    QRect cursorRect_;                             // what drawCursor drew last
+    int cursorFrame_ = 0;
+    uint64_t wfSerial_ = 0, wfReset_ = 0;          // rows pushed / history resets
+    // 3D history ring (k3dRows x bins, dB of avg_), fed while 3D is on.
+    bool view3d_ = false;
+    std::vector<float> hist3d_;
+    int bins3d_ = 0, count3d_ = 0;
+    float acc3dMs_ = 0.0f;                         // time since the last 3D row
+    float floor3dDb_ = -120.0f;                    // view noise floor (median), smoothed
+    // 12.5 rows/s (96 rows ~ 7.7 s). 20/s strobed: at ~22 drawn fps every
+    // frame moved the stack a whole row, so it read as redrawing "way too
+    // fast" (live, 2026-10-16); now under a row per frame even at 20 fps.
+    static constexpr float k3dRowMs = 80.0f;
+    // AetherSDR's row conditioning (DssRenderer::smoothDssRow): rows are RAW
+    // sweeps (max-merged between pushes), median-of-3 in time, then blended
+    // 60 % new / 40 % previous row — not the heavily averaged trace, which
+    // flattens the noise into straight lines (operator: "ocean waves" vs
+    // "straight lines"). The 1-2-1 across columns is in pan_3d.vert.
+    std::vector<float> raw3dAcc_, raw3dPrev1_, raw3dPrev2_, row3d_;
+    int raw3dHist_ = 0;
+    uint64_t serial3d_ = 0, reset3d_ = 0;
+    // Spectrum frame clock (see setFrameRate); the GPU view extrapolates the
+    // 3D scroll from it at render time, so the motion is continuous at the
+    // display's own refresh whatever the data timing.
+    QElapsedTimer frameClock_;
+    qint64 lastFrameNs_ = 0;
+    float scroll3dPhase() const {
+        const float since = lastFrameNs_ ? (frameClock_.nsecsElapsed() - lastFrameNs_) / 1e6f : 0.0f;
+        return std::clamp((acc3dMs_ + std::min(since, k3dRowMs)) / k3dRowMs, 0.0f, 1.0f);
+    }
+    float wfAccumMs_ = 0.0f;
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.
@@ -415,7 +527,8 @@ private:
     // bottom-left of the spectrum. Clicking a located spot label points it;
     // clicking inside the rose sets a manual heading, right-click clears.
     void drawCompassRose(QPainter& p, int hSpec);
-    bool overRose(int x, int y) const;             // inside the disc?
+    bool overRose(int x, int y) const;
+    QPoint roseCenter() const;                     // bottom-left of the waterfall; null = no room             // inside the disc?
     double  qthLat_ = 42.5, qthLon_ = -83.0;       // EN82 until the grid is set
     double  roseBearing_ = -1.0;                   // pointer heading (-1 = none)
     double  roseDistKm_  = -1.0;

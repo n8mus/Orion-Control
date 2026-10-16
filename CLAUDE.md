@@ -152,6 +152,40 @@ that night's own capture).
   contest's dupes draw gray (`Not1mmLog`: reads not1mm.json + its SQLite
   log READ-ONLY, the contest plugin's own `dupe_type`; SPOTS ▾ toggle) —
   the console's own contest deck, when open, wins.
+- **GPU panadapter** (`src/ui/PanGpuView`, QRhiWidget over OpenGL; DISPLAY ▾
+  → GPU panadapter, `display/gpuPan`, `TTC_GPUPAN=0/1`; built only with Qt ≥
+  6.7 + ShaderTools/GuiPrivate — CI's Ubuntu Qt 6.4 and the AppImage build the
+  CPU paint, `-DBUILD_GPU_PAN=OFF` forces that): the waterfall is a raw-dB
+  R32F history texture (palette + view window are shader params), fill/trace/
+  3D are GPU geometry, and everything with text is the SAME QPainter code as
+  the CPU paint (`paintUnder/Mid/WfLabels/Top`) cached in layer textures,
+  redrawn only when `changed()`/`changedTop()`/`changedCursor()` say so — a
+  full-screen layer rebuild per spot push was the 5-15 % CPU bug. Shaders in
+  `src/ui/shaders`; GLSL `%` of a negative int is UNDEFINED (Mesa disagreed
+  with C++: the 3D stack jumped once per ring trip) — keep ring indices
+  non-negative. Frame rate (20/30/60, `display/panFps`): the FFT emits on the
+  SAMPLE clock (`setSampleClocked`; the IQ arrives in ~43 ms USB bursts, wall-
+  time gating gave 23 fps at any setting) and `startSpecPacer()` presents
+  frames on a QChronoTimer steered to ~2 queued, consuming extras instead of
+  dropping them (61 Hz FFT vs a 60 Hz screen); every time constant (EMA, peak
+  droop, waterfall rows/s, 3D scroll) runs off MEASURED time. AetherSDR trace
+  look in the DISPLAY panel (all default off/classic): Heat-map style + line
+  width, FFT Smooth and De-comb (`src/dsp/TraceShaping`, their GPL-3 code; the
+  DCT is our own split-complex FFT — never FFTW's planner on the GUI thread),
+  six of their colormaps (palette 4..9, append-only). **3D stacked traces**
+  (DISPLAY ▾, `display/pan3d`, GPU only): 96 rows at 12.5/s, AetherSDR's
+  dss_mesh geometry/colour (floor = view median − 6 dB, 45 dB colour aperture,
+  gamma 0.574) and row conditioning (raw sweeps, median-of-3, 60/40 blend,
+  1-2-1 in the shader); scroll phase extrapolated at render time. Tuner box,
+  solar block and compass rose live in the WATERFALL corners now.
+  `TTC_PANPROF=1` prints fps / CPU / FFT-dropped-shown / render gaps / pacer
+  depth / IQ backlog every 5 s; `TTC_STALLDBG=1|<ms>` backtraces GUI-thread
+  stalls; `TTC_PANSPAN=<Hz>` zooms at startup for headless review.
+- **SmartMTR** (8th S-meter face, click the meter; `src/ui/SMeterSmartMtr.cpp`,
+  AetherSDR's under GPL-3): RX their signal bar, TX PWR (auto 120/600/1200/
+  1800 W) + SWR bars and |Z|/phase from the external wattmeter at ~10 Hz
+  (`setExtTx`), the radio's @STF without one. 266 px wide — 280 measured
+  1862 against the 1850 budget.
 - **SKIM view** (SKIM ▾ → Waterfall view): CW-Skimmer-style zoomed
   waterfall — `src/cw/SkimStft` (4096-pt STFT at ~125 ksps, 31 Hz/bin,
   8 ms columns, fed in the iqHandler on the SDR thread, gated by window

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "ui/PanadapterWidget.h"
 
+#include <QElapsedTimer>
+#include <cstdio>
+
 #include <QPainter>
 #include <QPainterPath>
 #include <QLinearGradient>
@@ -1856,7 +1859,40 @@ void PanadapterWidget::drawDbScale(QPainter& p, int hSpec) {
     }
 }
 
+namespace {
+// TTC_PANPROF=1: per-stage paint cost, printed every 5 s (ms per frame and
+// frames per second) — the baseline for the GPU panadapter work.
+struct PanProf {
+    bool on = qEnvironmentVariableIsSet("TTC_PANPROF");
+    static constexpr int kStages = 7;
+    const char* names[kStages] = {"backdrop", "waterfall", "fill", "grid+scale",
+                                  "trace+vfo", "overlays", "total"};
+    double acc[kStages] = {};
+    int frames = 0;
+    QElapsedTimer window, lap, whole;
+    void begin() { if (!on) return; if (!window.isValid()) window.start(); lap.start(); whole.start(); }
+    void mark(int i) { if (!on) return; acc[i] += lap.nsecsElapsed() / 1e6; lap.restart(); }
+    void end() {
+        if (!on) return;
+        acc[kStages - 1] += whole.nsecsElapsed() / 1e6;
+        ++frames;
+        if (window.elapsed() < 5000) return;
+        const double secs = window.elapsed() / 1000.0;
+        std::fprintf(stderr, "[panprof] %.1f fps |", frames / secs);
+        for (int i = 0; i < kStages; ++i)
+            std::fprintf(stderr, " %s %.2f", names[i], acc[i] / std::max(frames, 1));
+        std::fprintf(stderr, " ms/frame | paint %.0f%% of a core\n",
+                     100.0 * acc[kStages - 1] / (secs * 1000.0));
+        std::fill(std::begin(acc), std::end(acc), 0.0);
+        frames = 0;
+        window.restart();
+    }
+};
+PanProf gPanProf;
+}  // namespace
+
 void PanadapterWidget::paintEvent(QPaintEvent*) {
+    gPanProf.begin();
     QPainter p(this);
     const int hSpec = spectrumHeight();
     p.fillRect(rect(), QColor(12, 16, 22));
@@ -1896,6 +1932,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         binHi = std::clamp(binHi, binLo + 2, n);
     }
 
+    gPanProf.mark(0);
     // Waterfall (below the scale band): raw history, 1 row = 1 pixel line.
     const int wfTop = hSpec + kScaleBandH;
     if (wfBins_ >= 2 && n >= 2 && height() > wfTop) {
@@ -1914,6 +1951,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
     }
 
+    gPanProf.mark(1);
     // Per-pixel-column signal level (0..1 of the scale): max of the column's
     // bins when zoomed out (narrow signals never vanish), linear interpolation
     // between bins when zoomed deep (no staircase). Drives both fill and trace,
@@ -1964,11 +2002,13 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         }
         p.drawImage(0, 0, fillImg_);
     }
+    gPanProf.mark(2);
 
     // Frequency gridlines and the (draggable) dB scale, over the fill.
     drawFreqGrid(p, hSpec);
     drawDbScale(p, hSpec);
     drawBandZones(p, hSpec);
+    gPanProf.mark(3);
 
     QPainterPath tracePath;
     if (!colT.empty()) {
@@ -2090,6 +2130,7 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
         };
         p.setPen(kTraceColors[std::clamp(ds_.traceColor, 0, 4)]);
         p.drawPath(tracePath);
+        gPanProf.mark(4);
         drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
         drawCursor(p, hSpec);                      // hover line + zap preview
@@ -2106,6 +2147,8 @@ void PanadapterWidget::paintEvent(QPaintEvent*) {
     // (No top-left span/gesture cheat-sheet: the span is on the zoom slider
     // and the gestures are muscle memory by now — removed 2026-08-26 at the
     // operator's request, it only ate spectrum.)
+    gPanProf.mark(5);
+    gPanProf.end();
 }
 
 void PanadapterWidget::wheelEvent(QWheelEvent* e) {

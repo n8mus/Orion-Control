@@ -1,4 +1,4 @@
-# Building the console on Windows (native port — `windows-port` branch)
+# Building the console on Windows (native port)
 
 Phase 2: the Ten-Tec console runs natively on Windows, from the **same
 codebase** as Linux. The app is Qt6/C++20; portability comes from Qt plus a

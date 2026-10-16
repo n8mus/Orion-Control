@@ -805,10 +805,12 @@ void PanadapterWidget::setSolarInfo(int sfi, int aIdx, double kIdx, int ssn,
     changed(__func__);
 }
 
-// Thetis-style green space-weather block, bottom-right of the spectrum,
-// over the trace floor where it doesn't fight signals or spot labels.
+// Thetis-style green space-weather block, bottom-right of the WATERFALL
+// (operator, 2026-10-16: out of the spectrum, where the 3D view and the
+// trace need the room), beside the tuner box.
 void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
-    if (!ds_.showSolar || solSfi_ < 0 || hSpec < 90) return;
+    const int wfH = height() - hSpec - kScaleBandH;
+    if (!ds_.showSolar || solSfi_ < 0 || wfH < 90) return;
     QFont f = p.font();
     f.setPixelSize(10);
     f.setBold(true);
@@ -844,7 +846,7 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
     // The tuner box owns the corner when it is up; solar sits to its left.
     const int right = tuneBoxRect_.isEmpty() ? width() - 8
                                              : tuneBoxRect_.left() - 6;
-    const QRect box(right - wBox, hSpec - hBox - 6, wBox, hBox);
+    const QRect box(right - wBox, height() - hBox - 8, wBox, hBox);
     p.fillRect(box, QColor(4, 12, 6, 175));
     p.setPen(QColor(30, 90, 45));
     p.drawRect(box.adjusted(0, 0, -1, -1));
@@ -864,12 +866,13 @@ void PanadapterWidget::setTuneBox(const TuneBox& b) {
     if (!gpu_) update();
 }
 
-// Amber tuner/amp card, bottom-right: what to set the 238C and the Titan
-// III to here, read at a glance across the shack — so a larger face than
-// the solar block's, labels dim and values bright.
+// Amber tuner/amp card, bottom-right of the waterfall: what to set the 238C
+// and the Titan III to here, read at a glance across the shack — so a larger
+// face than the solar block's, labels dim and values bright.
 void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
     tuneBoxRect_ = QRect();
-    if (!ds_.showTuneBox || tuneBox_.title.isEmpty() || hSpec < 110) return;
+    const int wfH = height() - hSpec - kScaleBandH;
+    if (!ds_.showTuneBox || tuneBox_.title.isEmpty() || wfH < 110) return;
     QFont f = p.font();
     f.setPixelSize(13);
     f.setBold(true);
@@ -908,7 +911,7 @@ void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
     }
     wBox = std::min(wBox + 2 * pad + 4, width() / 2);   // +4: elide rounding
     const int hBox = (static_cast<int>(rows.size()) + 1) * lineH + 2 * pad - 4;
-    const QRect box(width() - wBox - 8, hSpec - hBox - 6, wBox, hBox);
+    const QRect box(width() - wBox - 8, height() - hBox - 8, wBox, hBox);
     tuneBoxRect_ = box;
     p.fillRect(box, QColor(22, 15, 4, 200));
     p.setPen(QColor(120, 86, 32));

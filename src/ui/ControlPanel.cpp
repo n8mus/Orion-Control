@@ -131,7 +131,8 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     // pseudo-mode that sets the radio, receiver and transmitter up and
     // puts everything back when it's turned off.
     fdvBtn_ = makeButton("FreeDV");
-    fdvBtn_->setToolTip("FreeDV digital voice (RADE): USB + wide filter, speech processor off,\n"
+    fdvBtn_->setToolTip("FreeDV digital voice (RADE): LSB on 160/80/40 m, USB on 60 m and up\n"
+                        "(FreeDV's calling-frequency table; USB/LSB flip it), wide filter, speech processor off,\n"
                         "line input, SDR decoding RADE (power stays yours), transmit by MOX /\n"
                         "space with your callsign at the end of each over, and the FreeDV\n"
                         "window (stations on the air, heard calls, Log QSO). Off restores\n"

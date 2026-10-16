@@ -1378,6 +1378,21 @@ MainWindow::MainWindow(QWidget* parent)
     fdvTick->setInterval(250);
     connect(fdvTick, &QTimer::timeout, this, [this, seenCalls = 0, quietTicks = 0]() mutable {
         updateFreedvLink();
+        // FreeDV follows the band's sideband as the dial moves (40 -> 20 m:
+        // LSB -> USB); a flip by hand holds until the band changes.
+        if (fdvMode_) {
+            const Mode want = fdvSideband(centerHz_);
+            static QString lastBand;
+            const QString band = LogbookIndex::bandForHz(qint64(centerHz_));
+            if (band != lastBand) {
+                lastBand = band;
+                if (want != fdvSb_) {
+                    fdvSb_ = want;
+                    applyMode(want);
+                    panel_->clearModeSelection();
+                }
+            }
+        }
 #ifdef HAVE_WDSP
         if (fdvWin_ && sdrRx_) {
             const SdrRx::RadeStatus rs = sdrRx_->radeStatus();
@@ -1391,7 +1406,7 @@ MainWindow::MainWindow(QWidget* parent)
             st.micDb = live_ && live_->rade() ? live_->inputPeakDb() : -120.f;
             fdvWin_->setStatus(st);
             fdvWin_->setStations(freedv_.stations(), qint64(centerHz_));
-            if (rs.calls > seenCalls && !rs.lastCall.empty())
+            if (rs.calls > seenCalls && !rs.lastCall.empty() && !isOwnCall(st.lastCall))
                 fdvWin_->addHeard(st.lastCall, int(std::lround(rs.snrDb)), qint64(centerHz_));
         }
 #endif
@@ -1407,7 +1422,8 @@ MainWindow::MainWindow(QWidget* parent)
         if (!sdrRx_) return;
         const SdrRx::RadeStatus r = sdrRx_->radeStatus();
         if (r.calls != seenCalls) {
-            if (r.calls > seenCalls && !r.lastCall.empty()) {
+            if (r.calls > seenCalls && !r.lastCall.empty()
+                && !isOwnCall(QString::fromStdString(r.lastCall))) {
                 const QString call = QString::fromStdString(r.lastCall);
                 freedv_.reportHeard(call, int(std::lround(r.snrDb)));
                 psk_.addHeard(call, qint64(centerHz_), int(std::lround(r.snrDb)));
@@ -2725,7 +2741,16 @@ MainWindow::MainWindow(QWidget* parent)
 
     // Control surface -> radio. Sets are fire-and-forget; polling confirms.
     connect(panel_, &ControlPanel::modeSelected, this, [this](Mode m) {
-        if (fdvMode_) setFdvMode(false, /*keepMode*/ true);   // a real mode ends FreeDV
+        if (fdvMode_ && (m == Mode::USB || m == Mode::LSB)) {
+            // In FreeDV the sideband buttons just flip the sideband (some
+            // station is on the other one) — FreeDV stays on.
+            fdvSb_ = m;
+            applyMode(m);
+            panel_->clearModeSelection();
+            statusBar()->showMessage(QString("FreeDV on %1").arg(m == Mode::LSB ? "LSB" : "USB"), 4000);
+            return;
+        }
+        if (fdvMode_) setFdvMode(false, /*keepMode*/ true);   // any other mode ends FreeDV
         if (samActive_) {                          // picking a real mode ends SAM
             samActive_ = false;
             panel_->showSam(false);

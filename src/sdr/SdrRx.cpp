@@ -438,7 +438,10 @@ void SdrRx::radeBlock(const float* modem, int n) {
 #ifdef HAVE_RADE
     if (!rade_.load()) rade_.store(new RadeRx);
     std::vector<float> sp;
-    rade_.load()->process(modem, n, sp);
+    // Transmitting (muted): the RSP2 hears our own signal at full strength
+    // — don't decode it (live-found: our end of over decoded as "heard
+    // N8EM" and went to the Reporter). The decoder resyncs after.
+    if (!muted_.load()) rade_.load()->process(modem, n, sp);
     radeOut_.insert(radeOut_.end(), sp.begin(), sp.end());
     if (radeOut_.size() > 48000) radeOut_.erase(radeOut_.begin(), radeOut_.end() - 12000);
     if (!radePrimed_ && radeOut_.size() >= 6240) radePrimed_ = true;

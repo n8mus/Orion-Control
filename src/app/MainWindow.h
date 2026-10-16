@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
+#include <QSettings>
 #include <memory>
 #include <QMainWindow>
 #include <QElapsedTimer>
@@ -343,6 +344,17 @@ private:
     void openFreeDvWindow();
     void applySdrRxSettings();                     // stored settings + FDV overrides
     bool fdvMode_ = false, fdvAnalog_ = false;
+    // FreeDV's calling-frequency convention (qso.freedv.org → Calling
+    // Frequencies): LSB on 160/80/40 m, USB on 60 m and up.
+    static Mode fdvSideband(uint64_t hz);
+    // Our own call (with or without /P etc.): never "heard" — the RSP2
+    // decodes our own transmission (live-found: we reported hearing N8EM).
+    static bool isOwnCall(const QString& c) {
+        const QString me = QSettings().value("station/callsign", "N8EM").toString().toUpper();
+        const QString base = c.toUpper().section('/', 0, 0);
+        return base == me || c.toUpper() == me;
+    }
+    Mode fdvSb_ = Mode::USB;                       // the sideband FDV last set
     struct FdvSaved {
         Mode mode = Mode::USB;
         int bw = 2400, pbt = 0, txBw = 2850;

@@ -215,11 +215,16 @@ that night's own capture).
   **FreeDV RADE** (window's FREEDV RADE box, `sdrrx/rade`): the USB audio
   is the modem -> `src/sdr/RadeRx` (48k->8k, rade_c `rade_rx`, FARGAN via
   `third_party/rade/ttc_rade_shim`, 16k->48k) -> the same gate/EQ/comp/
-  limiter. `third_party/rade` FETCHES rade_c + Opus (SHA-pinned; Arch's
+  limiter; the decoder is paused while muted/TX and our own call is never
+  'heard' (`isOwnCall` — the RSP2 decoded our own EOO and we reported it).
+  `third_party/rade` FETCHES rade_c + Opus (SHA-pinned; Arch's
   opus lacks the LPCNet/FARGAN symbols) and commits only the small EOO
   callsign codec (`text/`). `-DBUILD_RADE=OFF` to skip; needs autotools.
   **FreeDV mode** (MODE panel → FreeDV, `setFdvMode`, like SAM a pseudo-
-  mode): saves mode/filter/PBT/TX filter/SDR-on/LIVE, sets USB +
+  mode): saves mode/filter/PBT/TX filter/SDR-on/LIVE, sets the band's
+  FreeDV sideband (`fdvSideband`: LSB on 160/80/40, USB on 60 m and up —
+  qso.freedv.org's Calling Frequencies; NOT 'USB everywhere', live-found
+  2026-10-15; follows band changes, USB/LSB buttons flip it inside FDV) +
   2.8 kHz + TX filter >= 2.8 kHz (TX POWER is never touched — operator's
   call, 2026-10-15), arms RADE TX (LIVE
   path, DIG), SDR decodes RADE with NR/NB/ANF/SNB/RNNoise forced off

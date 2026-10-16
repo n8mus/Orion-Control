@@ -1748,6 +1748,14 @@ void MainWindow::updateFreedvLink() {
 // FreeDV mode's overrides on top while it runs: RADE decode, and none of
 // the noise tools — NR/NB/ANF/SNB/RNNoise distort the modem. Never saved:
 // leaving FDV re-applies the operator's own settings.
+Mode MainWindow::fdvSideband(uint64_t hz) {
+    // Below 10 MHz the voice convention (LSB) — FreeDV follows it too —
+    // except 60 m, channelized USB. Live-found: "FreeDV is USB on every
+    // band" was wrong; their own table says LSB on 160/80/40.
+    const bool sixty = hz >= 5250000 && hz <= 5450000;
+    return hz < 10000000 && !sixty ? Mode::LSB : Mode::USB;
+}
+
 void MainWindow::applySdrRxSettings() {
 #ifdef HAVE_WDSP
     if (!sdrRx_) return;
@@ -1788,9 +1796,10 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
             panel_->setSamLabel("SAM");
         }
         fdvSaved_ = {rigMode_, rigBwHz_, rigPbtHz_, txBwHz_, sdrRx_->running(), liveMic_};
-        // Radio: USB with a filter wide enough for the modem (RADE sits at
-        // ~700-2300 Hz), TX filter likewise.
-        applyMode(Mode::USB);
+        // Radio: the band's FreeDV sideband with a filter wide enough for
+        // the modem (RADE sits at ~700-2300 Hz audio), TX filter likewise.
+        fdvSb_ = fdvSideband(centerHz_);
+        applyMode(fdvSb_);
         panel_->clearModeSelection();
         QTimer::singleShot(450, this, [this] {
             if (!fdvMode_) return;
@@ -1816,9 +1825,9 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         panel_->showFdv(true);
         updateFreedvLink();
         openFreeDvWindow();
-        statusBar()->showMessage("FreeDV: USB, wide filter, processor off. Key with MOX / space; "
+        statusBar()->showMessage(QString("FreeDV: %1, wide filter, processor off. Key with MOX / space; "
                                  "your call goes out at the end of each over. (RADE runs a heavy "
-                                 "duty cycle — mind the power.)", 12000);
+                                 "duty cycle — mind the power.)").arg(fdvSb_ == Mode::LSB ? "LSB" : "USB"), 12000);
     } else {
         fdvMode_ = false;
         fdvAnalog_ = false;

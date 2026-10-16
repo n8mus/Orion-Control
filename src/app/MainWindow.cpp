@@ -548,9 +548,11 @@ MainWindow::MainWindow(QWidget* parent)
     }
     const auto applyFps = [this, fpsMenu, act3d](int f) {
         if (!pan_->gpuEnabled()) f = 20;           // the CPU paint can't afford more
+#ifdef HAVE_SDRPLAY
         spectrum_.setFrameRateHz(f);
-        pan_->setFrameRate(f);
         startSpecPacer();
+#endif
+        pan_->setFrameRate(f);
         fpsMenu->setEnabled(pan_->gpuEnabled());
         act3d->setEnabled(pan_->gpuEnabled());
     };
@@ -4144,6 +4146,7 @@ void MainWindow::maybeRunVoacap() {
     voacap_.request(la, lo, fMHz, ssn, std::clamp(lastTxPwr_, 1, 200));
 }
 
+#ifdef HAVE_SDRPLAY
 // The GUI side of the spectrum pacer (see specQ_): one frame per tick on a
 // precise timer whose interval steers the queue toward 2 frames of slack —
 // a little faster when frames pile up (a late tick, the sample clock a hair
@@ -4191,5 +4194,6 @@ void MainWindow::setPacerInterval(double ms) {
     specPacer_->setInterval(std::max(1, int(std::lround(ms))));
 #endif
 }
+#endif  // HAVE_SDRPLAY
 
 } // namespace ttc

@@ -1836,11 +1836,13 @@ void MainWindow::setFdvMode(bool on, bool keepMode) {
         fdvAnalog_ = false;
         setRadeTx(false);                          // DIG goes back with LIVE
         if (fdvSaved_.live) setLiveMic(true);
-        applySdrRxSettings();
         // Back to the Orion: the SDR audio goes off whatever it was before
-        // (operator's call — outside FreeDV he listens to the radio).
+        // (operator's call — outside FreeDV he listens to the radio) — and
+        // FIRST, before the receiver leaves RADE, or the plain sideband
+        // blasts out for a moment (live-found).
         if (sdrRx_->running()) sdrRxSetOn_(false);
         if (sdrRxDlg_) sdrRxDlg_->setOn(false);
+        applySdrRxSettings();
         if (fdvSaved_.txBw != txBwHz_) {
             radio_->setTxFilter(fdvSaved_.txBw);
             txBar_->showTxFilter(fdvSaved_.txBw);

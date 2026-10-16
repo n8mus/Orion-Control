@@ -465,7 +465,14 @@ private:
     int bins3d_ = 0, count3d_ = 0;
     float acc3dMs_ = 0.0f;                         // time since the last 3D row
     float floor3dDb_ = -120.0f;                    // view noise floor (median), smoothed
-    static constexpr float k3dRowMs = 100.0f;      // ~10 rows/s
+    static constexpr float k3dRowMs = 50.0f;       // 20 rows/s: 96 rows ~ 4.8 s
+    // AetherSDR's row conditioning (DssRenderer::smoothDssRow): rows are RAW
+    // sweeps (max-merged between pushes), median-of-3 in time, then blended
+    // 60 % new / 40 % previous row — not the heavily averaged trace, which
+    // flattens the noise into straight lines (operator: "ocean waves" vs
+    // "straight lines"). The 1-2-1 across columns is in pan_3d.vert.
+    std::vector<float> raw3dAcc_, raw3dPrev1_, raw3dPrev2_, row3d_;
+    int raw3dHist_ = 0;
     uint64_t serial3d_ = 0, reset3d_ = 0;
     // Spectrum frame clock (see setFrameRate).
     qint64 lastFrameNs_ = 0;

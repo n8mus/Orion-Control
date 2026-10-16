@@ -58,14 +58,21 @@ void main() {
     bool have = r < count && bf >= 0.0 && bf < float(total);
     float dB = floorDb;
     if (have) {
+        // Each mesh column: max of its bins, then AetherSDR's 1-2-1 across
+        // neighbouring columns (the rolling-wave texture of the noise).
         int row = ((int(p0.z) - 1 - r) % ring + ring) % ring;
-        int b0 = int(bf);
-        int span = max(1, int(float(nv) * kSpan / 767.0));
-        int step = max(1, span / 8);
-        float m = -1000.0;
-        for (int b = b0; b < min(b0 + span, total); b += step)
-            m = max(m, texelFetch(hist, ivec2(b, row), 0).r);
-        dB = m;
+        float colBins = float(nv) * kSpan / 767.0;
+        int span = max(1, int(colBins));
+        int step = max(1, span / 6);
+        float acc = 0.0;
+        for (int k = -1; k <= 1; ++k) {
+            int b0 = clamp(int(bf + float(k) * colBins), 0, total - 1);
+            float m = -1000.0;
+            for (int b = b0; b < min(b0 + span, total); b += step)
+                m = max(m, texelFetch(hist, ivec2(b, row), 0).r);
+            acc += (k == 0 ? 0.5 : 0.25) * m;
+        }
+        dB = acc;
     }
     float sLin = clamp((dB - floorDb) / rangeDb, 0.0, 1.0);
     float cs = clamp((dB - floorDb) / min(rangeDb, kColorSpanDb), 0.0, 1.0);

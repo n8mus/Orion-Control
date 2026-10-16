@@ -1443,6 +1443,10 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
         ++wfAccumN_;
         wfAccumMs_ += dtMs;
     }
+    if (view3d_ && gpu_ && n >= 2) {
+        if (raw3dAcc_.size() != n) raw3dAcc_.assign(n, kNoRow);
+        for (size_t i = 0; i < n; ++i) raw3dAcc_[i] = std::max(raw3dAcc_[i], magsDb[i]);
+    }
     if (view3d_ && gpu_ && n >= 2 && (acc3dMs_ += dtMs) >= k3dRowMs) {
         acc3dMs_ = std::min(acc3dMs_ - k3dRowMs, k3dRowMs);
         if (bins3d_ != int(n)) {
@@ -1450,9 +1454,26 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
             hist3d_.assign(size_t(k3dRows) * n, -200.0f);
             count3d_ = 0;
             serial3d_ = 0;
+            raw3dHist_ = 0;
             ++reset3d_;
         }
-        std::copy(avg_.begin(), avg_.end(), hist3d_.begin() + size_t(serial3d_ % k3dRows) * n);
+        constexpr float kTemporalAlpha = 0.60f;    // AetherSDR: fraction of the new row
+        if (row3d_.size() != n) row3d_.assign(n, -200.0f);
+        const bool blend = count3d_ > 0;           // first row: nothing to blend with
+        for (size_t i = 0; i < n; ++i) {
+            const float a = raw3dAcc_[i];
+            float v = a;
+            if (raw3dHist_ >= 2) {
+                const float b = raw3dPrev1_[i], c = raw3dPrev2_[i];
+                v = std::max(std::min(a, b), std::min(std::max(a, b), c));   // median3
+            }
+            row3d_[i] = blend ? kTemporalAlpha * v + (1.0f - kTemporalAlpha) * row3d_[i] : v;
+        }
+        raw3dPrev2_.swap(raw3dPrev1_);
+        raw3dPrev1_ = raw3dAcc_;
+        raw3dHist_ = std::min(raw3dHist_ + 1, 2);
+        std::fill(raw3dAcc_.begin(), raw3dAcc_.end(), kNoRow);
+        std::copy(row3d_.begin(), row3d_.end(), hist3d_.begin() + size_t(serial3d_ % k3dRows) * n);
         // The surface's floor follows the view's noise (median bin), as
         // AetherSDR's does: noise always sits blue at the baseline and only
         // real signals rise and warm, whatever REF/RANGE are.
@@ -2053,6 +2074,8 @@ void PanadapterWidget::set3D(bool on) {
     view3d_ = on;
     bins3d_ = count3d_ = 0;                        // start the stack fresh
     acc3dMs_ = 0.0f;
+    raw3dHist_ = 0;
+    raw3dAcc_.clear();
     serial3d_ = 0;
     ++reset3d_;
     changed(__func__);

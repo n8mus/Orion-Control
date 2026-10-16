@@ -53,12 +53,46 @@ const Stop kThermal[] = {
 const Stop kGray[] = {
     {0.00f,   0,   0,   0}, {1.00f, 255, 255, 255},
 };
+// AetherSDR's waterfall colormaps (default-dark theme), appended — the
+// palette index is stored, so never reorder.
+const Stop kAether[] = {
+    {0.00f,   0,   0,   0}, {0.15f,   0,   0, 128}, {0.30f,   0,  64, 255},
+    {0.45f,   0, 200, 255}, {0.60f,   0, 220,   0}, {0.80f, 255, 255,   0},
+    {1.00f, 255,   0,   0},
+};
+const Stop kBlueGreen[] = {
+    {0.00f,   0,   0,   0}, {0.25f,   0,  30, 120}, {0.50f,   0, 100, 180},
+    {0.75f,   0, 200, 130}, {1.00f, 220, 255, 220},
+};
+const Stop kFire[] = {
+    {0.00f,   0,   0,   0}, {0.25f, 128,   0,   0}, {0.50f, 220,  80,   0},
+    {0.75f, 255, 200,   0}, {1.00f, 255, 255, 220},
+};
+const Stop kPlasma[] = {
+    {0.00f,   0,   0,   0}, {0.25f,  80,   0, 140}, {0.50f, 200,   0, 120},
+    {0.75f, 240, 120,   0}, {1.00f, 255, 255,  80},
+};
+const Stop kPurple[] = {
+    {0.00f,   0,   0,   0}, {0.15f,   0,   0, 255}, {0.30f,   0, 255,   0},
+    {0.45f, 255, 255,   0}, {0.60f, 255,   0,   0}, {0.75f, 128,   0, 128},
+    {1.00f, 255, 255, 255},
+};
+const Stop kGlacier[] = {
+    {0.00f,   5,  24,  60}, {0.30f,  10,  90, 210}, {0.55f,  60, 160, 255},
+    {0.80f, 168, 220, 255}, {1.00f, 255, 255, 255},
+};
 struct Palette { const Stop* stops; size_t n; };
 const Palette kPalettes[] = {
     {kEnhanced, std::size(kEnhanced)},
     {kClassic,  std::size(kClassic)},
     {kThermal,  std::size(kThermal)},
     {kGray,     std::size(kGray)},
+    {kAether,   std::size(kAether)},
+    {kBlueGreen, std::size(kBlueGreen)},
+    {kFire,     std::size(kFire)},
+    {kPlasma,   std::size(kPlasma)},
+    {kPurple,   std::size(kPurple)},
+    {kGlacier,  std::size(kGlacier)},
 };
 
 // A "nice" grid step (1/2/5 x 10^k) giving ~8 divisions across the view.
@@ -72,7 +106,9 @@ double niceStep(double span) {
 } // namespace
 
 QStringList PanadapterWidget::paletteNames() {
-    return {"Enhanced", "Classic", "Thermal", "Grayscale"};
+    // Stored by index: append only. 4.. are AetherSDR's colormaps.
+    return {"Enhanced", "Classic", "Thermal", "Grayscale",
+            "Aether", "Blue-Green", "Fire", "Plasma", "Purple", "Glacier"};
 }
 
 QStringList PanadapterWidget::backgroundNames() {
@@ -1225,6 +1261,9 @@ void PanadapterWidget::setDisplaySettings(const DisplaySettings& s) {
     ds_.avgFrames = std::max(1, ds_.avgFrames);
     ds_.wfSpeed   = std::max(1, ds_.wfSpeed);
     ds_.split     = std::clamp(ds_.split, 0.15f, 0.85f);
+    ds_.lineWidth = std::clamp(ds_.lineWidth, 1.0f, 4.0f);
+    ds_.smoothPx  = std::clamp(ds_.smoothPx, 0, 16);   // AetherSDR's ceiling
+    ds_.decombHz  = std::clamp(ds_.decombHz, 0, 600);
     dbMax_ = ds_.refDb;
     dbMin_ = ds_.refDb - std::max(10.0f, ds_.rangeDb);
     wfDbMax_ = ds_.wfRefDb;
@@ -1958,6 +1997,17 @@ QColor PanadapterWidget::traceColor(int i) {
     return kTraceColors[std::clamp(i, 0, 4)];
 }
 
+QColor PanadapterWidget::heatColor(float t) {
+    // AetherSDR FftHeatMap::heatColor.
+    t = std::clamp(t, 0.0f, 1.0f);
+    float r, g, b;
+    if (t < 0.25f)      { const float s = t / 0.25f;          r = 0; g = s;     b = 1; }
+    else if (t < 0.5f)  { const float s = (t - 0.25f) / 0.25f; r = 0; g = 1;     b = 1 - s; }
+    else if (t < 0.75f) { const float s = (t - 0.5f) / 0.25f;  r = s; g = 1;     b = 0; }
+    else                { const float s = (t - 0.75f) / 0.25f; r = 1; g = 1 - s; b = 0; }
+    return QColor::fromRgbF(r, g, b);
+}
+
 void PanadapterWidget::changed(const char* who) {
     if (qEnvironmentVariableIsSet("TTC_PANDBG") && who) {
         static QHash<QString, int> n;
@@ -2104,6 +2154,23 @@ std::vector<float> PanadapterWidget::columnLevels(const PanView& v) const {
     if (n >= 2 && w > 1) {
         colT.resize(w);
         const int nv = binHi - binLo;
+        const double hzPerPx = double(viewSpanHz_) / w;
+        const double binHz = double(fullSpanHz_) / n;
+        // Zoomed deep (bins coarser than pixels) De-comb runs on the view's
+        // own bins — far fewer points than columns, and where the comb
+        // really lives; the columns then interpolate the shaped bins.
+        const float* src = avg_.data();
+        int srcLo = binLo;
+        std::vector<float> shaped;
+        const bool decombBins = ds_.decombHz > 0 && nv < w;
+        if (decombBins) {
+            const int hi = std::min(binHi + 1, n);
+            shaped.assign(avg_.begin() + binLo, avg_.begin() + hi);
+            if (ds_.decombHz >= 2.0 * binHz) decomb_.apply(shaped, ds_.decombHz / binHz);
+            src = shaped.data();
+            srcLo = 0;
+        }
+        auto at = [&](int b) { return src[b - binLo + srcLo]; };
         for (int x = 0; x < w; ++x) {
             float v;
             if (nv >= w) {
@@ -2116,10 +2183,17 @@ std::vector<float> PanadapterWidget::columnLevels(const PanView& v) const {
                 const double pos = binLo + static_cast<double>(x) * (nv - 1) / (w - 1);
                 const int b = static_cast<int>(pos);
                 const float f = static_cast<float>(pos - b);
-                v = avg_[b] * (1.0f - f) + avg_[std::min(b + 1, n - 1)] * f;
+                v = at(b) * (1.0f - f) + at(std::min(b + 1, n - 1)) * f;
             }
-            colT[x] = std::clamp((v - dbMin_) / range, 0.0f, 1.0f);
+            colT[x] = v;                           // dB until shaped
         }
+        // AetherSDR's FFT De-comb, then FFT Smooth. Zoomed out, De-comb runs
+        // on the columns (each the max of its bins); its width must span two
+        // of them, or the trace cannot hold a comb at that spacing.
+        if (ds_.decombHz > 0 && !decombBins && ds_.decombHz >= 2.0 * hzPerPx)
+            decomb_.apply(colT, ds_.decombHz / hzPerPx);
+        if (ds_.smoothPx > 0) smoothTraceLinearPower(colT, ds_.smoothPx, smoothScratch_);
+        for (float& c : colT) c = std::clamp((c - dbMin_) / range, 0.0f, 1.0f);
     }
 
     return colT;
@@ -2140,6 +2214,28 @@ void PanadapterWidget::paintFillCpu(QPainter& p, int hSpec, const std::vector<fl
         std::vector<int> colY(w);
         for (int x = 0; x < w; ++x)
             colY[x] = static_cast<int>(hSpec * (1.0f - colT[x]));
+        if (ds_.traceStyle == 1) {
+            // AetherSDR heat fill: per column, the heat colour of its level at
+            // the trace (faint) fading to a dark-blue base at the bottom.
+            const float base[4] = {0.f, 0.f, 77.f / 255.f, kHeatFillAlpha};
+            std::vector<QColor> top(w);
+            for (int x = 0; x < w; ++x) top[x] = heatColor(colT[x]);
+            for (int y = 0; y < hSpec; ++y) {
+                QRgb* line = reinterpret_cast<QRgb*>(fillImg_.scanLine(y));
+                for (int x = 0; x < w; ++x) {
+                    if (y < colY[x]) { line[x] = qRgba(0, 0, 0, 0); continue; }
+                    const float f = float(y - colY[x]) / float(std::max(1, hSpec - colY[x]));
+                    const float ta = kHeatFillAlpha * kHeatTopAlpha;
+                    const float a = ta + f * (base[3] - ta);
+                    const float r = float(top[x].redF()) * (1 - f) + base[0] * f;
+                    const float g = float(top[x].greenF()) * (1 - f) + base[1] * f;
+                    const float b = float(top[x].blueF()) * (1 - f) + base[2] * f;
+                    line[x] = qRgba(int(r * a * 255), int(g * a * 255), int(b * a * 255), int(a * 255));
+                }
+            }
+            p.drawImage(0, 0, fillImg_);
+            return;
+        }
         for (int y = 0; y < hSpec; ++y) {
             const float t = 1.0f - static_cast<float>(y) / (hSpec - 1);
             const QRgb c = mapColor(std::pow(t, kFillGamma));
@@ -2274,8 +2370,25 @@ void PanadapterWidget::paintTraceCpu(QPainter& p, int hSpec, const PanView& v,
                 prev = pt;
             }
         }
-        p.setPen(traceColor(ds_.traceColor));
+        if (ds_.traceStyle == 1) {
+            // Heat trace: colour by height, so a vertical gradient pen is
+            // exactly the per-segment heat colour.
+            QLinearGradient g(0, hSpec, 0, 0);
+            for (float t : {0.f, 0.25f, 0.5f, 0.75f, 1.f}) g.setColorAt(t, heatColor(t));
+            QPen pen(QBrush(g), ds_.lineWidth);
+            pen.setJoinStyle(Qt::RoundJoin);
+            p.setRenderHint(QPainter::Antialiasing, true);
+            p.setPen(pen);
+        } else {
+            QPen pen(traceColor(ds_.traceColor), ds_.lineWidth);
+            if (ds_.lineWidth > 1.0f) {
+                pen.setJoinStyle(Qt::RoundJoin);
+                p.setRenderHint(QPainter::Antialiasing, true);
+            }
+            p.setPen(pen);
+        }
         p.drawPath(tracePath);
+        p.setRenderHint(QPainter::Antialiasing, false);
     }
 }
 

@@ -575,6 +575,10 @@ MainWindow::MainWindow(QWidget* parent)
         s.setValue("display/bandplan",   d.showBandPlan);
         s.setValue("display/privileges", d.showPrivileges);
         s.setValue("display/trace",      d.traceColor);
+        s.setValue("display/traceStyle", d.traceStyle);
+        s.setValue("display/lineWidth",  d.lineWidth);
+        s.setValue("display/fftSmooth",  d.smoothPx);
+        s.setValue("display/decombHz",   d.decombHz);
         s.setValue("display/bigVfo",     d.bigVfo);
         s.setValue("display/clock",      d.showClock);
         s.setValue("display/wfTime",     d.showWfTime);
@@ -652,6 +656,10 @@ MainWindow::MainWindow(QWidget* parent)
         d.showBandPlan = s.value("display/bandplan", d.showBandPlan).toBool();
         d.showPrivileges = s.value("display/privileges", d.showPrivileges).toBool();
         d.traceColor = s.value("display/trace",      d.traceColor).toInt();
+        d.traceStyle = s.value("display/traceStyle", d.traceStyle).toInt();
+        d.lineWidth  = s.value("display/lineWidth",  d.lineWidth).toFloat();
+        d.smoothPx   = s.value("display/fftSmooth",  d.smoothPx).toInt();
+        d.decombHz   = s.value("display/decombHz",   d.decombHz).toInt();
         d.bigVfo     = s.value("display/bigVfo",     d.bigVfo).toBool();
         d.showClock  = s.value("display/clock",      d.showClock).toBool();
         d.showWfTime = s.value("display/wfTime",     d.showWfTime).toBool();
@@ -3615,6 +3623,14 @@ MainWindow::MainWindow(QWidget* parent)
                 if (skimView_) skimView_->grab().save(png);
             });
         }
+    }
+    // TTC_PANSPAN=<Hz>: zoom the panadapter to that span shortly after
+    // startup (headless trace-look review on a capture, e.g. 12000 to see
+    // an SSB voice's harmonic comb for De-comb).
+    if (const char* ps = std::getenv("TTC_PANSPAN")) {
+        const int span = atoi(ps);
+        if (span > 0)
+            QTimer::singleShot(2500, this, [this, span] { pan_->setViewSpanHz(span); });
     }
     // TTC_CONTEST=1: flip contest mode on at startup (pairs with
     // TTC_SCREENSHOT to review the deck headless; a pre-seeded

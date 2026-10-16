@@ -192,6 +192,7 @@ add_executable(tentec-console
   src/dsp/ClientFinalLimiter.cpp src/dsp/ClientFinalLimiter.h
   src/ui/VoiceEqDialog.cpp      src/ui/VoiceEqDialog.h
   src/dsp/Fft.cpp               src/dsp/Fft.h
+  src/dsp/TraceShaping.cpp      src/dsp/TraceShaping.h
   src/dsp/SpectrumComputer.cpp  src/dsp/SpectrumComputer.h
   src/sdr/SdrSource.h
   src/sdr/IqRecorder.cpp        src/sdr/IqRecorder.h
@@ -224,7 +225,9 @@ qt_add_shaders(tentec-console "pan_shaders"
     src/ui/shaders/pan_waterfall.frag
     src/ui/shaders/pan_fill.frag
     src/ui/shaders/pan_line.vert
-    src/ui/shaders/pan_line.frag)
+    src/ui/shaders/pan_line.frag
+    src/ui/shaders/pan_trace.vert
+    src/ui/shaders/pan_trace.frag)
 target_link_libraries(tentec-console PRIVATE Qt6::GuiPrivate)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql Qt6::WebSockets rnnoise)
 if(WIN32)

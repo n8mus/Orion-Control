@@ -14,6 +14,7 @@
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <algorithm>
+#include <cmath>
 
 namespace ttc {
 
@@ -170,7 +171,47 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     g->addWidget(roseR_, 9, 1);
     g->addWidget(roseRVal_, 9, 2);
 
-    fill_ = new QCheckBox("Fill spectrum", this);
+        // AetherSDR trace look: heat-map style + width, FFT Smooth and De-comb
+    // (display only — the waterfall and decoders never see them).
+    g->addWidget(makeCaption("TRACE", this), 10, 0);
+    style_ = new QComboBox(this);
+    style_->addItems({"Classic", "Heat map"});
+    style_->setToolTip("Classic: palette fill + flat line.\n"
+                       "Heat map (AetherSDR): line and fill coloured by strength,\n"
+                       "blue at the noise up through green and yellow to red.");
+    g->addWidget(style_, 10, 1, 1, 1);
+    width_ = new QComboBox(this);
+    width_->addItem("1 px", 1.0);
+    width_->addItem("1.5 px", 1.5);
+    width_->addItem("2 px", 2.0);
+    width_->addItem("3 px", 3.0);
+    width_->setToolTip("Spectrum trace line width");
+    g->addWidget(width_, 10, 2, 1, 1);
+
+    g->addWidget(makeCaption("SHAPE", this), 11, 0);
+    smooth_ = new QComboBox(this);
+    smooth_->addItem("Smooth off", 0);
+    smooth_->addItem("Smooth 2", 2);
+    smooth_->addItem("Smooth 4", 4);
+    smooth_->addItem("Smooth 8", 8);
+    smooth_->addItem("Smooth 16", 16);
+    smooth_->setToolTip("FFT Smooth (AetherSDR): averages the trace across\n"
+                        "neighbouring pixels in power, so the noise grass calms\n"
+                        "down without the floor sinking.");
+    g->addWidget(smooth_, 11, 1, 1, 1);
+    decomb_ = new QComboBox(this);
+    decomb_->addItem("De-comb off", 0);
+    decomb_->addItem("De-comb 150 Hz", 150);
+    decomb_->addItem("De-comb 250 Hz", 250);
+    decomb_->addItem("De-comb 400 Hz", 400);
+    decomb_->addItem("De-comb 600 Hz", 600);
+    decomb_->setToolTip("FFT De-comb (AetherSDR): fills in the picket-fence comb\n"
+                        "an SSB voice draws when zoomed in (its pitch harmonics),\n"
+                        "showing the signal's outline. Leaves the noise alone;\n"
+                        "works when zoomed in far enough to see the comb.");
+    g->addWidget(decomb_, 11, 2, 1, 1);
+
+fill_ = new QCheckBox("Fill spectrum", this);
     peak_ = new QCheckBox("Peak hold", this);
     grid_ = new QCheckBox("Grid lines", this);
     solar_ = new QCheckBox("Solar data panel", this);
@@ -220,26 +261,26 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
         "X key: CW⇄CWR flip — if the note's pitch doesn't change,\n"
         "you are perfectly zero-beat (by ear, no spectrum needed).");
     call_ = new QCheckBox("Callsign watermark", this);
-    g->addWidget(fill_, 10, 0, 1, 3);
-    g->addWidget(peak_, 11, 0, 1, 3);
-    g->addWidget(grid_, 12, 0, 1, 3);
-    g->addWidget(solar_, 13, 0, 1, 3);
-    g->addWidget(tuneBox_, 14, 0, 1, 3);
-    g->addWidget(rose_, 15, 0, 1, 3);
-    g->addWidget(plan_, 16, 0, 1, 3);
-    g->addWidget(priv_, 17, 0, 1, 3);
-    g->addWidget(bigVfo_, 18, 0, 1, 3);
-    g->addWidget(clock_, 19, 0, 1, 3);
-    g->addWidget(wfTime_, 20, 0, 1, 3);
-    g->addWidget(cursor_, 21, 0, 1, 3);
-    g->addWidget(zap_, 22, 0, 1, 3);
-    g->addWidget(voacap_, 23, 0, 1, 3);
-    g->addWidget(call_, 24, 0, 1, 3);
+    g->addWidget(fill_, 12, 0, 1, 3);
+    g->addWidget(peak_, 13, 0, 1, 3);
+    g->addWidget(grid_, 14, 0, 1, 3);
+    g->addWidget(solar_, 15, 0, 1, 3);
+    g->addWidget(tuneBox_, 16, 0, 1, 3);
+    g->addWidget(rose_, 17, 0, 1, 3);
+    g->addWidget(plan_, 18, 0, 1, 3);
+    g->addWidget(priv_, 19, 0, 1, 3);
+    g->addWidget(bigVfo_, 20, 0, 1, 3);
+    g->addWidget(clock_, 21, 0, 1, 3);
+    g->addWidget(wfTime_, 22, 0, 1, 3);
+    g->addWidget(cursor_, 23, 0, 1, 3);
+    g->addWidget(zap_, 24, 0, 1, 3);
+    g->addWidget(voacap_, 25, 0, 1, 3);
+    g->addWidget(call_, 26, 0, 1, 3);
 
     g->addWidget(makeCaption("CALL", this), 25, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
-    g->addWidget(callEdit_, 25, 1, 1, 2);
+    g->addWidget(callEdit_, 27, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
@@ -247,7 +288,7 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
-    g->addWidget(gridEdit_, 26, 1, 1, 2);
+    g->addWidget(gridEdit_, 28, 1, 1, 2);
 
     auto updateLabels = [this] {
         refVal_->setText(QString("%1 dB").arg(ref_->value()));
@@ -285,6 +326,8 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     connect(avg_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(speed_, &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(pal_,   &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
+    for (QComboBox* c : {style_, width_, smooth_, decomb_})
+        connect(c, &QComboBox::currentIndexChanged, this, &DisplayPanel::emitChanged);
     connect(bg_, &QComboBox::currentIndexChanged, this, [this, updateLabels](int idx) {
         // Index 5 = "Map: Custom…" (a FIXED index): ask for the image right
         // here. Cancel with no previous pick bounces back to the prior
@@ -386,6 +429,10 @@ DisplaySettings DisplayPanel::settings() const {
     s.showBandPlan = plan_->isChecked();
     s.showPrivileges = priv_->isChecked();
     s.traceColor = trace_->currentIndex();
+    s.traceStyle = style_->currentIndex();
+    s.lineWidth  = float(width_->currentData().toDouble());
+    s.smoothPx   = smooth_->currentData().toInt();
+    s.decombHz   = decomb_->currentData().toInt();
     s.bigVfo     = bigVfo_->isChecked();
     s.showClock  = clock_->isChecked();
     s.showWfTime = wfTime_->isChecked();
@@ -404,7 +451,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
         b11(mapDay_), b12(mapNight_), b13(solar_), b14(rose_),
         b15(plan_), b16(bigVfo_), b17(trace_), b18(clock_), b19(zap_),
         b20(wfTime_), b21(cursor_), b22(priv_), b23(roseR_), b24(voacap_),
-        b25(tuneBox_);
+        b25(tuneBox_), b26(style_), b27(width_), b28(smooth_), b29(decomb_);
     ref_->setValue(static_cast<int>(s.refDb));
     range_->setValue(static_cast<int>(s.rangeDb));
     const int ai = avg_->findData(s.avgFrames);
@@ -434,6 +481,17 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     cursor_->setChecked(s.showCursor);
     zap_->setChecked(s.cwZap);
     trace_->setCurrentIndex(std::clamp(s.traceColor, 0, trace_->count() - 1));
+    style_->setCurrentIndex(std::clamp(s.traceStyle, 0, style_->count() - 1));
+    auto pick = [](QComboBox* c, const QVariant& v) {   // nearest stored value
+        int best = 0;
+        for (int i = 0; i < c->count(); ++i)
+            if (std::abs(c->itemData(i).toDouble() - v.toDouble())
+                < std::abs(c->itemData(best).toDouble() - v.toDouble())) best = i;
+        c->setCurrentIndex(best);
+    };
+    pick(width_, double(s.lineWidth));
+    pick(smooth_, s.smoothPx);
+    pick(decomb_, s.decombHz);
     refVal_->setText(QString("%1 dB").arg(ref_->value()));
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
     mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));

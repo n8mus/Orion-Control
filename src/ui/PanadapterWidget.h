@@ -11,6 +11,8 @@
 #include <cstdlib>
 #include <vector>
 
+#include "dsp/TraceShaping.h"
+
 namespace ttc {
 
 // User-adjustable display parameters (KE9NS/Flex-style), persisted by the
@@ -50,6 +52,11 @@ struct DisplaySettings {
     // Shares rangeDb (one contrast knob). Dragged on the WATERFALL's own
     // left edge, same gesture as the spectrum's dB axis.
     float wfRefDb   = -55.0f;
+    // AetherSDR trace look; the defaults are the original look.
+    int   traceStyle = 0;       // 0 classic (palette fill, flat line), 1 heat map
+    float lineWidth  = 1.0f;    // spectrum trace width, px
+    int   smoothPx   = 0;       // FFT Smooth half-width, px (0 = off)
+    int   decombHz   = 0;       // FFT De-comb width, Hz (0 = off)
 };
 
 // A user-pinned frequency marker (SDR-Console/Thetis style): a labeled
@@ -117,6 +124,11 @@ public:
     // up the scale, not only at the very top.
     static constexpr float kFillGamma = 0.6f;
     static QColor traceColor(int i);               // DisplaySettings::traceColor
+    // AetherSDR's heat-map ramp for the heat trace style: blue (noise floor,
+    // t = 0) -> cyan -> green -> yellow -> red (top of the scale, t = 1).
+    static QColor heatColor(float t);
+    static constexpr float kHeatFillAlpha = 0.70f; // fill opacity at the base
+    static constexpr float kHeatTopAlpha  = 0.30f; // x fill alpha at the trace
     // GPU panadapter (PanGpuView) on/off — falls back to the CPU paint by itself.
     void setGpuEnabled(bool on);
     bool gpuEnabled() const { return gpu_ != nullptr; }
@@ -386,6 +398,9 @@ private:
     int  lastBinLo_ = -1, lastBinHi_ = -1;         // geometry key for wfImg_
     bool wfDirty_ = true;                          // settings changed: full re-render
     QImage fillImg_;                               // level-colored fill (reused buffer)
+    // FFT Smooth / De-comb state for columnLevels() (display only).
+    mutable Decomb decomb_;
+    mutable std::vector<double> smoothScratch_;
 
     // DX-cluster spots: markers + callsigns in the spectrum area; hit rects
     struct SpotHit { QRect rect; qint64 hz; QString call; double lat, lon;

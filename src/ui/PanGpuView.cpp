@@ -63,13 +63,13 @@ void PanGpuView::freeAll() {
         l->img = QImage();
         l->dirty = true;
     }
-    del(overlayPipe_); del(wfPipe_); del(fillPipe_); del(linePipe_);
+    del(overlayPipe_); del(wfPipe_); del(fillPipe_); del(linePipe_); del(widePipe_);
     del(wfSrb_); del(fillSrb_); del(peakSrb_); del(traceSrb_);
-    del(quadVbo_); del(lineVbo_);
+    del(quadVbo_); del(lineVbo_); del(wideVbo_);
     for (auto*& u : ubo_) del(u);
     del(linear_); del(nearest_);
     del(hist_); del(palette_); del(cols_);
-    histBins_ = colsW_ = lineVboCap_ = 0;
+    histBins_ = colsW_ = lineVboCap_ = wideVboCap_ = 0;
     histReset_ = ~0ull;
     paletteId_ = -1;
     pipesBuilt_ = false;
@@ -313,6 +313,35 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         }
         traceN = int(colT.size());
     }
+    // Wide or heat trace (AetherSDR look): one anti-aliased quad per segment,
+    // extended half a width at each end so the joins close. The flat 1 px
+    // classic line stays a plain line strip (the original look).
+    const bool wide = p->ds_.traceStyle == 1 || p->ds_.lineWidth > 1.0f;
+    std::vector<float> quads;
+    if (wide && traceN > 1) {
+        const float h = p->ds_.lineWidth * 0.5f + 0.5f;
+        quads.reserve(size_t(traceN - 1) * 18);
+        for (int i = 0; i + 1 < traceN; ++i) {
+            const float ax = verts[size_t(2 * (peakN + i))], ay = verts[size_t(2 * (peakN + i) + 1)];
+            const float bx = verts[size_t(2 * (peakN + i + 1))], by = verts[size_t(2 * (peakN + i + 1) + 1)];
+            float dx = bx - ax, dy = by - ay;
+            const float len = std::max(1e-4f, std::sqrt(dx * dx + dy * dy));
+            dx /= len; dy /= len;
+            const float nx = -dy * h, ny = dx * h;
+            const float a0x = ax - dx * h, a0y = ay - dy * h, b0x = bx + dx * h, b0y = by + dy * h;
+            const float q[18] = {a0x + nx, a0y + ny, 1.f,  a0x - nx, a0y - ny, -1.f,  b0x + nx, b0y + ny, 1.f,
+                                 b0x + nx, b0y + ny, 1.f,  a0x - nx, a0y - ny, -1.f,  b0x - nx, b0y - ny, -1.f};
+            quads.insert(quads.end(), q, q + 18);
+        }
+        const int need = int(quads.size() * sizeof(float));
+        if (!wideVbo_ || wideVboCap_ < need) {
+            delete wideVbo_;
+            wideVboCap_ = need * 2;
+            wideVbo_ = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, wideVboCap_);
+            wideVbo_->create();
+        }
+        u->updateDynamicBuffer(wideVbo_, 0, need, quads.data());
+    }
     const int needBytes = std::max(16, int(verts.size() * sizeof(float)));
     if (!lineVbo_ || lineVboCap_ < needBytes) {
         delete lineVbo_;
@@ -340,7 +369,8 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     const float wf2[4] = {p->wfDbMin_, p->wfDbMax_, 0.f, 0.f};
     quadUbo(uWf, wf0, wf1, wf2);
     // The fill shader indexes columns in WIDGET pixels (one level each).
-    const float fl0[4] = {float(cw), float(hSpec), PanadapterWidget::kFillGamma, 0.f};
+    const float fl0[4] = {float(cw), float(hSpec), PanadapterWidget::kFillGamma,
+                          float(p->ds_.traceStyle)};
     quadUbo(uFill, fl0, nullptr, nullptr);
     auto lineUbo = [&](int i, const QColor& c, float alpha) {
         float b[24] = {};
@@ -348,6 +378,8 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         b[16] = float(c.redF() * alpha); b[17] = float(c.greenF() * alpha);
         b[18] = float(c.blueF() * alpha); b[19] = alpha;
         b[20] = float(W); b[21] = float(H);
+        b[22] = (i == uTrace && p->ds_.traceStyle == 1) ? 1.f : 0.f;   // heat colour
+        b[23] = float(hSpec);
         u->updateDynamicBuffer(ubo_[i], 0, kLineUbo, b);
     };
     lineUbo(uPeak, QColor(235, 235, 245), 150.f / 255.f);
@@ -370,7 +402,13 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         QRhiGraphicsPipeline* gp = r->newGraphicsPipeline();
         gp->setShaderStages({{QRhiShaderStage::Vertex, loadShader(vs)},
                              {QRhiShaderStage::Fragment, loadShader(fs)}});
-        if (lines) {
+        if (lines && std::strcmp(vs, "pan_trace.vert") == 0) {
+            QRhiVertexInputLayout tl;
+            tl.setBindings({{3 * sizeof(float)}});
+            tl.setAttributes({{0, 0, QRhiVertexInputAttribute::Float3, 0}});
+            gp->setVertexInputLayout(tl);
+            gp->setTopology(QRhiGraphicsPipeline::Triangles);
+        } else if (lines) {
             QRhiVertexInputLayout ll;
             ll.setBindings({{2 * sizeof(float)}});
             ll.setAttributes({{0, 0, QRhiVertexInputAttribute::Float2, 0}});
@@ -413,6 +451,7 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     if (!wfPipe_) wfPipe_ = makePipe("pan_quad.vert", "pan_waterfall.frag", wfSrb_, false, false);
     if (!fillPipe_) fillPipe_ = makePipe("pan_quad.vert", "pan_fill.frag", fillSrb_, true, false);
     if (!linePipe_) linePipe_ = makePipe("pan_line.vert", "pan_line.frag", traceSrb_, true, true);
+    if (!widePipe_) widePipe_ = makePipe("pan_trace.vert", "pan_trace.frag", traceSrb_, true, true);
 
     // ---- the frame, bottom to top ----
     cb->beginPass(renderTarget(), QColor(12, 16, 22), {1.0f, 0}, u);
@@ -460,8 +499,16 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
             cb->setShaderResources(peakSrb_);
             cb->draw(quint32(peakN));
         }
-        cb->setShaderResources(traceSrb_);
-        cb->draw(quint32(traceN), 1, quint32(peakN));
+        if (!quads.empty()) {
+            const QRhiCommandBuffer::VertexInput wideIn(wideVbo_, 0);
+            cb->setGraphicsPipeline(widePipe_);
+            cb->setVertexInput(0, 1, &wideIn);
+            cb->setShaderResources(traceSrb_);
+            cb->draw(quint32(quads.size() / 3));
+        } else {
+            cb->setShaderResources(traceSrb_);
+            cb->draw(quint32(traceN), 1, quint32(peakN));
+        }
     }
     overlay(top_);
     overlay(cursor_);

@@ -56,6 +56,8 @@ private:
     QRhiBuffer* quadVbo_ = nullptr;
     QRhiBuffer* lineVbo_ = nullptr;
     int lineVboCap_ = 0;
+    QRhiBuffer* wideVbo_ = nullptr;                // wide/heat trace quads
+    int wideVboCap_ = 0;
     // One uniform block per draw (they differ per frame).
     enum Ubo { uUnder, uWf, uFill, uMid, uLabels, uPeak, uTrace, uTop, uCursor, uCount };
     QRhiBuffer* ubo_[uCount] = {};
@@ -77,6 +79,7 @@ private:
     QRhiGraphicsPipeline* wfPipe_ = nullptr;
     QRhiGraphicsPipeline* fillPipe_ = nullptr;
     QRhiGraphicsPipeline* linePipe_ = nullptr;
+    QRhiGraphicsPipeline* widePipe_ = nullptr;
     QRhiShaderResourceBindings* wfSrb_ = nullptr;
     QRhiShaderResourceBindings* fillSrb_ = nullptr;
     QRhiShaderResourceBindings* peakSrb_ = nullptr;

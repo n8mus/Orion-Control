@@ -277,14 +277,14 @@ fill_ = new QCheckBox("Fill spectrum", this);
     g->addWidget(voacap_, 25, 0, 1, 3);
     g->addWidget(call_, 26, 0, 1, 3);
 
-    g->addWidget(makeCaption("CALL", this), 25, 0);
+    g->addWidget(makeCaption("CALL", this), 27, 0);
     callEdit_ = new QLineEdit(this);
     callEdit_->setMaxLength(12);
     g->addWidget(callEdit_, 27, 1, 1, 2);
 
     // Station grid square: centers the compass rose (and any future
     // bearing/distance math). 4 or 6 characters.
-    g->addWidget(makeCaption("GRID", this), 26, 0);
+    g->addWidget(makeCaption("GRID", this), 28, 0);
     gridEdit_ = new QLineEdit(this);
     gridEdit_->setMaxLength(6);
     gridEdit_->setToolTip("Your Maidenhead grid square (4 or 6 chars), e.g. EN82fq");
@@ -496,6 +496,7 @@ void DisplayPanel::setSettings(const DisplaySettings& s) {
     rangeVal_->setText(QString("%1 dB").arg(range_->value()));
     mapDayVal_->setText(QString("%1 %").arg(mapDay_->value()));
     mapNightVal_->setText(QString("%1 %").arg(mapNight_->value()));
+    roseRVal_->setText(QString("%1 px").arg(roseR_->value()));
     const int bg = bg_->currentIndex();
     const bool isMap = bg >= 2 && bg <= 5;
     mapDay_->setEnabled(isMap || bg == 6);         // ship art: Day = brightness

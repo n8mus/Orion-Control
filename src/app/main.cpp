@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include <QApplication>
+#include <QSurfaceFormat>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -64,6 +65,15 @@ void qtMessage(QtMsgType, const QMessageLogContext&, const QString& msg) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // The GPU panadapter's shaders are GLSL 330 (texelFetch, integer maths):
+    // ask for an OpenGL 3.3 core context before any window exists. Mesa
+    // radeonsi here does 4.6; without GL the panadapter paints on the CPU.
+    {
+        QSurfaceFormat fmt = QSurfaceFormat::defaultFormat();
+        fmt.setVersion(3, 3);
+        fmt.setProfile(QSurfaceFormat::CoreProfile);
+        QSurfaceFormat::setDefaultFormat(fmt);
+    }
     QApplication app(argc, argv);
     QApplication::setOrganizationName("n8mus");     // QSettings (band memories etc.)
     QApplication::setApplicationName("tentec-console");

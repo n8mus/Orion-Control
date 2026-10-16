@@ -105,9 +105,21 @@ struct SpotLabel {
 // The waterfall keeps raw dB rows (not pixels) so zoom/resize/palette changes
 // re-render history crisply — each display row maps pixel columns to bins with
 // a max-pick, never smooth image scaling.
+class PanGpuView;
+
 class PanadapterWidget : public QWidget {
     Q_OBJECT
+    friend class PanGpuView;
 public:
+    static constexpr int kWfHistRows = 1024;       // raw dB rows kept for re-render on zoom
+    static constexpr int kScaleBandH = 32;         // freq-scale strip between spectrum and wf
+    // The fill's colour ramp is gamma-compressed: warm colours arrive partway
+    // up the scale, not only at the very top.
+    static constexpr float kFillGamma = 0.6f;
+    static QColor traceColor(int i);               // DisplaySettings::traceColor
+    // GPU panadapter (PanGpuView) on/off — falls back to the CPU paint by itself.
+    void setGpuEnabled(bool on);
+    bool gpuEnabled() const { return gpu_ != nullptr; }
     explicit PanadapterWidget(QWidget* parent = nullptr);
 
     void setSpanHz(int spanHz);                    // full captured span
@@ -288,6 +300,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent*) override;
     void mouseDoubleClickEvent(QMouseEvent*) override;
     void leaveEvent(QEvent*) override;
+    void resizeEvent(QResizeEvent* e) override;
     void wheelEvent(QWheelEvent*) override;
 
 private:
@@ -402,6 +415,16 @@ private:
     void paintMid(QPainter& p, int hSpec);
     void paintTraceCpu(QPainter& p, int hSpec, const PanView& v, const std::vector<float>& colT);
     void paintTop(QPainter& p, int hSpec, int n);
+    void paintWfLabels(QPainter& p, int hSpec, const PanView& v);
+    // Repaint requests: changed() = state moved, every cached GPU layer is
+    // stale; changedTop() = only the top layer (cursor); frame() = new
+    // spectrum data, no layer redraw.
+    void changed(const char* who = nullptr);
+    void changedTop();
+    void frame();
+    PanGpuView* gpu_ = nullptr;
+    bool gpuDirtyUnder_ = true, gpuDirtyMid_ = true, gpuDirtyTop_ = true, gpuDirtyLabels_ = true;
+    uint64_t wfSerial_ = 0, wfReset_ = 0;          // rows pushed / history resets
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.

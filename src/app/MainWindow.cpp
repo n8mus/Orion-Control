@@ -135,6 +135,14 @@ MainWindow::MainWindow(QWidget* parent)
     setWindowTitle(shipName());
 
     pan_ = new PanadapterWidget(this);
+    // GPU panadapter (display/gpuPan; TTC_GPUPAN=0/1 overrides). Falls back
+    // to the CPU paint by itself if the GPU path can't start.
+    {
+        bool gpu = QSettings().value("display/gpuPan", true).toBool();
+        const QByteArray env = qgetenv("TTC_GPUPAN");
+        if (!env.isEmpty()) gpu = env != "0";
+        pan_->setGpuEnabled(gpu);
+    }
     pan_->setPassband(-1200, 1200);
     pan_->setCenterHz(centerHz_);                  // grid labels need the dial freq
     smeter_ = new SMeterWidget(this);

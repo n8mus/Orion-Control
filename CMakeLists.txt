@@ -121,6 +121,7 @@ add_executable(tentec-console
   src/net/PatMonitor.cpp        src/net/PatMonitor.h
   src/net/PskReporter.cpp       src/net/PskReporter.h
   src/ui/FreeDvWindow.cpp       src/ui/FreeDvWindow.h
+  src/ui/PanGpuView.cpp         src/ui/PanGpuView.h
   src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
@@ -207,6 +208,24 @@ if(NOT TTC_GIT_VERSION)
   set(TTC_GIT_VERSION ${PROJECT_VERSION})
 endif()
 target_compile_definitions(tentec-console PRIVATE TTC_VERSION="${TTC_GIT_VERSION}")
+# GPU panadapter (PanGpuView): QRhi needs the semi-public Qt GUI headers
+# (Qt6::GuiPrivate) and its shaders are compiled to .qsb at build time
+# (Qt ShaderTools). GLSL 330 — texelFetch and integer maths in the shaders;
+# the station's Mesa radeonsi does 4.6.
+find_package(Qt6 REQUIRED COMPONENTS GuiPrivate ShaderTools)
+qt_add_shaders(tentec-console "pan_shaders"
+  PREFIX "/shaders"
+  BASE src/ui/shaders
+  GLSL "330"
+  NOHLSL NOMSL
+  FILES
+    src/ui/shaders/pan_quad.vert
+    src/ui/shaders/pan_overlay.frag
+    src/ui/shaders/pan_waterfall.frag
+    src/ui/shaders/pan_fill.frag
+    src/ui/shaders/pan_line.vert
+    src/ui/shaders/pan_line.frag)
+target_link_libraries(tentec-console PRIVATE Qt6::GuiPrivate)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql Qt6::WebSockets rnnoise)
 if(WIN32)
   # GUI subsystem: no stray console window on double-click. stderr then has

@@ -59,7 +59,7 @@ private:
     QRhiBuffer* wideVbo_ = nullptr;                // wide/heat trace quads
     int wideVboCap_ = 0;
     // One uniform block per draw (they differ per frame).
-    enum Ubo { uUnder, uWf, uFill, uMid, uLabels, uPeak, uTrace, uTop, uCursor, uCount };
+    enum Ubo { uUnder, uWf, uFill, uMid, uLabels, uPeak, uTrace, uTop, uCursor, u3D, uCount };
     QRhiBuffer* ubo_[uCount] = {};
     QRhiSampler* linear_ = nullptr;
     QRhiSampler* nearest_ = nullptr;
@@ -84,6 +84,14 @@ private:
     QRhiShaderResourceBindings* fillSrb_ = nullptr;
     QRhiShaderResourceBindings* peakSrb_ = nullptr;
     QRhiShaderResourceBindings* traceSrb_ = nullptr;
+    // 3D stacked traces: history ring texture + the static perspective mesh.
+    QRhiTexture* hist3d_ = nullptr;
+    int hist3dBins_ = 0;
+    uint64_t hist3dSerial_ = 0, hist3dReset_ = ~0ull;
+    QRhiBuffer* mesh3d_ = nullptr;
+    int mesh3dVerts_ = 0;
+    QRhiGraphicsPipeline* pipe3d_ = nullptr;
+    QRhiShaderResourceBindings* srb3d_ = nullptr;
     bool pipesBuilt_ = false, quadUploaded_ = false;
 };
 

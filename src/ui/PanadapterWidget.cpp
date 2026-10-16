@@ -1430,6 +1430,19 @@ void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
         for (size_t i = 0; i < n; ++i) wfAccum_[i] = std::max(wfAccum_[i], magsDb[i]);
         ++wfAccumN_;
     }
+    if (view3d_ && gpu_ && n >= 2 && ++frames3d_ >= framesPerRow3d()) {
+        frames3d_ = 0;
+        if (bins3d_ != int(n)) {
+            bins3d_ = int(n);
+            hist3d_.assign(size_t(k3dRows) * n, -200.0f);
+            count3d_ = 0;
+            serial3d_ = 0;
+            ++reset3d_;
+        }
+        std::copy(avg_.begin(), avg_.end(), hist3d_.begin() + size_t(serial3d_ % k3dRows) * n);
+        ++serial3d_;
+        count3d_ = std::min(count3d_ + 1, k3dRows);
+    }
     if (wfAccumN_ >= std::max(1, int(std::lround(ds_.wfSpeed * fpsScale_)))) {   // same rows/s at any fps
         pushWaterfallRow(wfAccum_);
         std::fill(wfAccum_.begin(), wfAccum_.end(), kNoRow);
@@ -2006,6 +2019,15 @@ QColor PanadapterWidget::heatColor(float t) {
     else if (t < 0.75f) { const float s = (t - 0.5f) / 0.25f;  r = s; g = 1;     b = 0; }
     else                { const float s = (t - 0.75f) / 0.25f; r = 1; g = 1 - s; b = 0; }
     return QColor::fromRgbF(r, g, b);
+}
+
+void PanadapterWidget::set3D(bool on) {
+    if (on == view3d_) return;
+    view3d_ = on;
+    bins3d_ = count3d_ = frames3d_ = 0;           // start the stack fresh
+    serial3d_ = 0;
+    ++reset3d_;
+    changed(__func__);
 }
 
 void PanadapterWidget::changed(const char* who) {

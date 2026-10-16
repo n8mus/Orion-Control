@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <cstdlib>
+#include <cmath>
 #include <vector>
 
 #include "dsp/TraceShaping.h"
@@ -136,6 +137,12 @@ public:
     // averaging, waterfall row merge, peak-hold droop) are scaled so they
     // keep their 20 fps feel in real time at 30 or 60.
     void setFrameRate(int fps) { fpsScale_ = std::max(0.25f, fps / 20.0f); }
+    // 3D stacked traces (GPU only; the CPU paint stays 2D): the last k3dRows
+    // averaged traces in perspective over the spectrum area, newest in front,
+    // scrolling back smoothly at ~10 rows/s. The waterfall stays below.
+    static constexpr int k3dRows = 48;
+    void set3D(bool on);
+    bool is3D() const { return view3d_; }
     explicit PanadapterWidget(QWidget* parent = nullptr);
 
     void setSpanHz(int spanHz);                    // full captured span
@@ -450,6 +457,12 @@ private:
     QRect cursorRect_;                             // what drawCursor drew last
     int cursorFrame_ = 0;
     uint64_t wfSerial_ = 0, wfReset_ = 0;          // rows pushed / history resets
+    // 3D history ring (k3dRows x bins, dB of avg_), fed while 3D is on.
+    bool view3d_ = false;
+    std::vector<float> hist3d_;
+    int bins3d_ = 0, count3d_ = 0, frames3d_ = 0;
+    uint64_t serial3d_ = 0, reset3d_ = 0;
+    int framesPerRow3d() const { return std::max(1, int(std::lround(2.0f * fpsScale_))); }
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the
     // mode/size changes — or each minute for the world map's moving grayline.

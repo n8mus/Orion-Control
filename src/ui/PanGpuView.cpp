@@ -4,6 +4,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QPainter>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +22,7 @@ QShader loadShader(const char* name) {
 constexpr int kQuadUbo = 64 + 3 * 16;              // mat4 + 3 vec4 (std140)
 constexpr int kLineUbo = 64 + 2 * 16;              // mat4 + 2 vec4
 constexpr int kLabelStripPx = 160;                 // waterfall label strip width
+constexpr int k3dCols = 512;                       // 3D mesh columns (pan_3d.vert's span)
 // TTC_PANPROF=1: GPU frame cost on the CPU side (layer rebuilds + uploads
 // + command recording), same cadence as the CPU path's [panprof].
 struct GpuProf {
@@ -63,13 +65,14 @@ void PanGpuView::freeAll() {
         l->img = QImage();
         l->dirty = true;
     }
-    del(overlayPipe_); del(wfPipe_); del(fillPipe_); del(linePipe_); del(widePipe_);
-    del(wfSrb_); del(fillSrb_); del(peakSrb_); del(traceSrb_);
-    del(quadVbo_); del(lineVbo_); del(wideVbo_);
+    del(overlayPipe_); del(wfPipe_); del(fillPipe_); del(linePipe_); del(widePipe_); del(pipe3d_);
+    del(wfSrb_); del(fillSrb_); del(peakSrb_); del(traceSrb_); del(srb3d_);
+    del(quadVbo_); del(lineVbo_); del(wideVbo_); del(mesh3d_);
     for (auto*& u : ubo_) del(u);
     del(linear_); del(nearest_);
-    del(hist_); del(palette_); del(cols_);
-    histBins_ = colsW_ = lineVboCap_ = wideVboCap_ = 0;
+    del(hist_); del(palette_); del(cols_); del(hist3d_);
+    histBins_ = colsW_ = lineVboCap_ = wideVboCap_ = hist3dBins_ = mesh3dVerts_ = 0;
+    hist3dReset_ = ~0ull;
     histReset_ = ~0ull;
     paletteId_ = -1;
     pipesBuilt_ = false;
@@ -292,6 +295,65 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         u->uploadTexture(cols_, QRhiTextureUploadDescription(QRhiTextureUploadEntry(0, 0, d)));
     }
 
+    // ---- 3D stacked traces: history rows + the mesh (built once) ----
+    const bool want3d = p->view3d_ && p->bins3d_ >= 2 && v.n >= 2 && hSpec > 40;
+    if (want3d) {
+        const int bins = p->bins3d_, rows = PanadapterWidget::k3dRows;
+        if (!hist3d_ || hist3dBins_ != bins) {
+            delete hist3d_;
+            hist3d_ = r->newTexture(QRhiTexture::R32F, QSize(bins, rows));
+            hist3d_->create();
+            hist3dBins_ = bins;
+            hist3dReset_ = ~0ull;
+            delete srb3d_;
+            srb3d_ = nullptr;
+            delete pipe3d_;
+            pipe3d_ = nullptr;
+        }
+        uint64_t from = hist3dSerial_;
+        if (hist3dReset_ != p->reset3d_ || p->serial3d_ - hist3dSerial_ > uint64_t(rows)
+            || p->serial3d_ < hist3dSerial_) {
+            from = p->serial3d_ > uint64_t(rows) ? p->serial3d_ - rows : 0;
+            hist3dReset_ = p->reset3d_;
+        }
+        QVarLengthArray<QRhiTextureUploadEntry, 8> entries;
+        for (uint64_t s = from; s < p->serial3d_; ++s) {
+            const int idx = int(s % rows);
+            QRhiTextureSubresourceUploadDescription d(&p->hist3d_[size_t(idx) * bins],
+                                                      quint32(bins * sizeof(float)));
+            d.setSourceSize(QSize(bins, 1));
+            d.setDestinationTopLeft(QPoint(0, idx));
+            entries.append(QRhiTextureUploadEntry(0, 0, d));
+        }
+        if (!entries.isEmpty()) {
+            QRhiTextureUploadDescription desc;
+            desc.setEntries(entries.cbegin(), entries.cend());
+            u->uploadTexture(hist3d_, desc);
+        }
+        hist3dSerial_ = p->serial3d_;
+        if (!mesh3d_) {
+            // Back row first: each row is a curtain (foot..top) then its
+            // ridge line, two triangles each per column step.
+            std::vector<float> m;
+            m.reserve(size_t(rows) * (k3dCols - 1) * 36);
+            auto vtx = [&](float uu, int rr, float tag) { m.push_back(uu); m.push_back(float(rr)); m.push_back(tag); };
+            for (int rr = rows - 1; rr >= 0; --rr)
+                for (int c = 0; c + 1 < k3dCols; ++c) {
+                    const float u0 = float(c) / (k3dCols - 1), u1 = float(c + 1) / (k3dCols - 1);
+                    for (float top : {1.f, 2.f}) {
+                        const float bot = top == 1.f ? 0.f : 3.f;
+                        vtx(u0, rr, top); vtx(u0, rr, bot); vtx(u1, rr, top);
+                        vtx(u1, rr, top); vtx(u0, rr, bot); vtx(u1, rr, bot);
+                    }
+                }
+            mesh3dVerts_ = int(m.size() / 3);
+            mesh3d_ = r->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer,
+                                   quint32(m.size() * sizeof(float)));
+            mesh3d_->create();
+            u->uploadStaticBuffer(mesh3d_, m.data());
+        }
+    }
+
     // ---- trace + peak-hold vertices (widget pixels) ----
     std::vector<float> verts;
     int traceN = 0, peakN = 0;
@@ -372,6 +434,15 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     const float fl0[4] = {float(cw), float(hSpec), PanadapterWidget::kFillGamma,
                           float(p->ds_.traceStyle)};
     quadUbo(uFill, fl0, nullptr, nullptr);
+    if (want3d) {
+        const float d0[4] = {float(v.binLo), float(v.binHi),
+                             float(p->serial3d_ % PanadapterWidget::k3dRows), float(p->count3d_)};
+        const float d1[4] = {p->dbMin_, p->dbMax_, float(W), float(hSpec)};
+        const float d2[4] = {float(PanadapterWidget::k3dRows), float(PanadapterWidget::k3dRows),
+                             std::clamp(float(p->frames3d_) / float(p->framesPerRow3d()), 0.f, 1.f),
+                             p->ds_.traceStyle == 1 ? 1.f : 0.f};
+        quadUbo(u3D, d0, d1, d2);
+    }
     auto lineUbo = [&](int i, const QColor& c, float alpha) {
         float b[24] = {};
         std::memcpy(b, mvp.constData(), 64);
@@ -402,7 +473,13 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         QRhiGraphicsPipeline* gp = r->newGraphicsPipeline();
         gp->setShaderStages({{QRhiShaderStage::Vertex, loadShader(vs)},
                              {QRhiShaderStage::Fragment, loadShader(fs)}});
-        if (lines && std::strcmp(vs, "pan_trace.vert") == 0) {
+        if (std::strcmp(vs, "pan_3d.vert") == 0) {
+            QRhiVertexInputLayout ml;
+            ml.setBindings({{3 * sizeof(float)}});
+            ml.setAttributes({{0, 0, QRhiVertexInputAttribute::Float3, 0}});
+            gp->setVertexInputLayout(ml);
+            gp->setTopology(QRhiGraphicsPipeline::Triangles);
+        } else if (lines && std::strcmp(vs, "pan_trace.vert") == 0) {
             QRhiVertexInputLayout tl;
             tl.setBindings({{3 * sizeof(float)}});
             tl.setAttributes({{0, 0, QRhiVertexInputAttribute::Float3, 0}});
@@ -452,6 +529,14 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     if (!fillPipe_) fillPipe_ = makePipe("pan_quad.vert", "pan_fill.frag", fillSrb_, true, false);
     if (!linePipe_) linePipe_ = makePipe("pan_line.vert", "pan_line.frag", traceSrb_, true, true);
     if (!widePipe_) widePipe_ = makePipe("pan_trace.vert", "pan_trace.frag", traceSrb_, true, true);
+    if (want3d && !srb3d_) {
+        srb3d_ = r->newShaderResourceBindings();
+        srb3d_->setBindings({QRhiShaderResourceBinding::uniformBuffer(0, stages, ubo_[u3D]),
+                             QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::VertexStage, hist3d_, nearest_),
+                             QRhiShaderResourceBinding::sampledTexture(2, QRhiShaderResourceBinding::VertexStage, palette_, linear_)});
+        srb3d_->create();
+    }
+    if (want3d && !pipe3d_) pipe3d_ = makePipe("pan_3d.vert", "pan_3d.frag", srb3d_, true, false);
 
     // ---- the frame, bottom to top ----
     cb->beginPass(renderTarget(), QColor(12, 16, 22), {1.0f, 0}, u);
@@ -477,7 +562,14 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         cb->setVertexInput(0, 1, &quadIn);
         cb->draw(4);
     }
-    if (p->ds_.fillTrace && v.n >= 2 && hSpec > 1 && !colT.empty()) {
+    if (want3d) {
+        cb->setGraphicsPipeline(pipe3d_);
+        cb->setViewport(region(0, hSpec));
+        cb->setShaderResources(srb3d_);
+        const QRhiCommandBuffer::VertexInput meshIn(mesh3d_, 0);
+        cb->setVertexInput(0, 1, &meshIn);
+        cb->draw(quint32(mesh3dVerts_));
+    } else if (p->ds_.fillTrace && v.n >= 2 && hSpec > 1 && !colT.empty()) {
         cb->setGraphicsPipeline(fillPipe_);
         cb->setViewport(region(0, hSpec));
         cb->setShaderResources(fillSrb_);
@@ -490,7 +582,7 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     cb->setShaderResources(labels_.srb);
     cb->setVertexInput(0, 1, &quadIn);
     cb->draw(4);
-    if (traceN > 1) {
+    if (traceN > 1 && !want3d) {
         const QRhiCommandBuffer::VertexInput lineIn(lineVbo_, 0);
         cb->setGraphicsPipeline(linePipe_);
         cb->setViewport(full);

@@ -516,6 +516,20 @@ MainWindow::MainWindow(QWidget* parent)
     gpuAct->setToolTip("Waterfall, trace and fill on the video card (OpenGL); the labels\n"
                        "and scales redrawn only when they change. Off = the CPU paint.\n"
                        "Falls back to the CPU paint by itself if the GPU can't start.");
+    // 3D stacked traces (GPU only): the recent sweeps in perspective over
+    // the spectrum area, AetherSDR's 3D view. Off = the flat trace.
+    auto* act3d = dispMenu->addAction("3D stacked traces (GPU)");
+    act3d->setCheckable(true);
+    act3d->setChecked(QSettings().value("display/pan3d", false).toBool());
+    act3d->setToolTip("The last few seconds of spectrum stacked in perspective, newest\n"
+                      "in front, scrolling back. Uses the PALETTE (or the heat colours\n"
+                      "with TRACE = Heat map). Needs the GPU panadapter.");
+    pan_->set3D(act3d->isChecked());
+    act3d->setEnabled(pan_->gpuEnabled());
+    connect(act3d, &QAction::toggled, this, [this](bool on) {
+        QSettings().setValue("display/pan3d", on);
+        pan_->set3D(on);
+    });
     QMenu* fpsMenu = dispMenu->addMenu("Frame rate");
     auto* fpsGroup = new QActionGroup(fpsMenu);
     const int fpsNow = std::clamp(QSettings().value("display/panFps", 20).toInt(), 20, 60);
@@ -526,11 +540,12 @@ MainWindow::MainWindow(QWidget* parent)
         a->setChecked(f == fpsNow);
         fpsGroup->addAction(a);
     }
-    const auto applyFps = [this, fpsMenu](int f) {
+    const auto applyFps = [this, fpsMenu, act3d](int f) {
         if (!pan_->gpuEnabled()) f = 20;           // the CPU paint can't afford more
         spectrum_.setFrameRateHz(f);
         pan_->setFrameRate(f);
         fpsMenu->setEnabled(pan_->gpuEnabled());
+        act3d->setEnabled(pan_->gpuEnabled());
     };
     connect(fpsGroup, &QActionGroup::triggered, this, [applyFps](QAction* a) {
         QSettings().setValue("display/panFps", a->data().toInt());

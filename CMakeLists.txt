@@ -227,7 +227,9 @@ qt_add_shaders(tentec-console "pan_shaders"
     src/ui/shaders/pan_line.vert
     src/ui/shaders/pan_line.frag
     src/ui/shaders/pan_trace.vert
-    src/ui/shaders/pan_trace.frag)
+    src/ui/shaders/pan_trace.frag
+    src/ui/shaders/pan_3d.vert
+    src/ui/shaders/pan_3d.frag)
 target_link_libraries(tentec-console PRIVATE Qt6::GuiPrivate)
 target_link_libraries(tentec-console PRIVATE Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::SerialPort Qt6::Sql Qt6::WebSockets rnnoise)
 if(WIN32)

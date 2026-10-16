@@ -135,6 +135,23 @@ FreeDvWindow::FreeDvWindow(QWidget* parent) : QDialog(parent) {
 
     // ---- controls -----------------------------------------------------
     auto* ctl = new QHBoxLayout;
+    // What you hear: the SDR receive volume and MUTE, here so FreeDV needs
+    // no second window (operator, 2026-10-16) — same setting as SDR ▾ →
+    // Receive audio.
+    ctl->addWidget(new QLabel("Volume", this));
+    vol_ = new QSlider(Qt::Horizontal, this);
+    vol_->setRange(-40, 20);
+    vol_->setFixedWidth(140);
+    vol_->setToolTip("Receive volume — the decoded voice (or the sideband with Analog).\n"
+                     "Same setting as SDR ▾ → Receive audio.");
+    ctl->addWidget(vol_);
+    volText_ = new QLabel("0 dB", this);
+    volText_->setFixedWidth(44);
+    ctl->addWidget(volText_);
+    mute_ = new QCheckBox("MUTE", this);
+    mute_->setToolTip("Silence the receive audio (decoding, sync and the heard log carry on)");
+    ctl->addWidget(mute_);
+    ctl->addSpacing(12);
     analog_ = new QCheckBox("Analog", this);
     analog_->setToolTip("Hear the raw sideband instead of the decoded voice (freedv-gui's\n"
                         "\"Switch to Analog\") — for tuning, or someone calling on SSB.\n"
@@ -243,6 +260,11 @@ FreeDvWindow::FreeDvWindow(QWidget* parent) : QDialog(parent) {
 
     // ---- wiring ---------------------------------------------------------
     connect(analog_, &QCheckBox::toggled, this, &FreeDvWindow::analogChanged);
+    connect(vol_, &QSlider::valueChanged, this, [this](int v) {
+        volText_->setText(QString("%1 dB").arg(v));
+        emit volumeChanged(v, mute_->isChecked());
+    });
+    connect(mute_, &QCheckBox::toggled, this, [this](bool m) { emit volumeChanged(vol_->value(), m); });
     connect(txLevel_, &QSlider::valueChanged, this, [this](int v) {
         txLevelText_->setText(QString("%1 dB").arg(v));
         emit txLevelChanged(v);
@@ -300,6 +322,13 @@ void FreeDvWindow::setControls(bool analog, int txLevelDb, bool report, const QS
     txLevelText_->setText(QString("%1 dB").arg(txLevelDb));
     report_->setChecked(report);
     msg_->setText(message);
+}
+
+void FreeDvWindow::setVolume(int db, bool mute) {
+    const QSignalBlocker v(vol_), m(mute_);
+    vol_->setValue(db);
+    volText_->setText(QString("%1 dB").arg(vol_->value()));
+    mute_->setChecked(mute);
 }
 
 void FreeDvWindow::setReportingLive(bool live, const QString& who) {

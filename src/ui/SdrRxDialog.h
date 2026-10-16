@@ -25,6 +25,7 @@ class SdrRxDialog : public QDialog {
 public:
     SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent = nullptr);
     void setOn(bool on);                           // reflect a refusal / stop
+    void setVolumeMute(int db, bool mute);         // changed elsewhere (FreeDV window); no emit
     // Status line provider, polled ~4x a second while the window is open.
     void setStatusSource(std::function<QString()> f) { status_ = std::move(f); }
     // Meter feed, polled ~20x a second while the window is open.

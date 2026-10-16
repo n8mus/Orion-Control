@@ -408,6 +408,13 @@ SdrRxDialog::SdrRxDialog(bool on, const SdrRx::Settings& s, QWidget* parent)
     mtick->start();
 }
 
+void SdrRxDialog::setVolumeMute(int db, bool mute) {
+    const QSignalBlocker v(vol_), m(mute_);
+    vol_->setValue(db);
+    volVal_->setText(QString("%1 dB").arg(vol_->value()));
+    mute_->setChecked(mute);
+}
+
 void SdrRxDialog::setOn(bool on) {
     const QSignalBlocker b(on_);
     on_->setChecked(on);

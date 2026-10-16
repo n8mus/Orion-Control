@@ -1438,6 +1438,7 @@ void MainWindow::setupSdrRxUi(QMenu* sdrMenu) {
                     [this, setOn](bool on, const SdrRx::Settings& s) {
                 saveSdrRxSettings(s);
                 applySdrRxSettings();              // + FDV's overrides; next block
+                if (fdvWin_) fdvWin_->setVolume(int(std::lround(s.volumeDb)), s.mute);
                 if (on != sdrRx_->running()) {
                     const bool got = setOn(on);
                     if (sdrRxDlg_) sdrRxDlg_->setOn(got);
@@ -1899,6 +1900,20 @@ void MainWindow::openFreeDvWindow() {
             fdvAnalog_ = on;
             applySdrRxSettings();
         });
+#ifdef HAVE_WDSP
+        {
+            const SdrRx::Settings rs = loadSdrRxSettings();
+            w->setVolume(int(std::lround(rs.volumeDb)), rs.mute);
+        }
+        connect(w, &FreeDvWindow::volumeChanged, this, [this](int db, bool mute) {
+            SdrRx::Settings rs = loadSdrRxSettings();
+            rs.volumeDb = float(db);
+            rs.mute = mute;
+            saveSdrRxSettings(rs);
+            applySdrRxSettings();
+            if (sdrRxDlg_) sdrRxDlg_->setVolumeMute(db, mute);
+        });
+#endif
         connect(w, &FreeDvWindow::txLevelChanged, this, [this](int db) {
             QSettings().setValue("fdv/txLevelDb", db);
             if (live_) live_->setRadeLevelDb(float(db));

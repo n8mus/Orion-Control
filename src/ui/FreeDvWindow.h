@@ -44,6 +44,9 @@ public:
     void setStations(const QVector<FreeDvReporter::StationInfo>& st, qint64 dialHz);
     void addHeard(const QString& call, int snrDb, qint64 hz);
     void setControls(bool analog, int txLevelDb, bool report, const QString& message);
+    // The SDR receive volume + MUTE (the same setting as SDR ▾ → Receive
+    // audio's; no emit).
+    void setVolume(int db, bool mute);
     void setReportingLive(bool live, const QString& who);   // "reporting as N8EM (EN83al)"
     // 'N' new, 'B' new band, 'W' worked, 'C' confirmed, '?' unknown.
     void setStatusFor(std::function<char(const QString&, qint64)> f) { statusFor_ = std::move(f); }
@@ -51,6 +54,7 @@ public:
 
 signals:
     void analogChanged(bool on);
+    void volumeChanged(int db, bool mute);
     void txLevelChanged(int db);
     void reportChanged(bool on);
     void statusMessageSent(const QString& text);
@@ -76,6 +80,9 @@ private:
     float micShown_ = -120.f, micHold_ = -120.f;
     int micHoldTicks_ = 0, clipTicks_ = 0;
     QCheckBox* analog_ = nullptr;
+    QSlider* vol_ = nullptr;
+    QLabel* volText_ = nullptr;
+    QCheckBox* mute_ = nullptr;
     QSlider* txLevel_ = nullptr;
     QLabel* txLevelText_ = nullptr;
     QCheckBox* report_ = nullptr;

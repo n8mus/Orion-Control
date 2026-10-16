@@ -47,14 +47,20 @@ void SpectrumComputer::addSamples(const IqBlock& iq) {
             psAcc_[i] += (c.real() * c.real() + c.imag() * c.imag()) * norm * norm;
         }
         ++psCount_;
+        if (sampleClocked_ && psCount_ >= blocksPerFrame_)
+            emitFrame(psCount_ * n_ * 1000.0 / sampleRate_);
     }
+    if (sampleClocked_) return;
 
     const double t = now_ms();
     if (psCount_ == 0 || t - lastEmitMs_ < minInterval_) return;
     const double dt = lastEmitMs_ > 0.0 ? std::clamp(t - lastEmitMs_, 1.0, 250.0) : 50.0;
     lastEmitMs_ = t;
-    const float smooth = float(std::pow(0.5, dt / 50.0));   // 0.5 per 50 ms
+    emitFrame(dt);
+}
 
+void SpectrumComputer::emitFrame(double dtMs) {
+    const float smooth = float(std::pow(0.5, dtMs / 50.0));   // 0.5 per 50 ms
     const float inv = 1.0f / static_cast<float>(psCount_);
     for (int i = 0; i < n_; ++i) {
         const int k = (i + n_ / 2) % n_;          // fftshift: DC to center

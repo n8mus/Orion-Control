@@ -29,6 +29,7 @@
 #include <QCheckBox>
 #include <QComboBox>
 #include <QWidget>
+#include <QChronoTimer>
 #include <QTimer>
 #include <QToolButton>
 #include <QMenu>
@@ -545,6 +546,7 @@ MainWindow::MainWindow(QWidget* parent)
         if (!pan_->gpuEnabled()) f = 20;           // the CPU paint can't afford more
         spectrum_.setFrameRateHz(f);
         pan_->setFrameRate(f);
+        startSpecPacer();
         fpsMenu->setEnabled(pan_->gpuEnabled());
         act3d->setEnabled(pan_->gpuEnabled());
     };
@@ -3362,14 +3364,23 @@ MainWindow::MainWindow(QWidget* parent)
                 }
             }
         }
-        // Never queue frames behind a busy GUI thread: with one still
-        // waiting, drop this one (the display's smoothing is time-based, so
-        // a dropped frame costs nothing but a queued backlog is pure lag).
-        static std::atomic<int> inFlight{0};
-        if (inFlight.load(std::memory_order_relaxed) >= 2) return;
-        inFlight.fetch_add(1, std::memory_order_relaxed);
-        QMetaObject::invokeMethod(pan_, [this, spanHz, copy = db]() mutable {
-            inFlight.fetch_sub(1, std::memory_order_relaxed);
+        // To the pacer: a short queue, newest kept (more than ~12 frames =
+        // the GUI fell behind; a backlog is pure lag, the smoothing is
+        // time-based so a dropped frame costs nothing).
+        PanadapterWidget::profEmitted.fetch_add(1, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> lk(specQMux_);
+            specQ_.push_back(db);
+            if (int(specQ_.size()) > PanadapterWidget::profMaxQueue.load())
+                PanadapterWidget::profMaxQueue.store(int(specQ_.size()));
+            while (specQ_.size() > 12) {
+                specQ_.pop_front();
+                PanadapterWidget::profDropped.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    });
+    specPresent_ = [this, spanHz](std::vector<float>& copy) {
+        {
             pan_->setSpectrum(copy);
             // SDR-source S-meter: integrate power across the RX passband.
             // These bins never pass through the radio's AGC or RF gain, so
@@ -3415,8 +3426,11 @@ MainWindow::MainWindow(QWidget* parent)
             lastSdrMeasDb_ = meas;
             smeter_->setSdrLevel(meas + sdrCalDb_);
             lastSpectrum_ = std::move(copy);          // CW zap reads this
-        }, Qt::QueuedConnection);
-    });
+        }
+    };
+    spectrum_.setSampleClocked(true);
+    spectrum_.setSampleRateHz(spanHz);
+    startSpecPacer();
     // CW reader taps the same IQ stream (SDR thread; a no-op until the CW
     // window turns it on). The tuned carrier is always -kLoOffsetHz from
     // the SDR LO, so the decoder's mixer never moves.
@@ -3484,6 +3498,10 @@ MainWindow::MainWindow(QWidget* parent)
             std::lock_guard<std::mutex> lg(iqRingMux_);
             iqRing_.push_back(iq);
             iqRingSamples_ += iq.size();
+            {
+                const int ms = int(iqRingSamples_ / 1000);   // 1 MS/s: samples/1000 = ms
+                if (ms > PanadapterWidget::profMaxIqMs.load()) PanadapterWidget::profMaxIqMs.store(ms);
+            }
             const size_t cap = size_t(sdrSpanHz_ > 0 ? sdrSpanHz_
                                                      : kSdrCaptureHz) * 2;
             while (iqRingSamples_ > cap && iqRing_.size() > 1) {
@@ -3522,6 +3540,8 @@ MainWindow::MainWindow(QWidget* parent)
             if (int(fRate) != spanHz) {
                 pan_->setSpanHz(int(fRate));
                 sdrSpanHz_ = int(fRate);
+                spectrum_.setSampleRateHz(fRate);    // frame period follows
+                startSpecPacer();
                 cwDec_->setInputRate(fRate);
                 skim_->setInputRate(fRate);
                 skimStft_->setInputRate(fRate);
@@ -4116,4 +4136,44 @@ void MainWindow::maybeRunVoacap() {
         (kBands[curBand_].loHz + kBands[curBand_].hiHz) / 2.0 / 1e6;
     voacap_.request(la, lo, fMHz, ssn, std::clamp(lastTxPwr_, 1, 200));
 }
+
+// The GUI side of the spectrum pacer (see specQ_): one frame per tick on a
+// precise timer whose interval steers the queue toward 2 frames of slack —
+// a little faster when frames pile up (a late tick, the sample clock a hair
+// ahead), a little slower when it runs dry. Steering instead of dropping:
+// the first cut shed ~3 frames/s whenever a tick ran late, and each shed
+// frame was a visible skip in the 3D scroll (live, 2026-10-16). Frames are
+// only thrown away after a real stall (> 8 queued).
+void MainWindow::startSpecPacer() {
+    if (!specPresent_) return;                     // before the SDR chain exists
+    if (!specPacer_) {
+        specPacer_ = new QChronoTimer(this);
+        specPacer_->setTimerType(Qt::PreciseTimer);
+        specPacer_->setSingleShot(true);
+        connect(specPacer_, &QChronoTimer::timeout, this, [this] {
+            // One frame per tick; beyond 3 queued (the display is 60 Hz, the
+            // FFT 61; a late tick) the extras are CONSUMED in the same tick —
+            // their data still reaches the averaging, waterfall and 3D rows,
+            // they just share one repaint. Nothing is thrown away.
+            std::vector<std::vector<float>> take;
+            size_t left = 0;
+            {
+                std::lock_guard<std::mutex> lk(specQMux_);
+                const size_t n = specQ_.empty() ? 0 : std::max<size_t>(1, specQ_.size() - 2);
+                for (size_t i = 0; i < n && i < specQ_.size(); ++i)
+                    take.push_back(std::move(specQ_[i]));
+                specQ_.erase(specQ_.begin(), specQ_.begin() + qsizetype(take.size()));
+                left = specQ_.size();
+            }
+            const double scale = std::clamp(1.0 - 0.12 * (double(left) - 2.0), 0.6, 1.25);
+            specPacer_->setInterval(std::chrono::nanoseconds(
+                qint64(spectrum_.framePeriodMs() * 1e6 * scale)));
+            specPacer_->start();
+            for (auto& f : take) specPresent_(f);
+        });
+    }
+    specPacer_->setInterval(std::chrono::nanoseconds(qint64(spectrum_.framePeriodMs() * 1e6)));
+    specPacer_->start();
+}
+
 } // namespace ttc

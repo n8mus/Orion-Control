@@ -30,16 +30,32 @@ struct GpuProf {
     QElapsedTimer window;
     double renderMs = 0, layerMs = 0;
     int frames = 0, rebuilds = 0;
+    QElapsedTimer gap;                             // render-to-render: GUI stalls
+    double maxGapMs = 0;
+    int stalls = 0;
     void add(double r, double l, bool rebuilt) {
         if (!on) return;
         if (!window.isValid()) window.start();
+        if (gap.isValid()) {
+            const double g = gap.nsecsElapsed() / 1e6;
+            maxGapMs = std::max(maxGapMs, g);
+            stalls += g > 50.0;
+        }
+        gap.restart();
         renderMs += r; layerMs += l; ++frames; rebuilds += rebuilt;
         if (window.elapsed() < 5000) return;
         const double secs = window.elapsed() / 1000.0;
         std::fprintf(stderr, "[panprof-gpu] %.1f fps | %.2f ms/frame on the CPU (layers %.2f, "
-                             "%d rebuilds) | %.0f%% of a core\n",
+                             "%d rebuilds) | %.0f%% of a core | FFT %.1f/s, dropped %.1f/s, "
+                             "shown %.1f/s | worst gap %.0f ms, %d gaps > 50 ms | max queue %d, max IQ backlog %d ms\n",
                      frames / secs, renderMs / frames, layerMs / frames, rebuilds,
-                     100.0 * renderMs / (secs * 1000.0));
+                     100.0 * renderMs / (secs * 1000.0),
+                     PanadapterWidget::profEmitted.exchange(0) / secs,
+                     PanadapterWidget::profDropped.exchange(0) / secs,
+                     PanadapterWidget::profTaken.exchange(0) / secs, maxGapMs, stalls,
+                     PanadapterWidget::profMaxQueue.exchange(0), PanadapterWidget::profMaxIqMs.exchange(0));
+        maxGapMs = 0;
+        stalls = 0;
         renderMs = layerMs = 0; frames = rebuilds = 0;
         window.restart();
     }
@@ -439,7 +455,7 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
                              float(p->serial3d_ % PanadapterWidget::k3dRows), float(p->count3d_)};
         const float d1[4] = {p->floor3dDb_ - 6.0f, p->dbMax_ - p->dbMin_, float(W), float(hSpec)};
         const float d2[4] = {float(PanadapterWidget::k3dRows), float(p->bins3d_),
-                             std::clamp(p->acc3dMs_ / PanadapterWidget::k3dRowMs, 0.f, 1.f),
+                             p->scroll3dPhase(),
                              p->ds_.traceStyle == 1 ? 1.f : 0.f};
         quadUbo(u3D, d0, d1, d2);
     }
@@ -606,6 +622,8 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     overlay(cursor_);
     cb->endPass();
     gGpuProf.add(t.nsecsElapsed() / 1e6, layerMs, rebuilt);
+    // 3D scrolls continuously: draw again at the next display refresh.
+    if (want3d) update();
 }
 
 } // namespace ttc

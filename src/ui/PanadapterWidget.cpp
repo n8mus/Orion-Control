@@ -1410,11 +1410,11 @@ void PanadapterWidget::ensureWaterfallImage(int w, int h, int binLo, int binHi) 
 void PanadapterWidget::setSpectrum(const std::vector<float>& magsDb) {
     const size_t n = magsDb.size();
     spectrum_ = magsDb;
+    profTaken.fetch_add(1, std::memory_order_relaxed);
     // Real time since the last frame (20 fps = 50 ms is the reference every
     // per-frame constant below was tuned at).
-    static QElapsedTimer clock;
-    if (!clock.isValid()) clock.start();
-    const qint64 nowNs = clock.nsecsElapsed();
+    if (!frameClock_.isValid()) frameClock_.start();
+    const qint64 nowNs = frameClock_.nsecsElapsed();
     const float dtMs = lastFrameNs_ ? std::clamp((nowNs - lastFrameNs_) / 1e6f, 1.0f, 250.0f) : 50.0f;
     lastFrameNs_ = nowNs;
     const float k = dtMs / 50.0f;

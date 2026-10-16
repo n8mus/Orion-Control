@@ -5,8 +5,10 @@
 #include <QStringList>
 #include <QVector>
 #include <QRect>
+#include <QElapsedTimer>
 #include <algorithm>
 #include <cstdint>
+#include <atomic>
 #include <functional>
 #include <cstdlib>
 #include <cmath>
@@ -142,6 +144,10 @@ public:
     // 3D stacked traces (GPU only; the CPU paint stays 2D): the last k3dRows
     // averaged traces in perspective over the spectrum area, newest in front,
     // scrolling back smoothly at ~10 rows/s. The waterfall stays below.
+    // TTC_PANPROF frame accounting: FFT frames produced / dropped before the
+    // GUI / taken by setSpectrum (read + reset by the GPU profiler).
+    static inline std::atomic<int> profEmitted{0}, profDropped{0}, profTaken{0};
+    static inline std::atomic<int> profMaxQueue{0}, profMaxIqMs{0};   // pacer depth / IQ backlog
     static constexpr int k3dRows = 96;             // AetherSDR's visible depth
     void set3D(bool on);
     bool is3D() const { return view3d_; }
@@ -465,7 +471,10 @@ private:
     int bins3d_ = 0, count3d_ = 0;
     float acc3dMs_ = 0.0f;                         // time since the last 3D row
     float floor3dDb_ = -120.0f;                    // view noise floor (median), smoothed
-    static constexpr float k3dRowMs = 50.0f;       // 20 rows/s: 96 rows ~ 4.8 s
+    // 12.5 rows/s (96 rows ~ 7.7 s). 20/s strobed: at ~22 drawn fps every
+    // frame moved the stack a whole row, so it read as redrawing "way too
+    // fast" (live, 2026-10-16); now under a row per frame even at 20 fps.
+    static constexpr float k3dRowMs = 80.0f;
     // AetherSDR's row conditioning (DssRenderer::smoothDssRow): rows are RAW
     // sweeps (max-merged between pushes), median-of-3 in time, then blended
     // 60 % new / 40 % previous row — not the heavily averaged trace, which
@@ -474,8 +483,15 @@ private:
     std::vector<float> raw3dAcc_, raw3dPrev1_, raw3dPrev2_, row3d_;
     int raw3dHist_ = 0;
     uint64_t serial3d_ = 0, reset3d_ = 0;
-    // Spectrum frame clock (see setFrameRate).
+    // Spectrum frame clock (see setFrameRate); the GPU view extrapolates the
+    // 3D scroll from it at render time, so the motion is continuous at the
+    // display's own refresh whatever the data timing.
+    QElapsedTimer frameClock_;
     qint64 lastFrameNs_ = 0;
+    float scroll3dPhase() const {
+        const float since = lastFrameNs_ ? (frameClock_.nsecsElapsed() - lastFrameNs_) / 1e6f : 0.0f;
+        return std::clamp((acc3dMs_ + std::min(since, k3dRowMs)) / k3dRowMs, 0.0f, 1.0f);
+    }
     float wfAccumMs_ = 0.0f;
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the

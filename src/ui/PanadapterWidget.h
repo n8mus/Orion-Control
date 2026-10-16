@@ -518,7 +518,8 @@ private:
     // bottom-left of the spectrum. Clicking a located spot label points it;
     // clicking inside the rose sets a manual heading, right-click clears.
     void drawCompassRose(QPainter& p, int hSpec);
-    bool overRose(int x, int y) const;             // inside the disc?
+    bool overRose(int x, int y) const;
+    QPoint roseCenter() const;                     // bottom-left of the waterfall; null = no room             // inside the disc?
     double  qthLat_ = 42.5, qthLon_ = -83.0;       // EN82 until the grid is set
     double  roseBearing_ = -1.0;                   // pointer heading (-1 = none)
     double  roseDistKm_  = -1.0;

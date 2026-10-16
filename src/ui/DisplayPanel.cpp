@@ -164,8 +164,8 @@ DisplayPanel::DisplayPanel(QWidget* parent) : QWidget(parent) {
     roseR_->setRange(64, 160);
     roseR_->setFixedWidth(225);
     roseR_->setToolTip("Compass-rose disc radius. Sized up it is a full\n"
-                       "azimuthal beam-heading map (needs spectrum height —\n"
-                       "the rose hides when the waterfall is very tall).");
+                       "azimuthal beam-heading map (it sits bottom-left of the\n"
+                       "waterfall and hides when the waterfall is too short).");
     roseRVal_ = new QLabel(this);
     roseRVal_->setFixedWidth(70);
     g->addWidget(roseR_, 9, 1);

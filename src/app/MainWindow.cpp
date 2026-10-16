@@ -3961,6 +3961,9 @@ MainWindow::MainWindow(QWidget* parent)
             connect(txMeter_, &ttc::TxMeter::reading, this,
                     [this](const ttc::TxMeter::Reading& r) {
                 if (tuneEntryDlg_ && r.valid) tuneEntryDlg_->setLiveSwr(r.swr);
+                // The SmartMTR face reads TX from the meter (10 Hz, |Z|/phase).
+                smeter_->setExtTx(r.watts, r.swr, r.zOhm, r.phaseDeg, r.valid, r.zValid,
+                                  meterName_);
             });
             connect(txMeter_, &ttc::TxMeter::aliveChanged, this,
                     [this, name](bool up) {

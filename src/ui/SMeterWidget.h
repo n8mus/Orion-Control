@@ -2,6 +2,8 @@
 #pragma once
 #include <QWidget>
 #include <QElapsedTimer>
+#include <utility>
+#include <vector>
 
 class QTimer;
 
@@ -52,6 +54,10 @@ public slots:
     void setRawLevel(int raw);            // raw @SRM units from the radio (RX)
     void setTxLevel(double fwdWatts, double refWatts, double swr);  // @STF (TX)
     void setSdrLevel(double dbS9);        // panadapter passband power, calibrated
+    // External wattmeter (LP-100A / PowerMaster, ~10 Hz): the SmartMTR face's
+    // TX source when fresh; a carrier on it also holds the TX face up.
+    void setExtTx(double fwdWatts, double swr, double zOhm, double phaseDeg,
+                  bool carrier, bool zValid, const QString& meterName);
     void useSdrSource();                  // switch RX source to SDR (post-cal)
 
 protected:
@@ -61,7 +67,7 @@ protected:
 private:
     // Omni appended last so stored meterStyle indices never shift again.
     // Append-only: stored meterStyle indices must never shift.
-    enum Style { Analog = 0, Edge, Led, Cross, Eye, Omni, Tr7, kStyleCount };
+    enum Style { Analog = 0, Edge, Led, Cross, Eye, Omni, Tr7, SmartMtr, kStyleCount };
     enum RxMode { Sig = 0, Avg, Peak, kModeCount };
     enum Source { SrcRadio = 0, SrcSdr };
 
@@ -79,6 +85,33 @@ private:
     void   paintTr7(class QPainter& p);     // Drake TR-7 homage (blue, white ink)
     void   paintEye(class QPainter& p);     // magic-eye tube
     void   paintOmni(class QPainter& p);    // Omni VII TFT bargraph
+    void   paintSmartMtr(class QPainter& p);  // AetherSDR SmartMTR bars
+    void   smartTick(qint64 nowMs, double dtSec);   // feed + animate the bars
+
+    // SmartMTR (ported from AetherSDR, GPL-3: SmartMtrWidget / SmartMtrConfig /
+    // MeterSmoother; the port lives in SMeterSmartMtr.cpp, GPL-3.0-or-later
+    // like the rest of the shipped binary): one bar per measurement in 0..1 of its scale, analog
+    // ballistics (18 ms attack, 269 ms release) and min/max extremes markers
+    // over a 3 s window that glide back at a constant slew.
+    struct SmartBar {
+        double disp = 0.0, target = 0.0;
+        double maxShown = 0.0, minShown = 1.0;
+        std::vector<std::pair<qint64, double>> win;   // (ms, fraction)
+        void push(qint64 nowMs, double v);
+        void tick(qint64 nowMs, double dtSec);
+    };
+    SmartBar barSig_, barPwr_, barSwr_;
+    QElapsedTimer smartClock_;
+    qint64 lastSmartMs_ = 0;
+    double extW_ = 0.0, extSwr_ = 1.0, extZ_ = 0.0, extPhase_ = 0.0;
+    bool   extZValid_ = false;
+    QString extName_;
+    QElapsedTimer sinceExt_;              // freshness of the external meter
+    double pwrScaleW_ = 120.0;            // auto-ranged 120 / 600 / 1200 / 1800
+    QElapsedTimer sinceBigW_;             // hold a raised scale a while
+    bool   extFresh() const { return sinceExt_.isValid() && sinceExt_.elapsed() < 600; }
+    double txWatts() const { return extFresh() ? extW_ : fwdW_; }
+    double txSwr() const { return extFresh() ? extSwr_ : swr_; }
     QString sUnitsText(double db) const;  // "S7" / "S9+23"
 
     int  style_  = Analog;

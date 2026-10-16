@@ -178,6 +178,7 @@ add_executable(tentec-console
   src/ui/RoutingPanel.cpp       src/ui/RoutingPanel.h
   src/ui/AudioPanel.cpp         src/ui/AudioPanel.h
   src/ui/SMeterWidget.cpp       src/ui/SMeterWidget.h
+  src/ui/SMeterSmartMtr.cpp
   src/ui/ControlPanel.cpp       src/ui/ControlPanel.h
   src/ui/FrequencyDisplay.cpp   src/ui/FrequencyDisplay.h
   src/ui/TxBar.cpp              src/ui/TxBar.h

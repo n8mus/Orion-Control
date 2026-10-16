@@ -54,20 +54,29 @@ SMeterWidget::SMeterWidget(QWidget* parent) : QWidget(parent) {
     // Needle ballistics: fast attack, slow decay, ~30 fps — poll data arrives
     // at only 2 Hz, this is what makes it move like a real movement.
     anim_ = new QTimer(this);
-    anim_->setInterval(33);
+    anim_->setTimerType(Qt::PreciseTimer);
+    smartClock_.start();
     connect(anim_, &QTimer::timeout, this, [this] {
-        const auto step = [](double& cur, double tgt, double tauUp, double tauDn) {
+        // Time-based so the needles keep their feel at the SmartMTR face's
+        // faster 16 ms tick as at the classic 33 ms one.
+        const qint64 now = smartClock_.elapsed();
+        const double dt = lastSmartMs_ ? std::clamp((now - lastSmartMs_) / 1000.0, 0.001, 0.2) : 0.033;
+        lastSmartMs_ = now;
+        const auto step = [dt](double& cur, double tgt, double tauUp, double tauDn) {
             const double tau = tgt > cur ? tauUp : tauDn;
-            cur += (tgt - cur) * std::min(1.0, 0.033 / tau);
+            cur += (tgt - cur) * std::min(1.0, dt / tau);
         };
         step(needleDb_, haveReading_ ? displayDb() : kDbMin, 0.10, 0.60);
         step(needleW_, tx_ ? fwdW_ : 0.0, 0.08, 0.35);
         step(needleRef_, tx_ ? refW_ : 0.0, 0.08, 0.35);
-        if (style_ == Analog || style_ == Edge || style_ == Cross
-            || style_ == Eye || style_ == Omni)
+        if (style_ == SmartMtr) {
+            smartTick(now, dt);
+            update();
+        } else if (style_ == Analog || style_ == Edge || style_ == Cross
+                   || style_ == Eye || style_ == Omni || style_ == Tr7)
             update();
     });
-    anim_->start();
+    anim_->start(style_ == SmartMtr ? 16 : 33);
 }
 
 void SMeterWidget::setWordmark(const QString& mark) {
@@ -202,13 +211,17 @@ void SMeterWidget::applyStyle() {
         case Eye:     setFixedSize(170, 96); break;
         case Omni:    setFixedSize(280, 60); break;
         case Tr7:     setFixedSize(230, 96); break;
+        case SmartMtr: setFixedSize(266, 96); break;   // 266: no layout growth (280 = +14 px)
     }
+    if (anim_) anim_->setInterval(style_ == SmartMtr ? 16 : 33);
+    // One name per Style (TR-7 was missing: the tooltip read past the end).
     static const char* styleName[] = {"Orion", "Edge", "LED", "Cross-needle",
-                                      "Magic eye", "Omni-VII"};
+                                      "Magic eye", "Omni-VII", "TR-7", "SmartMTR"};
+    static_assert(std::size(styleName) == kStyleCount);
     static const char* modeName[]  = {"Signal", "Average", "Peak"};
     setToolTip(QString("S-meter — style: %1, reading: %2, RX source: %3\n"
                        "click: next style (Orion / Edge / LED / Cross-needle"
-                       " / Magic eye / Omni-VII)\n"
+                       " / Magic eye / Omni-VII / TR-7 / SmartMTR)\n"
                        "right-click: reading mode, RX source (Radio / SDR),"
                        " SDR calibration\n"
                        "SDR source reads the panadapter — immune to the"
@@ -280,6 +293,7 @@ void SMeterWidget::paintEvent(QPaintEvent*) {
         case Eye:     paintEye(p); break;
         case Omni:    paintOmni(p); break;
         case Tr7:     paintTr7(p); break;
+        case SmartMtr: paintSmartMtr(p); break;
     }
 }
 

@@ -419,17 +419,21 @@ private:
     void paintFillCpu(QPainter& p, int hSpec, const std::vector<float>& colT);
     void paintMid(QPainter& p, int hSpec);
     void paintTraceCpu(QPainter& p, int hSpec, const PanView& v, const std::vector<float>& colT);
-    void paintTop(QPainter& p, int hSpec, int n);
+    void paintTop(QPainter& p, int hSpec, int n, bool withCursor = true);
     void paintWfLabels(QPainter& p, int hSpec, const PanView& v);
     // Repaint requests: changed() = state moved, every cached GPU layer is
     // stale; changedTop() = only the top layer (cursor); frame() = new
     // spectrum data, no layer redraw.
     void changed(const char* who = nullptr);
     void changedTop();
+    void changedCursor();                          // the hover cursor only
     void frame();
     PanGpuView* gpu_ = nullptr;
     float fpsScale_ = 1.0f;
-    bool gpuDirtyUnder_ = true, gpuDirtyMid_ = true, gpuDirtyTop_ = true, gpuDirtyLabels_ = true;
+    bool gpuDirtyUnder_ = true, gpuDirtyMid_ = true, gpuDirtyTop_ = true, gpuDirtyLabels_ = true,
+         gpuDirtyCursor_ = true;
+    QRect cursorRect_;                             // what drawCursor drew last
+    int cursorFrame_ = 0;
     uint64_t wfSerial_ = 0, wfReset_ = 0;          // rows pushed / history resets
 
     // Spectrum-area background (KE9NS-style): cached render, rebuilt when the

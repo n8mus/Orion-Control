@@ -57,7 +57,7 @@ void PanGpuView::releaseResources() { freeAll(); }
 
 void PanGpuView::freeAll() {
     auto del = [](auto*& p) { delete p; p = nullptr; };
-    for (Layer* l : {&under_, &mid_, &labels_, &top_}) {
+    for (Layer* l : {&under_, &mid_, &labels_, &top_, &cursor_}) {
         del(l->tex);
         del(l->srb);
         l->img = QImage();
@@ -104,7 +104,7 @@ void PanGpuView::initialize(QRhiCommandBuffer*) {
     cols_ = r->newTexture(QRhiTexture::R32F, QSize(2, 1));
     cols_->create();
     colsW_ = 2;
-    for (Layer* l : {&under_, &mid_, &labels_, &top_}) ensureLayer(*l, QSize(2, 2));
+    for (Layer* l : {&under_, &mid_, &labels_, &top_, &cursor_}) ensureLayer(*l, QSize(2, 2));
     pipesBuilt_ = true;
 }
 
@@ -118,7 +118,8 @@ void PanGpuView::ensureLayer(Layer& l, const QSize& sz) {
     l.img = QImage(sz, QImage::Format_RGBA8888_Premultiplied);
     l.img.fill(Qt::transparent);
     l.dirty = true;
-    const int ui = &l == &under_ ? uUnder : &l == &mid_ ? uMid : &l == &labels_ ? uLabels : uTop;
+    const int ui = &l == &under_ ? uUnder : &l == &mid_ ? uMid : &l == &labels_ ? uLabels
+                 : &l == &top_ ? uTop : uCursor;
     l.srb = rhi_->newShaderResourceBindings();
     l.srb->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(0, QRhiShaderResourceBinding::VertexStage
@@ -169,13 +170,15 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     // their layer is a strip, so its per-row redraw uploads ~1/12 of a
     // screen, not all of it.
     const int stripW = std::min(kLabelStripPx, W);
-    for (Layer* l : {&under_, &mid_, &top_}) ensureLayer(*l, px);
+    for (Layer* l : {&under_, &mid_, &top_, &cursor_}) ensureLayer(*l, px);
     ensureLayer(labels_, QSize(int(stripW * dpr), px.height()));
     if (p->gpuDirtyUnder_) under_.dirty = true;
     if (p->gpuDirtyMid_) mid_.dirty = true;
     if (p->gpuDirtyTop_) top_.dirty = true;
     if (p->gpuDirtyLabels_) labels_.dirty = true;
+    const bool cursorDirty = p->gpuDirtyCursor_ || cursor_.dirty;
     p->gpuDirtyUnder_ = p->gpuDirtyMid_ = p->gpuDirtyTop_ = p->gpuDirtyLabels_ = false;
+    p->gpuDirtyCursor_ = false;
     auto paint = [&](Layer& l, auto&& fn) {
         if (!l.dirty) return;
         l.img.setDevicePixelRatio(dpr);
@@ -192,7 +195,41 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
     paint(under_, [&](QPainter& qp) { p->paintUnder(qp, hSpec); });
     paint(mid_, [&](QPainter& qp) { p->paintMid(qp, hSpec); });
     paint(labels_, [&](QPainter& qp) { p->paintWfLabels(qp, hSpec, v); });
-    paint(top_, [&](QPainter& qp) { p->paintTop(qp, hSpec, v.n); });
+    paint(top_, [&](QPainter& qp) { p->paintTop(qp, hSpec, v.n, false); });
+    // The hover cursor: its own layer, cleared and re-uploaded only where it
+    // was and is (a strip around the line + its readout), not the screen.
+    if (cursorDirty) {
+        cursor_.img.setDevicePixelRatio(dpr);
+        const QRect old = cursorDrawn_;
+        {
+            QPainter qp(&cursor_.img);
+            qp.setFont(p->font());
+            if (cursor_.dirty) {                   // new image: clear it all
+                qp.setCompositionMode(QPainter::CompositionMode_Source);
+                qp.fillRect(QRect(0, 0, W, H), Qt::transparent);
+            } else if (!old.isEmpty()) {
+                qp.setCompositionMode(QPainter::CompositionMode_Source);
+                qp.fillRect(old, Qt::transparent);
+            }
+            qp.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            p->drawCursor(qp, hSpec);
+        }
+        cursorDrawn_ = p->cursorRect_;
+        QRect up = (cursor_.dirty ? QRect(0, 0, W, H) : old.united(cursorDrawn_))
+                       .intersected(QRect(0, 0, W, H));
+        if (!up.isEmpty()) {
+            const QRect pxr(int(up.x() * dpr), int(up.y() * dpr), int(std::ceil(up.width() * dpr)),
+                            int(std::ceil(up.height() * dpr)));
+            const QRect clip = pxr.intersected(cursor_.img.rect());
+            QRhiTextureSubresourceUploadDescription d(cursor_.img);
+            d.setSourceTopLeft(clip.topLeft());
+            d.setSourceSize(clip.size());
+            d.setDestinationTopLeft(clip.topLeft());
+            u->uploadTexture(cursor_.tex, QRhiTextureUploadDescription(QRhiTextureUploadEntry(0, 0, d)));
+        }
+        cursor_.dirty = false;
+        rebuilt = true;
+    }
     const double layerMs = lt.nsecsElapsed() / 1e6;
 
     // ---- palette (the CPU path's own colour map) ----
@@ -295,7 +332,7 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         if (p2) std::memcpy(b + 24, p2, 16);
         u->updateDynamicBuffer(ubo_[i], 0, kQuadUbo, b);
     };
-    for (int i : {uUnder, uMid, uLabels, uTop}) quadUbo(i, nullptr, nullptr, nullptr);
+    for (int i : {uUnder, uMid, uLabels, uTop, uCursor}) quadUbo(i, nullptr, nullptr, nullptr);
     const float wf0[4] = {float(v.binLo), float(v.binHi), float(px.width()),
                           float(std::max(1.0, (H - wfTop) * dpr))};
     const float wf1[4] = {float(p->wfSerial_ % PanadapterWidget::kWfHistRows),
@@ -427,6 +464,7 @@ void PanGpuView::render(QRhiCommandBuffer* cb) {
         cb->draw(quint32(traceN), 1, quint32(peakN));
     }
     overlay(top_);
+    overlay(cursor_);
     cb->endPass();
     gGpuProf.add(t.nsecsElapsed() / 1e6, layerMs, rebuilt);
 }

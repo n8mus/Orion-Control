@@ -824,7 +824,8 @@ void PanadapterWidget::drawSolarPanel(QPainter& p, int hSpec) {
 
 void PanadapterWidget::setTuneBox(const TuneBox& b) {
     tuneBox_ = b;
-    changed(__func__);
+    changedTop();                                  // drawn in the top layer
+    if (!gpu_) update();
 }
 
 // Amber tuner/amp card, bottom-right: what to set the 238C and the Titan
@@ -916,8 +917,22 @@ void PanadapterWidget::drawTuneBox(QPainter& p, int hSpec) {
 }
 
 void PanadapterWidget::setSpots(const QVector<SpotLabel>& s) {
+    // The spot feeds re-push the whole list several times a second (live-
+    // measured: 22-30 per 5 s), mostly unchanged. Identical = nothing to do;
+    // otherwise only the top layer (where spots are drawn) is stale.
+    const auto same = [](const SpotLabel& a, const SpotLabel& b) {
+        return a.call == b.call && a.hz == b.hz && a.atSecs == b.atSecs && a.kind == b.kind
+            && a.tag == b.tag && a.status == b.status && a.alert == b.alert
+            && a.needC == b.needC && a.needB == b.needB && a.needM == b.needM
+            && a.contest == b.contest && a.mapHidden == b.mapHidden
+            && a.spotter == b.spotter && a.comment == b.comment;
+    };
+    if (s.size() == spots_.size()
+        && std::equal(s.cbegin(), s.cend(), spots_.cbegin(), same))
+        return;
     spots_ = s;
-    changed(__func__);
+    changedTop();
+    if (!gpu_) update();
 }
 
 void PanadapterWidget::setMarkers(const QVector<FreqMarker>& m) {
@@ -967,6 +982,7 @@ void PanadapterWidget::drawMarkers(QPainter& p, int hSpec) {
 // operator sees BEFORE clicking whether the zap grabs the intended
 // signal or its louder neighbor.
 void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
+    cursorRect_ = QRect();                         // what was drawn (GPU partial upload)
     if (!ds_.showCursor || hoverX_ < 0 || drag_ != Drag::None
         || centerHz_ == 0)
         return;
@@ -990,6 +1006,7 @@ void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
     p.drawRect(box);
     p.setPen(QColor(235, 216, 100));
     p.drawText(box, Qt::AlignCenter, txt);
+    cursorRect_ = QRect(hoverX_ - 1, 12, 3, height() - 12).united(box.adjusted(-2, -2, 2, 2));
     // zap snap preview: where the click would actually land
     if (snapFn_) {
         const int snapped = snapFn_(offHz);
@@ -999,6 +1016,8 @@ void PanadapterWidget::drawCursor(QPainter& p, int hSpec) {
             p.drawLine(sx, 34, sx, 34 + 16);
             if (std::abs(sx - hoverX_) > 3)        // caret when it differs
                 p.drawLine(hoverX_, 42, sx, 42);
+            cursorRect_ = cursorRect_.united(QRect(QPoint(std::min(sx, hoverX_) - 3, 31),
+                                                   QPoint(std::max(sx, hoverX_) + 3, 53)));
         }
     }
 }
@@ -1952,7 +1971,7 @@ void PanadapterWidget::changed(const char* who) {
             t.restart();
         }
     }
-    gpuDirtyUnder_ = gpuDirtyMid_ = gpuDirtyTop_ = gpuDirtyLabels_ = true;
+    gpuDirtyUnder_ = gpuDirtyMid_ = gpuDirtyTop_ = gpuDirtyLabels_ = gpuDirtyCursor_ = true;
     if (gpu_) gpu_->update(); else update();
 }
 
@@ -1961,7 +1980,15 @@ void PanadapterWidget::changedTop() {
     if (gpu_) gpu_->update();
 }
 
+void PanadapterWidget::changedCursor() {
+    gpuDirtyCursor_ = true;
+    if (gpu_) gpu_->update();
+}
+
 void PanadapterWidget::frame() {
+    // The zap preview follows the carrier under the cursor: refresh it a
+    // few times a second while hovering (the cursor layer is a small upload).
+    if (gpu_ && hoverX_ >= 0 && snapFn_ && ++cursorFrame_ % 4 == 0) gpuDirtyCursor_ = true;
     if (gpu_) gpu_->update(); else update();
 }
 
@@ -2252,11 +2279,11 @@ void PanadapterWidget::paintTraceCpu(QPainter& p, int hSpec, const PanView& v,
     }
 }
 
-void PanadapterWidget::paintTop(QPainter& p, int hSpec, int n) {
+void PanadapterWidget::paintTop(QPainter& p, int hSpec, int n, bool withCursor) {
     if (n >= 2) {
         drawMarkers(p, hSpec);                     // pinned frequencies
         drawSpots(p, hSpec);                       // cluster spots, on top
-        drawCursor(p, hSpec);                      // hover line + zap preview
+        if (withCursor) drawCursor(p, hSpec);      // hover line + zap preview
         drawTuneBox(p, hSpec);                     // tuner/amp settings, corner
         drawSolarPanel(p, hSpec);                  // space weather, left of it
         drawCompassRose(p, hSpec);                 // bearing rose, bottom-left
@@ -2304,7 +2331,7 @@ void PanadapterWidget::wheelEvent(QWheelEvent* e) {
 
 void PanadapterWidget::leaveEvent(QEvent*) {
     hoverX_ = -1;
-    changedTop();
+    changedCursor();
     if (!gpu_) update();
 }
 
@@ -2524,7 +2551,7 @@ void PanadapterWidget::mouseMoveEvent(QMouseEvent* e) {
         else if (overVfoB(hx) || onAEdge
                  || std::abs(hx - hzToX(0)) <= 4) setCursor(Qt::SizeHorCursor);
         else                                     unsetCursor();
-        changedTop();                            // GPU: the cursor line's layer
+        changedCursor();                         // GPU: the cursor's own layer
         return;
     }
     const int x = e->pos().x();

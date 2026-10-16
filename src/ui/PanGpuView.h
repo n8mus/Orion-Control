@@ -57,7 +57,7 @@ private:
     QRhiBuffer* lineVbo_ = nullptr;
     int lineVboCap_ = 0;
     // One uniform block per draw (they differ per frame).
-    enum Ubo { uUnder, uWf, uFill, uMid, uLabels, uPeak, uTrace, uTop, uCount };
+    enum Ubo { uUnder, uWf, uFill, uMid, uLabels, uPeak, uTrace, uTop, uCursor, uCount };
     QRhiBuffer* ubo_[uCount] = {};
     QRhiSampler* linear_ = nullptr;
     QRhiSampler* nearest_ = nullptr;
@@ -70,7 +70,8 @@ private:
     QRhiTexture* cols_ = nullptr;
     int colsW_ = 0;
     // Layers (premultiplied QPainter images).
-    Layer under_, mid_, labels_, top_;
+    Layer under_, mid_, labels_, top_, cursor_;
+    QRect cursorDrawn_;                            // widget px, last frame's cursor
     // Pipelines
     QRhiGraphicsPipeline* overlayPipe_ = nullptr;
     QRhiGraphicsPipeline* wfPipe_ = nullptr;

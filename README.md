@@ -51,28 +51,6 @@ Manual alternative: download the `.AppImage` from
 run it. Install the SDRplay API from [sdrplay.com/api](https://www.sdrplay.com/api/)
 yourself if you want the panadapter.
 
-## Install on Windows
-
-The console is a native Windows app from the same code (MSVC build,
-`docs/windows-build.md`).
-
-1. **Install the SDRplay API first** — download the Windows API/HW driver
-   from [sdrplay.com/api](https://www.sdrplay.com/api/) and run its
-   installer. It's proprietary, so it is never bundled here; the console
-   finds your install by itself. Skip this step and the console runs
-   radio-only with a dark panadapter.
-2. Download the latest `tentec-console-…-win64.zip` from
-   [Releases](https://github.com/n8mus/Orion-Control/releases), unzip it
-   anywhere, and run `tentec-console.exe`. The same Station setup dialog
-   opens on first run; settings live per-user in the registry.
-
-The Windows zip is built by the same release workflow as the AppImage
-(GitHub's Windows runner, MSVC + Qt 6.8; since v0.1.8) and attached to
-the tag's release beside it. `packaging/make-windows-release.ps1` still
-builds the identical zip by hand on a Windows box. The Linux build is the
-daily driver; the Windows build gets less testing, and WDSP receive
-audio, FreeDV RADE and Copy Assist are not in it yet.
-
 ## What you need
 
 **Hardware**
@@ -211,8 +189,6 @@ SDR, or both were connected. Screenshots welcome.
 - **US band plan** assumptions (60 m channels, CW skimmer windows,
   band-plan shading).
 - Orion-only until an Omni VII CAT path is re-established and tested.
-- The native Windows build is new (v0.1.7-alpha): Linux has months of
-  daily driving behind it, Windows days — expect the rougher edges there.
 - One console instance at a time (exclusive serial + single-tuner SDR).
 
 ## License

@@ -7,8 +7,8 @@ TX-isolated). Must not break WSJT-X, fldigi, cqrlog, or GridTracker.
 
 ## Stack (locked decisions)
 
-- **GUI:** C++20 / Qt6 (portable-by-construction: Linux now, macOS/Windows later
-  at ~10-20% extra each, not a rewrite).
+- **GUI:** C++20 / Qt6, Linux only (the Windows console is its own
+  project, n8mus/Orion-Control-Windows).
 - **DSP:** WDSP (portable C, GPLv2) — the real PowerSDR/Thetis filter/demod engine.
 - **Foundation:** fork of NereusSDR (Qt6/WDSP cross-platform Thetis lineage) for the
   panadapter/waterfall. This skeleton stands alone until that fork is vendored.
@@ -37,7 +37,6 @@ presets (stepped).
 - **Phase 4 — Interop hardening:** WSJT-X/fldigi (SignaLink) + cqrlog + GridTracker +
   WinKeyer CW, all against :4532 at once.
 - **Phase 5 — full control-suite parity:** bandmap, cluster overlay, 2nd RX, CW Skimmer feed, rotor.
-- **Later — macOS / Windows packaging.**
 
 ## Directory layout
 

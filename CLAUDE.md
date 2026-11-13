@@ -502,11 +502,13 @@ QRN spike gate, measured on a live lightning night's own capture.
   of the real SDR/cluster is fine.
 - The repo is PUBLIC (alpha since 2026-07-18); pushes happen only after
   the operator's on-air test — build, test, commit, then *wait*.
-- **A push that changes the PROGRAM is a complete push: the download
-  ships with it.** Push master, tag the next `vX.Y.Z`, push the tag (the
-  Release workflow builds the AppImage), and report when the release
-  shows it under Assets. A push that touches only notes/docs/CLAUDE.md
-  gets NO release — nothing new to download.
+- **Every push rebuilds the download, under the SAME version number.**
+  After pushing master, move the current release tag (the newest
+  `vX.Y.Z`) to the new commit and force-push it:
+  `git tag -f <tag> && git push -f origin <tag>`. The Release workflow
+  rebuilds the AppImage and replaces it on that release. A NEW number
+  only when the operator asks for one. Report when the new AppImage is
+  up.
 - Settings are QSettings (`n8mus/tentec-console`) — running the binary
   uses the real config; for tests that must write settings, redirect
   with `XDG_CONFIG_HOME`.

@@ -211,6 +211,9 @@ jobs:
           # every newcomer (and their AI helper) reaches for first.
           prerelease: false
           make_latest: true
+          # Every push rebuilds the CURRENT release under its same number
+          # (the tag is moved to the new commit); replace its AppImage.
+          overwrite_files: true
           files: tentec-console-*-x86_64.AppImage
           body: |
             Orion Control (Ten-Tec Orion / Omni VII console) — alpha. Linux AppImage under **Assets**.

@@ -15,10 +15,6 @@
 
 #include <rnnoise.h>
 
-#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-#include "audio/AudioIo.h"
-#endif
-
 namespace ttc {
 
 namespace {
@@ -28,15 +24,6 @@ namespace {
 const char* kDefaultDev =
     "alsa_input.usb-BurrBrown_from_Texas_Instruments_USB_AUDIO_CODEC-00"
     ".analog-stereo";
-#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-// The same SignaLink on Windows. Depending on the driver it enumerates as
-// "USB Audio CODEC" or just "USB Audio Device" (live-found on the
-// all-in-one: Device, not CODEC — the CODEC-only default fell back to the
-// onboard mic and the RADIO ear went silent). "USB Audio" catches both.
-// cw/audioDev is a case-insensitive substring of the device description
-// on this platform (see AudioIo).
-const char* kDefaultDevWin = "USB Audio";
-#endif
 } // namespace
 
 AudioCwSource::AudioCwSource(CwDecoder* sink, QObject* parent)
@@ -49,56 +36,6 @@ AudioCwSource::~AudioCwSource() {
         proc_->waitForFinished(300);
     }
 }
-
-#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-
-// Windows: Qt Multimedia capture (WASAPI shared mode — other programs can
-// keep reading the same device, the property parec/PipeWire provides on
-// Linux). Everything downstream of the raw bytes is processPcm, shared.
-bool AudioCwSource::running() const { return cap_ && cap_->running(); }
-
-void AudioCwSource::start() {
-    if (running()) return;
-    const QString dev =
-        QSettings().value("cw/audioDev", kDefaultDevWin).toString();
-    if (!cap_) {
-        cap_ = new AudioCapture(this);
-        connect(cap_, &AudioCapture::chunk, this,
-                &AudioCwSource::processPcm);
-        connect(cap_, &AudioCapture::errorText, this,
-                [this](const QString& what) {
-                    emit statusChanged("RADIO audio: " + what);
-                });
-    }
-    carry_.clear();
-    nrFill_ = 0;
-    steadyHz_ = notchHz_ = -1.0;
-    steadyN_ = notchGoneN_ = 0;
-    if (nrSt_) { rnnoise_destroy(nrSt_); nrSt_ = nullptr; }
-    if (cap_->start(dev, 48000))
-        emit statusChanged("RADIO audio: " + cap_->deviceDescription()
-                           + " @ 48 kHz");
-    else
-        emit statusChanged("RADIO audio: no capture device — set "
-                           "cw/audioDev to part of the device name");
-}
-
-void AudioCwSource::stop() {
-    if (!running()) return;
-    cap_->stop();
-    carry_.clear();
-    pitchBuf_.clear();
-    pitchFill_ = 0;
-    steadyHz_ = notchHz_ = -1.0;
-    steadyN_ = notchGoneN_ = 0;
-    emit pitchMeasured(-1.0);
-}
-
-// The wrong-device check is a PipeWire matter; WASAPI names the endpoint.
-void AudioCwSource::checkCapture() {}
-void AudioCwSource::fixCapture() {}
-
-#else  // Linux: parec via the pulse layer (live-verified path, see header)
 
 bool AudioCwSource::running() const {
     return proc_ && proc_->state() != QProcess::NotRunning;
@@ -157,7 +94,6 @@ void AudioCwSource::stop() {
     steadyN_ = notchGoneN_ = 0;
     emit pitchMeasured(-1.0);
 }
-
 
 namespace {
 // pactl's JSON lists; empty on any failure (no pactl, old pactl).
@@ -230,8 +166,6 @@ void AudioCwSource::fixCapture() {
         }
     });
 }
-
-#endif
 
 void AudioCwSource::setNr(bool on) {
     nrOn_ = on;

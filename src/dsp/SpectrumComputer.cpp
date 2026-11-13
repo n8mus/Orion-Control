@@ -16,8 +16,7 @@ SpectrumComputer::SpectrumComputer(int fftSize)
 }
 
 double SpectrumComputer::now_ms() {
-    // steady_clock = CLOCK_MONOTONIC on POSIX, QPC on Windows — same
-    // monotonic-ms contract, no platform split.
+    // steady_clock = CLOCK_MONOTONIC: monotonic ms.
     using namespace std::chrono;
     return duration<double, std::milli>(
                steady_clock::now().time_since_epoch()).count();

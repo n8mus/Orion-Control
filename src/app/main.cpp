@@ -18,14 +18,9 @@
 #include <chrono>
 #include <csignal>
 #include <thread>
-#ifdef Q_OS_WIN
-#include <io.h>                        // _isatty / _fileno
-#include <stdlib.h>                    // _set_invalid_parameter_handler
-#else
 #include <execinfo.h>
 #include <pthread.h>
 #include <unistd.h>
-#endif
 #include "app/MainWindow.h"
 #include "app/UiScript.h"
 
@@ -35,10 +30,8 @@ namespace {
 // at the session log when launched from a desktop icon — see below), so a
 // tester's crash report carries evidence even before anyone reaches for
 // coredumpctl. backtrace_symbols_fd is async-signal-safe; the fancy
-// alternatives are not. Windows has no execinfo — the handler still stamps
-// WHICH signal hit the log (the session-log redirect works the same there);
-// a real trace comes from a debugger or WER, not from here.
-#ifndef Q_OS_WIN
+// alternatives are not.
+//
 // TTC_STALLDBG=1 (or =<ms>, default 60): GUI-thread stall watchdog. A 5 ms heartbeat timer on the
 // GUI thread; a watchdog thread that, when the beat goes stale past 60 ms,
 // signals the GUI thread, whose handler prints its own backtrace — what the
@@ -78,25 +71,18 @@ void startStallWatchdog(QApplication& app, int thresholdMs) {
         }
     }).detach();
 }
-#endif
 
 void fatalSignal(int sig) {
     const char* name = sig == SIGSEGV   ? "SIGSEGV"
                        : sig == SIGABRT ? "SIGABRT"
                        : sig == SIGFPE  ? "SIGFPE"
                                         : "signal";
-#ifdef Q_OS_WIN
-    fprintf(stderr, "\n=== FATAL %s ===\n", name);   // best effort; not
-    fflush(stderr);                                  // async-signal-safe, but
-                                                     // we're crashing anyway
-#else
     char head[64];
     const int n = snprintf(head, sizeof head, "\n=== FATAL %s ===\n", name);
     (void)!write(2, head, size_t(n));
     void* frames[48];
     const int cnt = backtrace(frames, 48);
     backtrace_symbols_fd(frames, cnt, 2);
-#endif
     signal(sig, SIG_DFL);                  // fall through to the core dump
     raise(sig);
 }
@@ -158,30 +144,9 @@ int main(int argc, char** argv) {
     // something" reports come with the actual output. Terminal launches
     // keep printing to the terminal (the README asks testers to run there).
     // Previous session is kept as console.log.1.
-    // TTC_LOG=<file>: stderr to that file regardless (the Windows release
-    // job's smoke test — a GUI-subsystem exe hands the runner no stderr).
-    //
-    // Windows (live-found on the v0.1.8 release job, exit 0xC0000409 =
-    // the CRT's invalid-parameter fail-fast): a GUI-subsystem exe started
-    // from an icon has NO std handles, so _isatty(2) on the unopened fd,
-    // and setvbuf with size 0 (fine in glibc, invalid in the UCRT), each
-    // kill the process before the window exists. Hence stderrIsTty() and
-    // the unbuffered stream there, and an invalid-parameter handler that
-    // logs instead of terminating.
-#ifdef Q_OS_WIN
-    _set_invalid_parameter_handler([](const wchar_t*, const wchar_t*,
-                                      const wchar_t*, unsigned, uintptr_t) {
-        fprintf(stderr, "[crt] invalid parameter in a C runtime call (ignored)\n");
-    });
-    const auto stderrIsTty = [] {
-        const int fd = _fileno(stderr);
-        return fd >= 0 && _isatty(fd) != 0;
-    };
-    const auto crashSafe = [] { setvbuf(stderr, nullptr, _IONBF, 0); };
-#else
+    // TTC_LOG=<file>: stderr to that file regardless.
     const auto stderrIsTty = [] { return isatty(2) != 0; };
     const auto crashSafe = [] { setvbuf(stderr, nullptr, _IOLBF, 0); };
-#endif
     if (const char* forced = std::getenv("TTC_LOG")) {
         if (freopen(forced, "w", stderr)) {
             crashSafe();
@@ -201,10 +166,8 @@ int main(int argc, char** argv) {
     signal(SIGSEGV, fatalSignal);
     signal(SIGABRT, fatalSignal);
     signal(SIGFPE, fatalSignal);
-#ifndef Q_OS_WIN
     if (const char* sd = std::getenv("TTC_STALLDBG"))      // =1 -> 60 ms, or =<ms>
         startStallWatchdog(app, atoi(sd) > 1 ? atoi(sd) : 60);
-#endif
     fprintf(stderr, "Orion console starting  %s  (built %s %s)\n",
             qPrintable(QDateTime::currentDateTime().toString(Qt::ISODate)),
             __DATE__, __TIME__);
@@ -215,7 +178,6 @@ int main(int argc, char** argv) {
     // run). DejaVu Sans ships on both.
     if (std::getenv("TTC_SELFTEST"))
         QApplication::setFont(QFont("DejaVu Sans", 10));
-
 
     ttc::MainWindow w;
     w.resize(1360, 600);                   // room for the dual-VFO/routing strip

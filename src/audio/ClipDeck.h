@@ -6,20 +6,13 @@
 #include <QVector>
 #include <vector>
 
-class QTimer;
-
 namespace ttc {
 
-class AudioCapture;
-class AudioPlayback;
-
-// One-clip-at-a-time WAV recorder/player. On Linux it rides PipeWire's own
-// CLI tools (pw-record / paplay), so no audio library dependency and device
-// routing uses the same node names pactl shows; on Windows the same deck
-// runs on Qt Multimedia (src/audio/AudioIo) and "node" means a substring
-// of the Windows device description. Backs the DVR: off-air RX capture,
-// voice-keyer message record, and playback either to the speakers or out
-// the radio's sound path (SignaLink) for transmit.
+// One-clip-at-a-time WAV recorder/player. It rides PipeWire's own CLI
+// tools (pw-record / paplay), so no audio library dependency and device
+// routing uses the same node names pactl shows. Backs the DVR: off-air RX
+// capture, voice-keyer message record, and playback either to the speakers
+// or out the radio's sound path (SignaLink) for transmit.
 class ClipDeck : public QObject {
     Q_OBJECT
 public:
@@ -42,8 +35,7 @@ public:
     // a voice-keyer take record the radio instead of the operator.
     static QString findSourceExcluding(const QString& avoid);
     // Every capture device (no .monitor taps): node name + human label, for
-    // the Setup dialog's voice-keyer mic picker. On Windows both are the
-    // device description.
+    // the Setup dialog's voice-keyer mic picker.
     struct Source { QString node, label; };
     static QVector<Source> sources();
     // A device's label for people: the operator's own name for it if he
@@ -87,15 +79,6 @@ private:
     QProcess proc_;
     State state_ = State::Idle;
     bool stopping_ = false;           // our SIGINT, not a real error
-    // Windows deck (Qt Multimedia); untouched on Linux.
-    AudioCapture* cap_ = nullptr;
-    AudioPlayback* out_ = nullptr;
-    QTimer* pump_ = nullptr;          // paced file playback / drain watch
-    QFile wav_;                       // recording target
-    qint64 dataBytes_ = 0;            // PCM bytes written so far
-    QByteArray playPcm_;              // s16 mono payload being played
-    qsizetype playPos_ = 0;
-    int playRate_ = 48000;
 };
 
 } // namespace ttc

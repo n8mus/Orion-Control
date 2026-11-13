@@ -4385,11 +4385,8 @@ MainWindow::~MainWindow() {
         iqWorker_->wait(2000);
     }
 #endif
-    // Tool windows are parentless top-levels on Windows (own taskbar entry
-    // and z-order; see toolWinParent in MainWindowTools.cpp) — nothing
-    // deletes them but us. Last, with every IQ producer quiet, matching
-    // where child destruction ran when they were parented (on Linux they
-    // still are, and these deletes just run a moment early).
+    // The tool windows are our children; delete them here, with every IQ
+    // producer quiet, a moment before child destruction would.
     delete cwWin_;    cwWin_ = nullptr;
     delete skimWin_;  skimWin_ = nullptr;
     delete skimView_; skimView_ = nullptr;

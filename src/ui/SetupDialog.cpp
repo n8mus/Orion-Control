@@ -31,9 +31,6 @@
 #include <QVBoxLayout>
 #include <algorithm>
 
-#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-#include "audio/AudioIo.h"
-#endif
 #include "audio/ClipDeck.h"
 
 namespace ttc {
@@ -49,12 +46,8 @@ QLabel* section(const QString& text, QWidget* parent) {
 // Capture sources by name — the CW window's RADIO source (the radio's
 // line-out into a USB codec). Listed so a tester picks their interface
 // instead of inheriting this station's SignaLink node. PipeWire node
-// names on Linux (via pactl); Windows device descriptions via the
-// ClipDeck's Qt Multimedia listing — cw/audioDev matches by substring on
-// both, so either kind of name works as typed.
-#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-QStringList audioSources() { return ttc::AudioCapture::inputDescriptions(); }
-#else
+// names (via pactl); cw/audioDev matches by substring, so a partial name
+// works as typed.
 QStringList audioSources() {
     QProcess p;
     p.start("pactl", {"list", "short", "sources"});
@@ -66,7 +59,6 @@ QStringList audioSources() {
             out << line.section('\t', 1, 1);
     return out;
 }
-#endif
 } // namespace
 
 SetupDialog::SetupDialog(const QString& liveRadioDev,
@@ -312,15 +304,8 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     for (const QString& a : audioSources()) audioDev_->addItem(a);
     audioDev_->setEditText(
         s.value("cw/audioDev",
-#if defined(Q_OS_WIN) && defined(HAVE_QTMULTIMEDIA)
-                // Substring of the Windows device description; the
-                // SignaLink enumerates as "USB Audio CODEC" or plain
-                // "USB Audio Device" depending on the driver.
-                "USB Audio"
-#else
                 "alsa_input.usb-BurrBrown_from_Texas_Instruments_USB_AUDIO_"
                 "CODEC-00.analog-stereo"
-#endif
                 ).toString());
     form->addRow("Radio audio in", audioDev_);
 

@@ -34,12 +34,7 @@ bool on(const QString& svc) {
     return QSettings().value("up/" + svc + "/enabled", false).toBool();
 }
 QString tqslDefault() {
-#ifdef Q_OS_WIN
-    return QStringLiteral(
-        "C:/Program Files (x86)/TrustedQSL/tqsl.exe");
-#else
     return QStringLiteral("tqsl");
-#endif
 }
 // Query strings are built by hand — QUrlQuery re-encodes on output, which
 // double-encodes anything passed through toPercentEncoding first.

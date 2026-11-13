@@ -6,13 +6,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
-if(MSVC)
-  # /utf-8: the source is UTF-8 (arrows/dashes in UI strings) and MSVC's
-  # default codepage mangles the literals. _USE_MATH_DEFINES: M_PI et al.
-  # NOMINMAX: windows.h's min/max macros collide with std::min/std::max.
-  add_compile_options(/utf-8)
-  add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)
-endif()
 if(NOT CMAKE_BUILD_TYPE)
   # RelWithDebInfo, NOT Debug: the DSP chain (16k FFT, 24-channel skimmer
   # bank, the SKIM view's STFT) runs 10-30x slower unoptimized, and at
@@ -36,16 +29,6 @@ endif()
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network SerialPort Sql WebSockets)
 
-# Qt Multimedia backs the Windows audio endpoints (src/audio/AudioIo) —
-# capture/playback where the PipeWire CLI tools don't exist. Required there;
-# optional on Linux, where the parec/pacat paths remain the live-verified
-# default and this stays unused.
-if(WIN32)
-  find_package(Qt6 REQUIRED COMPONENTS Multimedia)
-else()
-  find_package(Qt6 QUIET COMPONENTS Multimedia)
-endif()
-
 # OpenMP parallelizes the skimmer's channel bank (SkimmerEngine.cpp);
 # optional — without it the pragma is ignored and the bank runs serial.
 find_package(OpenMP QUIET)
@@ -57,13 +40,12 @@ option(BUILD_SDRPLAY "Build the SDRplay RSP IQ source (needs sdrplay_api)" OFF)
 # WDSP (Thetis's DSP library, via AetherSDR's vendored copy) for SDR receive
 # audio: on when FFTW3 is found (the double-precision libfftw3), else the
 # console builds without SDR RX. See third_party/wdsp/TTC-VENDOR.md.
-# -DBUILD_WDSP=OFF builds the no-FFTW3 console on purpose — the shape the
-# Windows release has today — so that configuration can be compiled and
-# checked on the desk too (2026-11-08).
-option(BUILD_WDSP "WDSP SDR receive audio (needs FFTW3; Linux only so far)" ON)
+# -DBUILD_WDSP=OFF builds the no-FFTW3 console on purpose, so that
+# configuration can be compiled and checked on the desk too (2026-11-08).
+option(BUILD_WDSP "WDSP SDR receive audio (needs FFTW3)" ON)
 find_path(FFTW3_INCLUDE_DIRS fftw3.h)
 find_library(FFTW3_LIBRARIES fftw3)
-if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
+if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES)
   set(FFTW3_FOUND TRUE)
   set(FFTW3_LIBRARY_DIRS "")
   enable_language(C)
@@ -79,25 +61,6 @@ if(BUILD_WDSP AND FFTW3_INCLUDE_DIRS AND FFTW3_LIBRARIES AND NOT WIN32)
   message(STATUS "WDSP: SDR receive audio enabled")
 else()
   message(STATUS "WDSP: FFTW3 not found — building without SDR receive audio")
-endif()
-
-# rnnoise: on Linux a plain -lrnnoise from the distro package; on Windows it
-# comes from vcpkg (-DCMAKE_TOOLCHAIN_FILE=.../vcpkg.cmake), where the lib
-# and header land on CMake's default search path — find them explicitly so a
-# missing port fails at configure time, not deep in the link.
-if(WIN32)
-  find_path(RNNOISE_INCLUDE_DIR rnnoise.h REQUIRED)
-  find_library(RNNOISE_LIBRARY rnnoise REQUIRED)
-  add_library(rnnoise INTERFACE IMPORTED)
-  target_include_directories(rnnoise INTERFACE "${RNNOISE_INCLUDE_DIR}")
-  target_link_libraries(rnnoise INTERFACE "${RNNOISE_LIBRARY}")
-endif()
-
-# SDRplay API on Windows installs to a fixed vendor path (the service +
-# import lib + header); on Linux the headers/libs are on the system paths.
-if(WIN32)
-  set(SDRPLAY_ROOT "C:/Program Files/SDRplay/API" CACHE PATH
-      "SDRplay API install root (inc/ + x64/)")
 endif()
 
 add_executable(tentec-console
@@ -321,31 +284,6 @@ if(Qt6_VERSION VERSION_GREATER_EQUAL 6.7)
   message(STATUS "AetherSDR meter faces: on")
 else()
   message(STATUS "AetherSDR meter faces: off (needs Qt >= 6.7; have ${Qt6_VERSION})")
-endif()
-if(WIN32)
-  # GUI subsystem: no stray console window on double-click. stderr then has
-  # no tty, so main.cpp's session-log redirect engages — same behavior as a
-  # Linux desktop-icon launch. Explicit redirects (selftest harness) still
-  # capture stderr; only the auto-console goes away.
-  set_target_properties(tentec-console PROPERTIES WIN32_EXECUTABLE ON)
-  # Explorer/taskbar icon, embedded the Windows way (the in-window icon
-  # still comes from resources.qrc via setWindowIcon).
-  enable_language(RC)
-  target_sources(tentec-console PRIVATE packaging/tentec-console.rc)
-endif()
-if(TARGET Qt6::Multimedia)
-  target_sources(tentec-console PRIVATE
-    src/audio/AudioIo.cpp src/audio/AudioIo.h)
-  target_compile_definitions(tentec-console PRIVATE HAVE_QTMULTIMEDIA)
-  target_link_libraries(tentec-console PRIVATE Qt6::Multimedia)
-
-  # Headless capture smoke test (the audio sibling of sdr_probe).
-  add_executable(audio_probe EXCLUDE_FROM_ALL
-    tools/audio_probe.cpp
-    src/audio/AudioIo.cpp src/audio/AudioIo.h)
-  target_include_directories(audio_probe PRIVATE src)
-  target_compile_definitions(audio_probe PRIVATE HAVE_QTMULTIMEDIA)
-  target_link_libraries(audio_probe PRIVATE Qt6::Core Qt6::Multimedia)
 endif()
 if(OpenMP_CXX_FOUND)
   target_link_libraries(tentec-console PRIVATE OpenMP::OpenMP_CXX)
@@ -698,23 +636,6 @@ if(BUILD_SDRPLAY)
   target_include_directories(sdr_probe PRIVATE src)
   target_link_libraries(sdr_probe PRIVATE sdrplay_api)
 
-  if(WIN32)  # vendor install: header + import lib are not on default paths
-    foreach(t tentec-console sdr_probe)
-      target_include_directories(${t} PRIVATE "${SDRPLAY_ROOT}/inc")
-      target_link_directories(${t} PRIVATE "${SDRPLAY_ROOT}/x64")
-      if(MSVC)
-        # Delay-load the vendor DLL: the release zip ships without it (never
-        # redistributable) and the API installer's folder is not on the DLL
-        # search path, so a load-time import dies before main() even on a
-        # machine with the API correctly installed (live-found v0.1.6 at the
-        # operator's own station: "instantly fails"). SdrPlaySource resolves
-        # the DLL from the installer's registry breadcrumb before the first
-        # API call.
-        target_link_options(${t} PRIVATE "/DELAYLOAD:sdrplay_api.dll")
-        target_link_libraries(${t} PRIVATE delayimp)
-      endif()
-    endforeach()
-  endif()
 else()
   message(STATUS "SDRplay RSP source: disabled (-DBUILD_SDRPLAY=ON to enable)")
 endif()

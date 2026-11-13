@@ -57,12 +57,6 @@ LogWindow::LogWindow(LogDb* db, LogbookIndex* idx, const CtyLookup* cty,
       qrz_(qrz) {
     setModal(false);
     setWindowTitle("LOG — New QSO");
-    // On Windows the tool windows are parentless top-levels (N1MM-style),
-    // so clicking the console would bury this one — but the whole point of
-    // the entry window is living above the band map while spots feed it
-    // (operator call, first live QSO). Linux keeps normal transient-for
-    // stacking via the parent.
-    if (!parent) setWindowFlag(Qt::WindowStaysOnTopHint);
     setStyleSheet(
         "QDialog { background: #141b24; color: #dde7f0; font-size: 15px; }"
         "QLabel { color: #b8c8d8; font-size: 13px; }"

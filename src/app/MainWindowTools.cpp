@@ -95,35 +95,6 @@
 
 namespace ttc {
 
-// The big tool windows (CW, band map, SKIM waterfall, DIGI) get parked on
-// other monitors in a shack. On Windows an OWNED window has no taskbar
-// button and rides its owner's z-order, and dragging one across monitors
-// with different DPI recreates the native window — live-found 2026-08-31
-// on the all-in-one + second display: both windows stranded invisible
-// behind the maximized console ("they are gone"). Parentless top-levels
-// are the Windows convention for multi-window ham software (N1MM-style:
-// own taskbar entry, free stacking on any monitor). Linux keeps the
-// transient-for parent the operator's WM already handles well. The pair
-// below implements the split: parent choice + the quit/lifetime fixups a
-// parentless window needs (MainWindow's destructor deletes them).
-static QWidget* toolWinParent(QWidget* mainWin) {
-#ifdef Q_OS_WIN
-    Q_UNUSED(mainWin);
-    return nullptr;
-#else
-    return mainWin;
-#endif
-}
-static void adoptToolWindow(QWidget* w) {
-#ifdef Q_OS_WIN
-    // The console closing must still quit the app even while a parentless
-    // tool window is open.
-    w->setAttribute(Qt::WA_QuitOnClose, false);
-#else
-    Q_UNUSED(w);
-#endif
-}
-
 // MASTER.SCP loader (shared logic): cqrlog ships the contest super-check
 // list; the user's own copy wins if present.
 static QSet<QString> loadMasterScp() {
@@ -143,7 +114,6 @@ static QSet<QString> loadMasterScp() {
     return out;
 }
 
-
 void MainWindow::setupLogUi() {
     auto* logBtn = new QToolButton(topStrip_);
     logBtn->setText("LOG");
@@ -162,8 +132,7 @@ void MainWindow::setupLogUi() {
     // on first write and can drop that very first send).
     logUdp_->bind(QHostAddress::LocalHost, 0);
     // LOG -> the console's own New QSO window (SQLite station log), and the
-    // same nudge to cqrlog as always — on the Linux box both stay in step,
-    // on Windows the datagram lands on deaf ears by design (fire-and-forget).
+    // same nudge to cqrlog as always, so both stay in step (fire-and-forget).
     connect(logBtn, &QToolButton::clicked, this, [this] {
         // A second press closes the window (its × still does too).
         if (windowUp(logWin_)) {
@@ -235,10 +204,9 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
                                const QString& grid) {
     if (!logWin_) {
         logWin_ = new LogWindow(logDb_, &logbook_, &cty_, &rotor_, qrz_,
-                                toolWinParent(this));
+                                this);
         logWin_->setContext(qsoContext());
         WindowLight::bind(logBtn_, logWin_);
-        adoptToolWindow(logWin_);
         // The compass rose follows whoever is in the window: country
         // center from cty.dat, sharpened to the real grid when WSJT-X or
         // a QRZ lookup provides one. (The 3D globe is the window's own
@@ -292,8 +260,7 @@ void MainWindow::openLogWindow(const QString& call, const QString& park,
 void MainWindow::openLogbookWindow() {
     if (!logbookWin_) {
         logbookWin_ = new LogbookWindow(logDb_, &cty_, uploader_,
-                                        toolWinParent(this));
-        adoptToolWindow(logbookWin_);
+                                        this);
         // Edit…: the corrected record goes back out the same doors the
         // original went through — online logs (QRZ replacing its copy),
         // cqrlog's bridge — and the worked-before colors follow.
@@ -757,8 +724,7 @@ void MainWindow::openDigiWindow() {
         fldigi_->setEndpoint(
             QSettings().value("digi/host", "127.0.0.1").toString(),
             quint16(QSettings().value("digi/port", 7362).toUInt()));
-        digiWin_ = new DigiWindow(fldigi_, toolWinParent(this));
-        adoptToolWindow(digiWin_);
+        digiWin_ = new DigiWindow(fldigi_, this);
     }
     digiWin_->show();
     digiWin_->raise();
@@ -781,8 +747,7 @@ void MainWindow::openContestWindow() {
             }
         }
         contestWin_ = new ContestWindow(contestDb_, &cty_, logDb_,
-                                        toolWinParent(this));
-        adoptToolWindow(contestWin_);
+                                        this);
         connect(contestWin_, &ContestWindow::contestOpened, this,
                 [this](qint64 id) {
                     if (contestDeck_) contestDeck_->openContestId(id);
@@ -896,8 +861,7 @@ void MainWindow::enrichQso(qint64 id, const QString& call) {
 void MainWindow::openSpotTable() {
     if (!spotTable_) {
         spotTable_ = new SpotTableWindow(&logbook_, &rotor_,
-                                         toolWinParent(this));
-        adoptToolWindow(spotTable_);
+                                         this);
         // Double-click = the band-map spot click, plus the QSY the band map
         // can't do (a table row may live on another band entirely).
         connect(spotTable_, &SpotTableWindow::spotActivated, this,
@@ -970,9 +934,8 @@ void MainWindow::sendCqrLookup(const QString& call, const QString& park,
 // every F-key whenever this window wasn't up; that trap ends here.
 void MainWindow::ensureCwWindow() {
     if (cwWin_) return;
-    cwWin_ = new CwWindow(radio_, toolWinParent(this));
+    cwWin_ = new CwWindow(radio_, this);
     cwWin_->setContext(qsoContext());
-    adoptToolWindow(cwWin_);
     WindowLight::bind(cwBtn_, cwWin_);
     cwWin_->setMyCall(QSettings()
         .value("station/callsign", "").toString());
@@ -1323,8 +1286,7 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
                     if (!logbook_.ready()) return QChar('?');
                     return logbook_.status(call, LogbookIndex::bandForHz(hz));
                 },
-                toolWinParent(this));
-            adoptToolWindow(skimWin_);
+                this);
             connect(skimWin_, &SkimmerWindow::tuneTo, this,
                     [this](qint64 hz, const QString& call) {
                         tuneAbsolute(uint64_t(hz));
@@ -1468,8 +1430,7 @@ void MainWindow::openSkimView() {
                 dial = qint64(centerHz_);
                 loOff = loOffHz_;
             },
-            toolWinParent(this));
-        adoptToolWindow(skimView_);
+            this);
         connect(skimView_, &SkimViewWindow::tuneTo, this,
                 [this](qint64 hz, const QString& call) {
                     tuneAbsolute(uint64_t(hz));
@@ -2516,11 +2477,7 @@ void MainWindow::setupWsjtxUi() {
             closeNext = false;
             // Already up and raised once: this press closes them.
             const auto terminate = [](qint64 pid) {
-#ifdef Q_OS_WIN
-                QProcess::startDetached("taskkill", {"/PID", QString::number(pid)});
-#else
                 ::kill(pid_t(pid), SIGTERM);
-#endif
             };
             if (wsPid && !(wsjtx_ && wsjtx_->requestClose()))
                 terminate(wsPid);                   // never heard: plain TERM

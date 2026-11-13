@@ -9,11 +9,9 @@
 #include <algorithm>
 #include <cmath>
 
-#ifdef Q_OS_LINUX
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#endif
 
 namespace ttc {
 
@@ -125,22 +123,18 @@ bool LiveVoice::start(const QString& sourceNode, const QString& sinkNode,
         return false;
     }
     dropped_ = 0;
-#ifdef Q_OS_LINUX
     // Open pacat's stdin pipe a second time, read end, purely to measure
     // what is queued in it (FIONREAD) — never read from it — and shrink it
     // from 64 KB (680 ms!) to one page (~40 ms).
     probeFd_ = ::open(QString("/proc/%1/fd/0").arg(play_->processId())
                           .toLocal8Bit().constData(), O_RDONLY | O_NONBLOCK);
     if (probeFd_ >= 0) ::fcntl(probeFd_, F_SETPIPE_SZ, 4096);
-#endif
     return true;
 }
 
 void LiveVoice::stop() {
     stopping_ = true;
-#ifdef Q_OS_LINUX
     if (probeFd_ >= 0) ::close(probeFd_);
-#endif
     probeFd_ = -1;
     for (QProcess** p : {&rec_, &play_}) {
         if (!*p) continue;
@@ -155,10 +149,8 @@ void LiveVoice::stop() {
 
 qint64 LiveVoice::backlogBytes() const {
     qint64 n = play_ ? play_->bytesToWrite() : 0;
-#ifdef Q_OS_LINUX
     int inPipe = 0;
     if (probeFd_ >= 0 && ::ioctl(probeFd_, FIONREAD, &inPipe) == 0) n += inPipe;
-#endif
     return n;
 }
 

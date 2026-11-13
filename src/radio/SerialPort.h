@@ -8,10 +8,8 @@ class QSerialPort;
 
 namespace ttc {
 
-// Minimal serial wrapper on QSerialPort (cross-platform: the Windows port
-// made the "portable choice later" note come due — one implementation for
-// /dev/* and COMx alike). Line-oriented (CR-terminated) to match the
-// Ten-Tec ASCII protocol. QSerialPort also keeps the old POSIX guarantees:
+// Minimal serial wrapper on QSerialPort. Line-oriented (CR-terminated) to
+// match the Ten-Tec ASCII protocol. QSerialPort also keeps the old POSIX guarantees:
 // it opens O_CLOEXEC through qt_safe_open (audio-helper children must not
 // inherit CAT ports — measured live) and takes the platform's exclusive
 // lock, so a second opener fails loudly instead of splitting the stream.

@@ -24,7 +24,7 @@ class LogDb;
 //    of card (qsl_r 'Q'), LoTW (lotw_qslr 'L') or eQSL (eqsl_qsl_rcvd 'E').
 //
 //  - the console's own LogDb (attachDb): rebuilt whenever the log changes.
-//    This is the only source on Windows, and the only source for the
+//    This is the only source for the
 //    country/band/mode "needed" dimensions below (cqrlog's summary has no
 //    mode or country column; the console's log stores both).
 class LogbookIndex : public QObject {

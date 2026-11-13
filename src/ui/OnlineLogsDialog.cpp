@@ -152,11 +152,7 @@ OnlineLogsDialog::OnlineLogsDialog(QslUploader* up, QWidget* parent)
         auto* r2 = lineOf(box);
         pair(r2, "TQSL PATH",
              field("lotw/tqslPath", "", 340, false, this,
-#ifdef Q_OS_WIN
-                   "C:/Program Files (x86)/TrustedQSL/tqsl.exe"
-#else
                    "tqsl"
-#endif
                    ));
         pair(r2, "TQSL PASSWORD",
              field("lotw/tqslPassword", "usually empty", 120, true, this));

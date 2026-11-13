@@ -24,17 +24,12 @@ constexpr int kDistKm[] = {250,  500,  750,  1000, 1250, 1500, 1750, 2000,
                            12000};
 constexpr int kDistCount = int(sizeof(kDistKm) / sizeof(kDistKm[0]));
 
-// Both bundles carry voacapl (US-government public-domain core, so unlike
-// the SDRplay lib it MAY be redistributed) plus a ready itshfbc tree: the
-// AppImage under share/, the Windows zip flat beside the exe. An
-// operator's own installation always wins over the bundle.
+// The AppImage carries voacapl (US-government public-domain core, so unlike
+// the SDRplay lib it MAY be redistributed) plus a ready itshfbc tree under
+// share/. An operator's own installation always wins over the bundle.
 QString voacaplPath() {
     QString p = QStandardPaths::findExecutable("voacapl");
     if (!p.isEmpty()) return p;
-    // findExecutable() appends the platform's executable suffix, so this
-    // one call matches "voacapl" on Linux and "voacapl.exe" in the Windows
-    // zip. The old QFile::exists() probe of a bare "voacapl" could never
-    // match the bundled Windows engine — the overlay was dead there.
     // ORDER IS THE CONTRACT above: ~/.local/bin (the operator's own build)
     // is searched BEFORE the bundle beside the executable, or an AppImage
     // would start overriding a hand-built engine that is not on PATH.
@@ -71,8 +66,8 @@ QString itshfbcDir() {
     const QString mine = QStandardPaths::writableLocation(
                              QStandardPaths::AppDataLocation) + "/itshfbc";
     if (QDir(mine + "/run").exists()) return mine;
-    // The AppImage keeps the read-only tree under share/; the Windows zip
-    // is flat, with itshfbc sitting beside tentec-console.exe.
+    // The AppImage keeps the read-only tree under share/; a flat bundle
+    // has itshfbc sitting beside the executable.
     for (const QString& bundled :
          {QCoreApplication::applicationDirPath()
               + "/../share/tentec-console/itshfbc",
@@ -114,18 +109,7 @@ QString circuitCard(double la1, double lo1, double la2, double lo2) {
 Voacap::Voacap(QObject* parent) : QObject(parent) {}
 
 QString Voacap::engineMissing() {
-    // Say something the operator on THIS platform can act on: quoting
-    // ./configure at a Windows user is worse than saying nothing.
-#ifdef Q_OS_WIN
-    if (voacaplPath().isEmpty())
-        return QStringLiteral(
-            "voacapl.exe not found — it ships beside tentec-console.exe in "
-            "the release zip; unpack the whole zip, not just the exe");
-    if (itshfbcDir().isEmpty())
-        return QStringLiteral(
-            "itshfbc data tree missing — it ships beside tentec-console.exe "
-            "in the release zip; unpack the whole zip, not just the exe");
-#else
+    // Say something the operator can act on.
     if (voacaplPath().isEmpty())
         return QStringLiteral(
             "voacapl not found (the AppImage bundles it; source builds: "
@@ -134,7 +118,6 @@ QString Voacap::engineMissing() {
     if (itshfbcDir().isEmpty())
         return QStringLiteral(
             "itshfbc data tree missing — run makeitshfbc once");
-#endif
     return {};
 }
 

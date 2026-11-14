@@ -476,17 +476,6 @@ void MainWindow::toggleContestMode(bool on) {
             ensureRtty();
             connect(rtty_, &RttyEngine::textDecoded, contestDeck_,
                     &ContestDeck::appendRttyRead);
-            {
-                auto* bars = new QTimer(contestDeck_);
-                bars->setInterval(50);
-                connect(bars, &QTimer::timeout, contestDeck_, [this] {
-                    if (!rtty_ || !rttyMode_ || !contestDeck_->isVisible()) return;
-                    const auto st = rtty_->rxStatus();
-                    contestDeck_->setRttyTune(st.mark, st.space, st.quality, st.snrDb,
-                                              st.open, st.afcHz, rtty_->markHz());
-                });
-                bars->start();
-            }
             contestDeck_->setRttyKeyer(
                 [this](const QString& text) {
                     if (!rttyMode_) setRttyMode(true);

@@ -33,7 +33,6 @@
 #include "contest/PracticeEngine.h"
 #include "net/SntpCheck.h"
 #include "contest/QtcDialog.h"
-#include "rtty/RttyTuneWidget.h"
 #include "cw/CwWindow.h"
 #include "ui/DeckStyle.h"
 #include "log/QrzLookup.h"
@@ -238,21 +237,7 @@ void ContestDeck::buildUi() {
                     m.exec(read_->mapToGlobal(p));
                 });
         read_->viewport()->installEventFilter(this);
-        {
-            auto* rrow = new QHBoxLayout;
-            rrow->setSpacing(4);
-            rrow->addWidget(read_, 1);
-            rttyTune_ = new RttyTuneWidget(readPane_);
-            rttyTune_->setFixedWidth(64);
-            rttyTune_->setToolTip(
-                "Mark (left) and space (right). Tune until both bars are tall\n"
-                "and swap as the station keys; green = text is printing.\n"
-                "Below: signal over noise, keying contrast, the mark tone and\n"
-                "how far the reader has trimmed onto him.");
-            rttyTune_->setVisible(false);
-            rrow->addWidget(rttyTune_);
-            box->addLayout(rrow, 1);
-        }
+        box->addWidget(read_, 1);
         lay->addWidget(readPane_, 11);
         addPopout("read", "CW READ", readPane_, trow,
                   [this](QWidget* w) {
@@ -1107,7 +1092,6 @@ void ContestDeck::openContest(qint64 id) {
     if (typeTitle_)
         typeTitle_->setText(rttyContest() ? "RTTY TYPE — Enter sends"
                                           : "CW TYPE — Enter sends");
-    if (rttyTune_) rttyTune_->setVisible(rttyContest());
     applyPaneVisibility();   // phone drops the CW panes, floats included
     rebuildEntryFields();
     applyFkeyLabels();
@@ -1805,12 +1789,6 @@ QString ContestDeck::fkeySpec(int key) const {
         (!runMode_ && !def_->fkeySp.isEmpty()) ? def_->fkeySp
                                                : def_->fkeyRun;
     return set.value(key);
-}
-
-void ContestDeck::setRttyTune(float mark, float space, float quality, float snrDb,
-                              bool open, float afcHz, int markHz) {
-    if (rttyTune_ && rttyTune_->isVisible())
-        rttyTune_->set(mark, space, quality, snrDb, open, afcHz, markHz);
 }
 
 void ContestDeck::setRttyKeyer(std::function<void(const QString&)> send,

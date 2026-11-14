@@ -31,7 +31,6 @@ class QrzLookup;
 class MultWindow;
 class OnlineScore;
 class QtcDialog;
-class RttyTuneWidget;
 class RotorLink;
 class SntpCheck;
 
@@ -94,10 +93,6 @@ public:
     // A as always. The main window owns the ears, the B reader and the
     // transmitter moves — the deck only says what it wants.
     bool running() const { return runMode_; }
-    // RTTY contests: the mark / space bars beside the reader (the RTTY
-    // deck's own indicator), fed by the main window ~20 times a second.
-    void setRttyTune(float mark, float space, float quality, float snrDb,
-                     bool open, float afcHz, int markHz);
     bool so2vOn() const { return so2v_; }
     bool arrowsWalkB() const { return so2v_ && runMode_; }
     // A B-walk landing: the spot's call into the SUB box, classified.
@@ -326,7 +321,6 @@ private:
     std::function<void()> stopVoice_;
     std::function<void(const QString&)> rttySend_;
     std::function<void()> rttyStop_;
-    RttyTuneWidget* rttyTune_ = nullptr; // beside the reader, RTTY contests only
     QLabel* readTitle_ = nullptr;        // "CW READ …" / "RTTY READ …"
     QLabel* typeTitle_ = nullptr;
     QPushButton* esmBtn_ = nullptr;      // Enter-sends-message toggle

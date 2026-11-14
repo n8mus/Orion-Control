@@ -1046,7 +1046,7 @@ static void testHistoryDb(const QString& dir) {
 }
 
 // ---- 2026-10-22 robustness pieces ------------------------------------------
-static QDateTime t0() { return QDateTime(QDate(2026, 10, 24), QTime(0, 0), QTimeZone::UTC); }
+static QDateTime t0() { return QDateTime(QDate(2026, 10, 24), QTime(0, 0), QTimeZone::utc()); }
 
 static void testRate() {
     QList<QDateTime> ts;

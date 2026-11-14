@@ -107,6 +107,27 @@ public:
                      const QString& mode);
     QList<QtcRow> qtcRows(qint64 contestId) const;  // confirm order
 
+    // ---- WAE QTC (receiving side, RTTY) --------------------------------
+    // What another station reported to us: his series number and count,
+    // and each line exactly as copied (time, call, serial) — evidence,
+    // never joined to our own log.
+    struct QtcRcvdLine { QString qTime, qCall, qSerial; };
+    struct QtcRcvdRow {
+        qint64 id = -1;
+        QString fromCall;
+        int block = 0, count = 0, item = 0;   // HIS series nr / size
+        QDateTime tsUtc;             // when we saved the block
+        qint64 freqHz = 0;
+        QString mode;
+        QtcRcvdLine line;
+    };
+    int  qtcRcvdCount(qint64 contestId) const;
+    int  qtcRcvdFrom(qint64 contestId, const QString& fromCall) const;
+    bool addQtcRcvdBlock(qint64 contestId, const QString& fromCall,
+                         int block, const QList<QtcRcvdLine>& lines,
+                         qint64 freqHz, const QString& mode);
+    QList<QtcRcvdRow> qtcRcvdRows(qint64 contestId) const;
+
 signals:
     void changed();
 

@@ -89,6 +89,19 @@ QList<qint64> allocateQtc(const QList<ContestQso>& qsos,
                           const QSet<qint64>& reportedIds,
                           const QString& toCall, int alreadySentTo);
 
+// What an RTTY QTC transmission looks like once printed: the series
+// header ("QTC 12/5", often sent twice) and its lines ("0031 DL1ABC 045",
+// dashes instead of spaces from some loggers). Lines come back in the
+// order received, an immediate repeat of the same line dropped, at most
+// `count` of them (10 when no header was copied). block/count stay 0
+// when no header is in the text.
+struct QtcParsed {
+    int block = 0, count = 0;
+    struct Line { QString qTime, qCall, qSerial; };
+    QList<Line> lines;
+};
+QtcParsed parseQtcText(const QString& text);
+
 // On-air seconds under the WAE rest rule: a gap of >= 60 minutes with
 // no QSO and no QTC is a break; everything else counts as operating.
 // events = QSO + QTC-confirm timestamps, any order.

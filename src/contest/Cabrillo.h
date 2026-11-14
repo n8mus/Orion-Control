@@ -35,7 +35,8 @@ public:
                          const QList<ContestQso>& qsos,
                          const QList<ContestDb::QtcRow>& qtcs,
                          const CabrilloStation& st, const CtyLookup* cty,
-                         const ContestContext& ctx);
+                         const ContestContext& ctx,
+                         const QList<ContestDb::QtcRcvdRow>& rcvd = {});
 
     // Parse-back verification of build()'s output. Returns true when
     // every QSO: and QTC: line round-trips to its database row; on
@@ -44,7 +45,8 @@ public:
                           const ContestRow& contest,
                           const QList<ContestQso>& qsos,
                           const QList<ContestDb::QtcRow>& qtcs,
-                          QString* err);
+                          QString* err,
+                          const QList<ContestDb::QtcRcvdRow>& rcvd = {});
 
     // "  7024" — kHz right-aligned in 5, the classic QSO: line freq.
     static QString freqField(qint64 hz);

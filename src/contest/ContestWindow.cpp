@@ -413,7 +413,8 @@ void ContestWindow::refreshAll() {
     qsos_ = db_->qsos(contestId_);
     QList<CQsoValues> vals;
     for (const ContestQso& q : qsos_) vals << q.v;
-    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_) : 0;
+    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_)
+                                        + db_->qtcRcvdCount(contestId_) : 0;
     const ScoreBreakdown sb =
         computeScore(*def_, vals, cty_, ctx_, qtcN);
     QString s = QString("· %1 QSOs · %2 pts · %3 wt-mults · score %4")
@@ -568,7 +569,8 @@ void ContestWindow::deleteSelected() {
 void ContestWindow::showSummary() {
     if (contestId_ < 0 || !def_) return;
     const QList<CQsoValues> vals = db_->qsoValues(contestId_);
-    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_) : 0;
+    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_)
+                                        + db_->qtcRcvdCount(contestId_) : 0;
     const ScoreBreakdown sb = computeScore(*def_, vals, cty_, ctx_, qtcN);
     QString text = summaryText(*def_, row_, qsos_, sb);
     const QStringList w = logChecks(*def_, row_, qsos_);
@@ -741,10 +743,11 @@ void ContestWindow::exportCabrillo() {
                        s.value("club/email").toString()).toString();
     st.club = row_.club;
     const QList<ContestDb::QtcRow> qtcs = db_->qtcRows(contestId_);
+    const QList<ContestDb::QtcRcvdRow> rcvd = db_->qtcRcvdRows(contestId_);
     const QString text =
-        Cabrillo::build(*def_, row_, qsos_, qtcs, st, cty_, ctx_);
+        Cabrillo::build(*def_, row_, qsos_, qtcs, st, cty_, ctx_, rcvd);
     QString err;
-    if (!Cabrillo::selfCheck(text, *def_, row_, qsos_, qtcs, &err)) {
+    if (!Cabrillo::selfCheck(text, *def_, row_, qsos_, qtcs, &err, rcvd)) {
         // A file that fails its own parse-back must never reach a
         // sponsor's robot. Refuse loudly.
         QMessageBox::critical(
@@ -770,11 +773,11 @@ void ContestWindow::exportCabrillo() {
     trace(QString("CABRILLO %1 (%2 QSOs, %3 QTC, verified)")
               .arg(path)
               .arg(qsos_.size())
-              .arg(qtcs.size()));
+              .arg(qtcs.size() + rcvd.size()));
     status_->setText(
         QString("Cabrillo written and verified — %1 QSOs, %2 QTC → %3")
             .arg(qsos_.size())
-            .arg(qtcs.size())
+            .arg(qtcs.size() + rcvd.size())
             .arg(path));
     QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }

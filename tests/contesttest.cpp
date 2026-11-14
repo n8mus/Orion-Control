@@ -417,6 +417,92 @@ static void testSentExchInCab(const CtyLookup& cty) {
     }
 }
 
+// WAE RTTY: QTCs go both ways. The printed transmission parses into a
+// series + lines, a received block is stored exactly as copied, counts
+// toward the score and the 10-per-station limit, and comes out in the
+// Cabrillo file with US as the receiver — and the file still verifies.
+static void testQtcRtty(const QString& dir, const CtyLookup& cty) {
+    const ContestDef* d = contestDef("DARC-WAEDC-RTTY");
+    CHECK(d && d->hasQtc && d->qtcBothWays, "rtty qtc: on, both ways");
+    if (!d) return;
+
+    // What the far end's QTC over prints like (header twice, a repeated
+    // line, a dashed line, key-up garbage around it).
+    const QtcParsed p = parseQtcText(
+        "XQ N8EM QTC 12/4 QTC 12/4\n0031 DL1ABC 045\n0031 DL1ABC 045\n"
+        "0034-G4XYZ-112\n0040 JA1XYZ 7\n2359 PY2AA 1203\nQTC 12/4 K JE");
+    CHECK(p.block == 12 && p.count == 4, "rtty qtc: header 12/4");
+    CHECK(p.lines.size() == 4, "rtty qtc: four lines, the repeat dropped");
+    CHECK(p.lines.size() == 4 && p.lines[1].qTime == "0034" && p.lines[1].qCall == "G4XYZ"
+              && p.lines[1].qSerial == "112",
+          "rtty qtc: dashed line reads");
+    CHECK(parseQtcText("N8EM 599 001 001 TU").lines.isEmpty(),
+          "rtty qtc: an exchange is not a QTC line");
+    CHECK(parseQtcText("QTC 3/2 0031 DL1ABC 045 0033 G4XYZ 9 0035 F5XX 77").lines.size() == 2,
+          "rtty qtc: never more lines than the header announced");
+    CHECK(parseQtcText("2561 DL1ABC 045").lines.isEmpty(), "rtty qtc: 2561 is not a time");
+
+    ContestDb db;
+    CHECK(db.open(dir + "/qtcrtty.sqlite"), "rtty qtc: db opens");
+    ContestRow c;
+    c.defId = d->id;
+    c.title = "WAE RTTY QTC test";
+    c.startUtc = QDateTime::fromString("2026-11-14 00:00:00", "yyyy-MM-dd HH:mm:ss");
+    c.startUtc.setTimeZone(QTimeZone::utc());
+    c.catMode = "RTTY";
+    const qint64 cid = db.createContest(c);
+    QList<qint64> ids;
+    for (int i = 0; i < 6; ++i) {
+        ContestQso q;
+        q.contestId = cid;
+        q.tsUtc = c.startUtc.addSecs(300 * (i + 1));
+        q.freqHz = 7045000;
+        q.v = mkq(QString("DL%1AA").arg(i), "40M", "", QString::number(100 + i));
+        q.v.mode = "RTTY";
+        q.v.serialS = i + 1;
+        ids << db.addQso(q);
+    }
+    QList<ContestDb::QtcRcvdLine> lines;
+    for (const auto& l : p.lines) lines.push_back({l.qTime, l.qCall, l.qSerial});
+    CHECK(db.addQtcRcvdBlock(cid, "dl8wpx", p.block, lines, 7045000, "RTTY"),
+          "rtty qtc: received block saves");
+    CHECK(db.qtcRcvdCount(cid) == 4 && db.qtcRcvdFrom(cid, "DL8WPX") == 4,
+          "rtty qtc: received counters");
+    // Sent + received with one station share the limit of 10.
+    const QList<ContestQso> qsos = db.qsos(cid);
+    const int used = db.qtcSentTo(cid, "DL8WPX") + db.qtcRcvdFrom(cid, "DL8WPX");
+    const QList<qint64> alloc = allocateQtc(qsos, db.qtcReportedQsoIds(cid), "DL8WPX", used);
+    CHECK(alloc.size() == 6, "rtty qtc: 4 received leaves room for 6");
+    CHECK(db.addQtcBlock(cid, "DL8WPX", db.nextQtcBlock(cid), alloc.mid(0, 3), 7045000, "RTTY"),
+          "rtty qtc: sent block confirms");
+
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    CabrilloStation st;
+    st.call = "N8EM";
+    const QList<ContestDb::QtcRow> sent = db.qtcRows(cid);
+    const QList<ContestDb::QtcRcvdRow> rcvd = db.qtcRcvdRows(cid);
+    const QString text = Cabrillo::build(*d, db.contest(cid), qsos, sent, st, &cty, ctx, rcvd);
+    CHECK(text.contains("CONTEST: DARC-WAEDC-RTTY\r\n"), "rtty cab: contest tag");
+    CHECK(text.count("\r\nQSO: ") == 6 && text.contains(" RY "), "rtty cab: six RY QSO lines");
+    CHECK(text.count("\r\nQTC: ") == 7, "rtty cab: 3 sent + 4 received QTC lines");
+    // Received: WE are the receiver, his series, his call as sender.
+    bool rcvdLine = false;
+    for (const QString& l : text.split("\r\n"))
+        if (l.startsWith("QTC: ") && l.contains("N8EM          12/4      DL8WPX        0034 G4XYZ         112"))
+            rcvdLine = true;
+    CHECK(rcvdLine, "rtty cab: received line = N8EM 12/4 DL8WPX 0034 G4XYZ 112");
+    QString err;
+    CHECK(Cabrillo::selfCheck(text, *d, db.contest(cid), qsos, sent, &err, rcvd),
+          "rtty cab: self-check passes with both directions");
+    if (!err.isEmpty()) std::printf("      %s\n", qPrintable(err));
+    QList<CQsoValues> vals;
+    for (const ContestQso& q : qsos) vals << q.v;
+    const ScoreBreakdown sb = computeScore(*d, vals, &cty, ctx, sent.size() + rcvd.size());
+    CHECK(sb.qtcPoints == 7 && sb.total == (6 + 7) * 3, "rtty qtc: (6 QSO + 7 QTC) x 40 m Germany x3");
+}
+
 static void testQtc(const QString& dir, const CtyLookup& cty) {
     ContestDb db;
     CHECK(db.open(dir + "/qtc.sqlite"), "qtc: db opens");
@@ -1150,6 +1236,7 @@ int main(int argc, char** argv) {
     testCabrillo(cty);
     testSentExchInCab(cty);
     testQtc(tmp.path(), cty);
+    testQtcRtty(tmp.path(), cty);
     testOpTime();
     testWpx(cty);
     testSs(cty);

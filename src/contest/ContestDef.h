@@ -107,6 +107,10 @@ struct ContestDef {
     // WAE: QTC traffic exists (sending side; each reported QSO is one
     // point, limits enforced by the QTC engine).
     bool hasQtc = false;
+    // WAE RTTY: every station sends AND receives QTCs, only between
+    // continents, and what two stations exchange (sent + received) may
+    // not pass 10. False = the CW/SSB leg: non-EU sends, up to 10 each.
+    bool qtcBothWays = false;
 
     // Single-op time limits (0 = none): hours on the air allowed, and the
     // shortest silence that counts as an off period. WPX 36 h / 60 min,

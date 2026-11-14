@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestEngine.h"
 
+#include <QRegularExpression>
+
 #include <QSettings>
 
 #include <algorithm>
@@ -220,6 +222,38 @@ QList<qint64> allocateQtc(const QList<ContestQso>& qsos,
         if (q.id < 0 || reportedIds.contains(q.id)) continue;
         if (q.v.call.compare(to, Qt::CaseInsensitive) == 0) continue;
         out << q.id;
+    }
+    return out;
+}
+
+QtcParsed parseQtcText(const QString& text) {
+    QtcParsed out;
+    const QString t = text.toUpper();
+    static const QRegularExpression hdr(
+        QStringLiteral("QTC\\s*:?\\s*(\\d{1,3})\\s*/\\s*(\\d{1,2})"));
+    int from = 0;
+    auto hi = hdr.globalMatch(t);
+    while (hi.hasNext()) {             // the LAST header wins: lines follow it
+        const auto m = hi.next();
+        const int b = m.captured(1).toInt(), n = m.captured(2).toInt();
+        if (n < 1 || n > 10) continue;
+        if (b != out.block || n != out.count) from = int(m.capturedEnd());
+        out.block = b;
+        out.count = n;
+    }
+    static const QRegularExpression line(QStringLiteral(
+        "(?<![0-9A-Z/])(\\d{4})[\\s\\-]+([A-Z0-9/]{3,13})[\\s\\-]+(\\d{1,4})(?![0-9A-Z/])"));
+    const int cap = out.count > 0 ? out.count : 10;
+    auto li = line.globalMatch(t, from);
+    while (li.hasNext() && out.lines.size() < cap) {
+        const auto m = li.next();
+        const QString tm = m.captured(1), call = m.captured(2), nr = m.captured(3);
+        if (tm.left(2).toInt() > 23 || tm.mid(2).toInt() > 59) continue;
+        if (!loggableCall(call)) continue;
+        if (!out.lines.isEmpty() && out.lines.last().qTime == tm
+            && out.lines.last().qCall == call && out.lines.last().qSerial == nr)
+            continue;                  // the same line sent twice
+        out.lines.push_back({tm, call, nr});
     }
     return out;
 }

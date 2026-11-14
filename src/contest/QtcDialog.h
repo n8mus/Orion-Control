@@ -9,6 +9,7 @@
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QStackedWidget;
 class QTableWidget;
 
 namespace ttc {
@@ -27,6 +28,17 @@ public:
 
     void openFor(qint64 contestId);      // reset + show
     void setRigFreq(qint64 hz) { rigHz_ = hz; }
+    // WAE RTTY (ContestDef::qtcBothWays): a Receive page beside Send, the
+    // 10-per-station limit counts sent + received, the mode logged, and
+    // the whole block goes out as one over with the header sent twice.
+    void setBothWays(bool on, const QString& mode);
+    // Why this station may not exchange QTCs with us (same continent...),
+    // empty = fine. The deck supplies it; the dialog knows no geography.
+    void setCallCheck(std::function<QString(const QString&)> refuse) {
+        refuse_ = std::move(refuse);
+    }
+    // The RTTY print rides in here; on the Receive page it fills the grid.
+    void appendRx(const QString& text);
 
 public slots:
     void followCall(const QString& call);  // deck call box rides in
@@ -43,6 +55,11 @@ private:
     void cancelBlock();
     void refreshCounters();
     QString rowText(int i) const;          // "0030 DL1ABC 456"
+    int usedWith(const QString& call) const;   // sent (+ received, RTTY)
+    void showPage(bool receive);
+    void fillFromRx();                     // parse rxBuf_ into the grid
+    void clearReceive();
+    void saveReceived();
 
     ContestDb* db_;
     std::function<void(const QString&)> keyFn_;
@@ -59,6 +76,21 @@ private:
     QLabel* status_ = nullptr;
     QTableWidget* table_ = nullptr;
     QPushButton* confirmBtn_ = nullptr;
+
+    bool bothWays_ = false;
+    QString mode_ = QStringLiteral("CW");
+    std::function<QString(const QString&)> refuse_;
+    QLabel* toLbl_ = nullptr;              // "To:" / "From:"
+    QWidget* modeRow_ = nullptr;           // Send | Receive
+    QPushButton* sendTab_ = nullptr;
+    QPushButton* rcvTab_ = nullptr;
+    QStackedWidget* pages_ = nullptr;
+    QLineEdit* series_ = nullptr;          // his "12/5"
+    QTableWidget* rcvTable_ = nullptr;     // 10 x (time, call, nr), editable
+    QLabel* rcvCount_ = nullptr;
+    QString rxBuf_;                        // print since the page was cleared
+    bool rcvTouched_ = false;              // operator edited: stop auto-fill
+    bool filling_ = false;
 };
 
 } // namespace ttc

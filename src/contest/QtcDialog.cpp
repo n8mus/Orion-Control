@@ -7,6 +7,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QStackedWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -22,8 +23,31 @@ QtcDialog::QtcDialog(ContestDb* db,
     setWindowTitle("QTC — WAE");
     auto* lay = new QVBoxLayout(this);
 
+    // Send | Receive — shown for WAE RTTY only.
+    modeRow_ = new QWidget(this);
+    {
+        auto* mr = new QHBoxLayout(modeRow_);
+        mr->setContentsMargins(0, 0, 0, 0);
+        sendTab_ = new QPushButton("Send", modeRow_);
+        rcvTab_ = new QPushButton("Receive", modeRow_);
+        for (QPushButton* b : {sendTab_, rcvTab_}) {
+            b->setCheckable(true);
+            b->setStyleSheet("QPushButton:checked { background:#2b5c8a;"
+                             " color:#ffffff; }");
+            b->setMinimumWidth(80);
+            mr->addWidget(b);
+        }
+        sendTab_->setChecked(true);
+        mr->addStretch(1);
+        connect(sendTab_, &QPushButton::clicked, this, [this] { showPage(false); });
+        connect(rcvTab_, &QPushButton::clicked, this, [this] { showPage(true); });
+    }
+    modeRow_->setVisible(false);
+    lay->addWidget(modeRow_);
+
     auto* top = new QHBoxLayout;
-    top->addWidget(new QLabel("To:", this));
+    toLbl_ = new QLabel("To:", this);
+    top->addWidget(toLbl_);
     to_ = new QLineEdit(this);
     to_->setMaxLength(14);
     QFont bf = to_->font();
@@ -44,6 +68,12 @@ QtcDialog::QtcDialog(ContestDb* db,
     blockLbl_ = new QLabel(this);
     top->addWidget(blockLbl_);
     lay->addLayout(top);
+
+    pages_ = new QStackedWidget(this);
+    auto* sendPage = new QWidget(pages_);
+    auto* outer = lay;
+    lay = new QVBoxLayout(sendPage);
+    lay->setContentsMargins(0, 0, 0, 0);
 
     auto* mid = new QHBoxLayout;
     auto* loadBtn = new QPushButton("Load", this);
@@ -82,6 +112,61 @@ QtcDialog::QtcDialog(ContestDb* db,
     bot->addWidget(confirmBtn_);
     lay->addLayout(bot);
 
+    pages_->addWidget(sendPage);
+
+    // ---- Receive page (RTTY) ----
+    auto* rcvPage = new QWidget(pages_);
+    {
+        auto* rl = new QVBoxLayout(rcvPage);
+        rl->setContentsMargins(0, 0, 0, 0);
+        auto* r1 = new QHBoxLayout;
+        r1->addWidget(new QLabel("His series:", rcvPage));
+        series_ = new QLineEdit(rcvPage);
+        series_->setPlaceholderText("12/5");
+        series_->setMaximumWidth(80);
+        connect(series_, &QLineEdit::textEdited, this, [this] { rcvTouched_ = true; });
+        r1->addWidget(series_);
+        const auto keyBtn = [&](const QString& label, std::function<QString()> text) {
+            auto* b = new QPushButton(label, rcvPage);
+            connect(b, &QPushButton::clicked, this, [this, text] {
+                if (keyFn_) keyFn_(text());
+            });
+            r1->addWidget(b);
+        };
+        keyBtn("QRV", [] { return QStringLiteral("QRV QRV"); });
+        keyBtn("AGN", [] { return QStringLiteral("AGN AGN"); });
+        keyBtn("QSL", [this] {
+            const QString sr = series_->text().trimmed();
+            return sr.isEmpty() ? QStringLiteral("QSL TU")
+                                : QString("QSL %1 TU").arg(sr);
+        });
+        r1->addStretch(1);
+        rcvCount_ = new QLabel(rcvPage);
+        r1->addWidget(rcvCount_);
+        rl->addLayout(r1);
+        rcvTable_ = new QTableWidget(10, 3, rcvPage);
+        rcvTable_->setHorizontalHeaderLabels({"Time", "Call", "NR"});
+        rcvTable_->horizontalHeader()->setStretchLastSection(true);
+        connect(rcvTable_, &QTableWidget::cellChanged, this, [this](int, int) {
+            if (!filling_) rcvTouched_ = true;     // his hands: hands off
+        });
+        rl->addWidget(rcvTable_, 1);
+        auto* r2 = new QHBoxLayout;
+        auto* clr = new QPushButton("Clear", rcvPage);
+        connect(clr, &QPushButton::clicked, this, [this] { clearReceive(); });
+        r2->addWidget(clr);
+        r2->addWidget(new QLabel("fills from the print · edit any cell · "
+                                 "Clear starts over", rcvPage));
+        r2->addStretch(1);
+        auto* save = new QPushButton("Save && log block", rcvPage);
+        connect(save, &QPushButton::clicked, this, [this] { saveReceived(); });
+        r2->addWidget(save);
+        rl->addLayout(r2);
+    }
+    pages_->addWidget(rcvPage);
+    lay = outer;
+    lay->addWidget(pages_, 1);
+
     status_ = new QLabel(
         "Confirm is all-or-nothing · reported QSOs lock forever", this);
     lay->addWidget(status_);
@@ -91,7 +176,119 @@ QtcDialog::QtcDialog(ContestDb* db,
         b->setDefault(false);
         b->setFocusPolicy(Qt::NoFocus);
     }
-    resize(560, 420);
+    resize(560, 540);
+}
+
+void QtcDialog::setBothWays(bool on, const QString& mode) {
+    bothWays_ = on;
+    mode_ = mode.isEmpty() ? QStringLiteral("CW") : mode;
+    modeRow_->setVisible(on);
+    if (!on) showPage(false);
+}
+
+int QtcDialog::usedWith(const QString& call) const {
+    if (contestId_ < 0) return 0;
+    return db_->qtcSentTo(contestId_, call)
+         + (bothWays_ ? db_->qtcRcvdFrom(contestId_, call) : 0);
+}
+
+void QtcDialog::showPage(bool receive) {
+    if (receive && !bothWays_) receive = false;
+    sendTab_->setChecked(!receive);
+    rcvTab_->setChecked(receive);
+    pages_->setCurrentIndex(receive ? 1 : 0);
+    toLbl_->setText(receive ? "From:" : "To:");
+    if (receive) clearReceive();
+    refreshCounters();
+}
+
+void QtcDialog::appendRx(const QString& text) {
+    rxBuf_ += text;
+    if (rxBuf_.size() > 4000) rxBuf_ = rxBuf_.right(3000);
+    if (isVisible() && pages_->currentIndex() == 1 && !rcvTouched_) fillFromRx();
+}
+
+void QtcDialog::fillFromRx() {
+    const QtcParsed p = parseQtcText(rxBuf_);
+    filling_ = true;
+    if (p.block > 0)
+        series_->setText(QString("%1/%2").arg(p.block).arg(p.count));
+    for (int i = 0; i < 10; ++i) {
+        const bool have = i < p.lines.size();
+        const QString v[3] = {have ? p.lines[i].qTime : QString(),
+                              have ? p.lines[i].qCall : QString(),
+                              have ? p.lines[i].qSerial : QString()};
+        for (int col = 0; col < 3; ++col) {
+            QTableWidgetItem* it = rcvTable_->item(i, col);
+            if (!it) rcvTable_->setItem(i, col, it = new QTableWidgetItem);
+            if (it->text() != v[col]) it->setText(v[col]);
+        }
+    }
+    filling_ = false;
+    rcvCount_->setText(p.count > 0
+                           ? QString("%1 of %2 copied").arg(p.lines.size()).arg(p.count)
+                           : QString("%1 copied").arg(p.lines.size()));
+}
+
+void QtcDialog::clearReceive() {
+    rxBuf_.clear();
+    rcvTouched_ = false;
+    series_->clear();
+    fillFromRx();                          // empties the grid
+    status_->setText("ready to copy — he sends, the grid fills; QSL when it is right");
+}
+
+void QtcDialog::saveReceived() {
+    if (contestId_ < 0) return;
+    const QString from = to_->text().trimmed().toUpper();
+    if (!loggableCall(from)) {
+        status_->setText("whose QTCs? type (or let the deck fill) his call first");
+        return;
+    }
+    if (refuse_) {
+        const QString why = refuse_(from);
+        if (!why.isEmpty()) { status_->setText(why); return; }
+    }
+    QList<ContestDb::QtcRcvdLine> lines;
+    for (int i = 0; i < 10; ++i) {
+        const auto cell = [&](int col) {
+            const QTableWidgetItem* it = rcvTable_->item(i, col);
+            return it ? it->text().trimmed().toUpper() : QString();
+        };
+        const QString tm = cell(0), call = cell(1), nr = cell(2);
+        if (tm.isEmpty() && call.isEmpty() && nr.isEmpty()) continue;
+        if (tm.size() != 4 || call.isEmpty() || nr.isEmpty()) {
+            status_->setText(QString("line %1 is incomplete — fix it or empty "
+                                     "it (AGN asks for a repeat)").arg(i + 1));
+            return;
+        }
+        lines.push_back({tm, call, nr});
+    }
+    if (lines.isEmpty()) {
+        status_->setText("nothing copied yet");
+        return;
+    }
+    const int block = series_->text().section('/', 0, 0).trimmed().toInt();
+    if (block <= 0) {
+        status_->setText("his series number is missing (the 12 of QTC 12/5)");
+        return;
+    }
+    const int used = usedWith(from);
+    if (used + lines.size() > 10) {
+        status_->setText(QString("%1 already has %2 of 10 with you — only %3 "
+                                 "more may be logged")
+                             .arg(from).arg(used).arg(qMax(0, 10 - used)));
+        return;
+    }
+    if (!db_->addQtcRcvdBlock(contestId_, from, block, lines, rigHz_, mode_)) {
+        status_->setText("DATABASE ERROR — block NOT logged");
+        return;
+    }
+    const int n = int(lines.size());
+    clearReceive();
+    status_->setText(QString("QTC %1/%2 from %3 logged — %2 points")
+                         .arg(block).arg(n).arg(from));
+    refreshCounters();
 }
 
 void QtcDialog::openFor(qint64 contestId) {
@@ -100,6 +297,7 @@ void QtcDialog::openFor(qint64 contestId) {
     alloc_.clear();
     table_->setRowCount(0);
     confirmBtn_->setEnabled(false);
+    showPage(false);
     refreshCounters();
     show();
     raise();
@@ -118,9 +316,10 @@ void QtcDialog::refreshCounters() {
     const QString to = to_->text().trimmed();
     sentTo_->setText(to.isEmpty()
                          ? QString()
-                         : QString("sent to %1: %2 of 10")
+                         : QString(bothWays_ ? "with %1: %2 of 10 (sent + received)"
+                                             : "sent to %1: %2 of 10")
                                .arg(to)
-                               .arg(db_->qtcSentTo(contestId_, to)));
+                               .arg(usedWith(to)));
     blockLbl_->setText(
         QString("next block %1").arg(db_->nextQtcBlock(contestId_)));
 }
@@ -133,10 +332,17 @@ void QtcDialog::load() {
                          "station first");
         return;
     }
+    if (refuse_) {
+        const QString why = refuse_(to);
+        if (!why.isEmpty()) {
+            status_->setText(why);
+            return;
+        }
+    }
     const QList<ContestQso> qsos = db_->qsos(contestId_);
     const QList<qint64> ids =
         allocateQtc(qsos, db_->qtcReportedQsoIds(contestId_), to,
-                    db_->qtcSentTo(contestId_, to));
+                    usedWith(to));
     alloc_.clear();
     for (qint64 id : ids)
         for (const ContestQso& q : qsos)
@@ -174,7 +380,8 @@ QString QtcDialog::rowText(int i) const {
 
 void QtcDialog::sendHeader() {
     if (alloc_.isEmpty() || !keyFn_) return;
-    keyFn_(QString("QTC %1/%2").arg(block_).arg(alloc_.size()));
+    const QString h = QString("QTC %1/%2").arg(block_).arg(alloc_.size());
+    keyFn_(bothWays_ ? h + ' ' + h : h);   // a teleprinter gets it twice
 }
 
 void QtcDialog::sendRow(int i) {
@@ -196,7 +403,7 @@ void QtcDialog::confirmBlock() {
     QList<qint64> ids;
     for (const ContestQso& q : alloc_) ids << q.id;
     if (!db_->addQtcBlock(contestId_, to_->text(), block_, ids, rigHz_,
-                          "CW")) {
+                          mode_)) {
         // Silence here once cost a contest evening of doubt — say it.
         status_->setText("DATABASE ERROR — block NOT logged, QSOs still "
                          "available");

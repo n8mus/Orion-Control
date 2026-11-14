@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/Cabrillo.h"
 
+#include <QSet>
+
 #include <QHash>
 #include <algorithm>
 
@@ -89,12 +91,13 @@ QString Cabrillo::build(const ContestDef& def, const ContestRow& contest,
                         const QList<ContestQso>& qsos,
                         const QList<ContestDb::QtcRow>& qtcs,
                         const CabrilloStation& st, const CtyLookup* cty,
-                        const ContestContext& ctx) {
+                        const ContestContext& ctx,
+                        const QList<ContestDb::QtcRcvdRow>& rcvd) {
     // Claimed score is recomputed here, never taken from the screen.
     QList<CQsoValues> vals;
     for (const ContestQso& q : qsos) vals << q.v;
     const ScoreBreakdown sb =
-        computeScore(def, vals, cty, ctx, int(qtcs.size()));
+        computeScore(def, vals, cty, ctx, int(qtcs.size() + rcvd.size()));
 
     QString out;
     header(out, "START-OF-LOG", "3.0");
@@ -172,6 +175,23 @@ QString Cabrillo::build(const ContestDef& def, const ContestRow& contest,
                  + uncut(q->v.serialR);
             lines.push_back({ts, t});
         }
+    }
+    // Received QTCs (WAE RTTY): the same line, WE are the receiver and
+    // the reported QSO is exactly what was copied.
+    for (const ContestDb::QtcRcvdRow& r : rcvd) {
+        const QDateTime ts = r.tsUtc.toUTC();
+        QString t = "QTC: " + freqField(r.freqHz) + ' '
+             + pad(modeToken(r.mode), 2) + ' '
+             + ts.toString("yyyy-MM-dd") + ' ' + ts.toString("HHmm")
+             + ' ' + pad(st.call.toUpper(), kCallW) + ' '
+             + pad(QString("%1/%2").arg(r.block).arg(r.count), 9) + ' '
+             + pad(r.fromCall.toUpper(), kCallW) + ' '
+             + pad(r.line.qTime, 4) + ' '
+             + pad(r.line.qCall.toUpper(), kCallW) + ' '
+             + uncut(r.line.qSerial);
+        lines.push_back({ts, t});
+    }
+    if (!qtcs.isEmpty() || !rcvd.isEmpty()) {
         std::stable_sort(lines.begin(), lines.end(),
                          [](const Line& a, const Line& b) {
                              return a.ts < b.ts;
@@ -190,15 +210,44 @@ bool Cabrillo::selfCheck(const QString& text, const ContestDef& def,
                          const ContestRow& contest,
                          const QList<ContestQso>& qsos,
                          const QList<ContestDb::QtcRow>& qtcs,
-                         QString* err) {
+                         QString* err,
+                         const QList<ContestDb::QtcRcvdRow>& rcvd) {
     // Slice each QSO: line by the fixed columns build() used and compare
     // every field to what the DATABASE row says it should be. Catches a
     // side swap, a wrong token order, a timestamp bug — the class of
     // mistake a sponsor's robot finds weeks too late.
-    QList<QString> lines, qtcLines;
+    // A QTC line is one we RECEIVED when its sender column names a
+    // station we received from (on the lines we sent, the sender is us).
+    QSet<QString> rcvdFrom;
+    for (const ContestDb::QtcRcvdRow& r : rcvd) rcvdFrom.insert(r.fromCall.toUpper());
+    const int kSenderAt = 5 + 5 + 1 + 2 + 1 + 10 + 1 + 4 + 1 + kCallW + 1 + 9 + 1;
+    QList<QString> lines, qtcLines, rcvdLines;
     for (const QString& l : text.split("\r\n")) {
         if (l.startsWith("QSO: ")) lines << l;
-        if (l.startsWith("QTC: ")) qtcLines << l;
+        if (l.startsWith("QTC: ")) {
+            if (rcvdFrom.contains(l.mid(kSenderAt, kCallW).trimmed())) rcvdLines << l;
+            else qtcLines << l;
+        }
+    }
+    if (rcvdLines.size() != rcvd.size()) {
+        if (err)
+            *err = QString("received-QTC line count %1 != database %2")
+                       .arg(rcvdLines.size()).arg(rcvd.size());
+        return false;
+    }
+    for (int i = 0; i < rcvd.size(); ++i) {
+        const ContestDb::QtcRcvdRow& r = rcvd[i];
+        const QString& l = rcvdLines[i];
+        const QString tail = l.mid(kSenderAt + kCallW + 1);
+        const QString want = pad(r.line.qTime, 4) + ' '
+            + pad(r.line.qCall.toUpper(), kCallW) + ' ' + uncut(r.line.qSerial);
+        if (tail.trimmed() != want.trimmed()
+            || !l.mid(kSenderAt - 10, 9).trimmed().startsWith(QString::number(r.block) + "/")) {
+            if (err)
+                *err = QString("received QTC %1 (%2) mismatch\n%3")
+                           .arg(i + 1).arg(r.fromCall, l);
+            return false;
+        }
     }
     if (lines.size() != qsos.size()) {
         if (err)

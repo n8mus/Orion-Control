@@ -779,14 +779,31 @@ void ContestDeck::buildUi() {
         qtcBtn_ = new QPushButton("QTC", this);
         qtcBtn_->setFocusPolicy(Qt::NoFocus);
         qtcBtn_->setVisible(false);          // WAE-family defs only
-        qtcBtn_->setToolTip("Send QTC traffic (WAE) — the To box follows "
-                            "the call you're working");
+        qtcBtn_->setToolTip("QTC traffic (WAE) — the To box follows the call "
+                            "you're working; RTTY also receives");
         connect(qtcBtn_, &QPushButton::clicked, this, [this] {
             if (contestId_ < 0) return;
-            if (!qtc_)
+            if (!qtc_) {
                 qtc_ = new QtcDialog(
                     db_, [this](const QString& t) { keyText(t); },
-                    [this] { if (cw_) cw_->stopKeying(); }, this);
+                    [this] {
+                        if (cw_) cw_->stopKeying();
+                        if (rttyContest() && rttyStop_) rttyStop_();
+                    }, this);
+                // RTTY: QTC traffic only between continents.
+                qtc_->setCallCheck([this](const QString& call) {
+                    if (!def_ || !def_->qtcBothWays) return QString();
+                    CtyInfo ci;
+                    if (!cty_ || !cty_->info(normalizeForCty(call), ci))
+                        return QString("%1: no country found — QTCs need a "
+                                       "station on another continent").arg(call);
+                    if (ci.cont == ctx_.myCont)
+                        return QString("%1 is on your continent (%2) — QTCs only "
+                                       "between continents").arg(call, ci.cont);
+                    return QString();
+                });
+            }
+            qtc_->setBothWays(def_ && def_->qtcBothWays, modeNow());
             qtc_->setRigFreq(rigHz_);
             qtc_->openFor(contestId_);
             qtc_->followCall(call_->text());
@@ -1327,6 +1344,7 @@ void ContestDeck::appendRead(const QString& text) {
 
 void ContestDeck::appendRttyRead(const QString& text) {
     if (!isVisible() || !rttyContest()) return;
+    if (qtc_) qtc_->appendRx(text);      // the Receive page copies from here
     QTextCursor c = read_->textCursor();
     c.movePosition(QTextCursor::End);
     c.insertText(text);
@@ -2211,7 +2229,8 @@ void ContestDeck::refreshAll() {
     values_.clear();
     for (const ContestQso& q : qsos_) values_ << q.v;
     row_ = db_->contest(contestId_);   // serial may have moved elsewhere
-    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_) : 0;
+    const int qtcN = def_->hasQtc ? db_->qtcCount(contestId_)
+                                        + db_->qtcRcvdCount(contestId_) : 0;
     sb_ = computeScore(*def_, values_, cty_, ctx_, qtcN);
     if (sentNr_)
         sentNr_->setText(formatSerial(row_.nextSerial, def_->cutNumbers,
@@ -2276,6 +2295,8 @@ void ContestDeck::refreshAll() {
         QList<QDateTime> ev;
         for (const ContestQso& q : qsos_) ev << q.tsUtc;
         for (const ContestDb::QtcRow& r : db_->qtcRows(contestId_))
+            ev << r.tsUtc;
+        for (const ContestDb::QtcRcvdRow& r : db_->qtcRcvdRows(contestId_))
             ev << r.tsUtc;
         const int op = opTimeSecs(ev);
         s += QString(" · QTC %1 · op %2:%3")

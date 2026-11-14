@@ -504,9 +504,18 @@ QRN spike gate, measured on a live lightning night's own capture.
   while the contest deck holds the slot) and again on the first send.
   First definition: **WAE DX RTTY** (`DARC-WAEDC-RTTY`): everybody works
   everybody, 1 pt, mults = country per band with W/VE/VK/ZL/ZS/JA/BY/PY/
-  UA9 by call area, weights 80x4 / 40x3 / high x2. **QTCs are NOT wired
-  for RTTY** (`hasQtc = false`; the dialog is the CW leg's send-to-EU
-  flow, RTTY's go both ways). PRAC stays CW-only. Never send from a
+  UA9 by call area, weights 80x4 / 40x3 / high x2. **QTCs both ways**
+  (`ContestDef::qtcBothWays`): the QTC window gains Send | Receive.
+  Send is the CW leg's flow as one RTTY over (header twice); Receive is
+  a 10-row grid that fills itself from the print (`parseQtcText`: "QTC
+  12/5" header, "0031 DL1ABC 045" lines, dashes tolerated, an immediate
+  repeat dropped) until the operator edits a cell, with QRV / AGN / QSL
+  keys and Save. Received blocks live in `qtc_rcvd` exactly as copied
+  (never joined to our log), count in the score, in op-time and in the
+  10-per-station limit (sent + received), and export as QTC: lines with
+  US as receiver (`Cabrillo::build/selfCheck` take the rcvd list). Only
+  another continent qualifies (`QtcDialog::setCallCheck`, the deck
+  supplies cty). F7 QTC?, F8 QRV. PRAC stays CW-only. Never send from a
   headless test: pacat into the SignaLink trips its VOX.
 - **One current QSO** (`src/log/QsoContext.h`, 2026-10-19): the station
   being worked — call, handle, name, QTH, grid, RST sent/received — held

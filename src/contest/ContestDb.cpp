@@ -49,6 +49,21 @@ const char* kSchemaQtc =
     " freq_hz INTEGER DEFAULT 0,"
     " mode TEXT DEFAULT 'CW')";
 
+const char* kSchemaQtcRcvd =
+    "CREATE TABLE IF NOT EXISTS qtc_rcvd ("
+    " id INTEGER PRIMARY KEY,"
+    " contest_id INTEGER NOT NULL REFERENCES contest(id),"
+    " from_call TEXT NOT NULL,"
+    " block INTEGER NOT NULL,"             // the sender's series number
+    " count INTEGER NOT NULL,"             // lines in his series
+    " item INTEGER NOT NULL,"
+    " ts_utc TEXT NOT NULL,"
+    " freq_hz INTEGER DEFAULT 0,"
+    " mode TEXT DEFAULT 'RTTY',"
+    " q_time TEXT NOT NULL,"
+    " q_call TEXT NOT NULL,"
+    " q_serial TEXT NOT NULL)";
+
 const char* kSchemaQso =
     "CREATE TABLE IF NOT EXISTS cqso ("
     " id INTEGER PRIMARY KEY,"
@@ -170,6 +185,7 @@ bool ContestDb::open(const QString& path) {
     if (!q.exec(QString::fromLatin1(kSchemaQtc))) return false;
     q.exec("CREATE INDEX IF NOT EXISTS idx_qtc_contest"
            " ON qtc_sent(contest_id, to_call)");
+    if (!q.exec(QString::fromLatin1(kSchemaQtcRcvd))) return false;
     // Migration for a db born before Sweepstakes needed a third
     // exchange column; fails harmlessly once the column exists.
     q.exec("ALTER TABLE cqso ADD COLUMN exch3 TEXT DEFAULT ''");
@@ -267,7 +283,8 @@ bool ContestDb::deleteContest(qint64 id) {
     QSqlDatabase db = QSqlDatabase::database(conn_);
     QSqlQuery chk(db);
     chk.prepare("SELECT (SELECT COUNT(*) FROM cqso WHERE contest_id=:c)"
-                " + (SELECT COUNT(*) FROM qtc_sent WHERE contest_id=:c)");
+                " + (SELECT COUNT(*) FROM qtc_sent WHERE contest_id=:c)"
+                " + (SELECT COUNT(*) FROM qtc_rcvd WHERE contest_id=:c)");
     chk.bindValue(":c", id);
     if (!chk.exec() || !chk.next() || chk.value(0).toInt() != 0)
         return false;                    // holds data — never wholesale
@@ -435,6 +452,84 @@ QList<ContestDb::QtcRow> ContestDb::qtcRows(qint64 contestId) const {
         r.tsUtc = utcFrom(q.value("ts_utc").toString());
         r.freqHz = q.value("freq_hz").toLongLong();
         r.mode = q.value("mode").toString();
+        out << r;
+    }
+    return out;
+}
+
+int ContestDb::qtcRcvdCount(qint64 contestId) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT COUNT(*) FROM qtc_rcvd WHERE contest_id=:c");
+    q.bindValue(":c", contestId);
+    return q.exec() && q.next() ? q.value(0).toInt() : 0;
+}
+
+int ContestDb::qtcRcvdFrom(qint64 contestId, const QString& fromCall) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT COUNT(*) FROM qtc_rcvd WHERE contest_id=:c"
+              " AND from_call=:f");
+    q.bindValue(":c", contestId);
+    q.bindValue(":f", fromCall.trimmed().toUpper());
+    return q.exec() && q.next() ? q.value(0).toInt() : 0;
+}
+
+bool ContestDb::addQtcRcvdBlock(qint64 contestId, const QString& fromCall,
+                                int block, const QList<QtcRcvdLine>& lines,
+                                qint64 freqHz, const QString& mode) {
+    if (lines.isEmpty()) return false;
+    QSqlDatabase db = QSqlDatabase::database(conn_);
+    if (!db.transaction()) return false;
+    QSqlQuery q(db);
+    q.prepare(
+        "INSERT INTO qtc_rcvd (contest_id, from_call, block, count, item,"
+        " ts_utc, freq_hz, mode, q_time, q_call, q_serial)"
+        " VALUES (:c, :f, :b, :n, :i, :ts, :hz, :m, :qt, :qc, :qs)");
+    const QString ts = QDateTime::currentDateTimeUtc()
+                           .toString("yyyy-MM-dd HH:mm:ss");
+    for (int i = 0; i < lines.size(); ++i) {
+        q.bindValue(":c", contestId);
+        q.bindValue(":f", fromCall.trimmed().toUpper());
+        q.bindValue(":b", block);
+        q.bindValue(":n", int(lines.size()));
+        q.bindValue(":i", i + 1);
+        q.bindValue(":ts", ts);
+        q.bindValue(":hz", freqHz);
+        q.bindValue(":m", mode);
+        q.bindValue(":qt", lines[i].qTime.trimmed());
+        q.bindValue(":qc", lines[i].qCall.trimmed().toUpper());
+        q.bindValue(":qs", lines[i].qSerial.trimmed());
+        if (!q.exec()) {             // all or nothing, as on the sending side
+            db.rollback();
+            return false;
+        }
+    }
+    if (!db.commit()) {
+        db.rollback();
+        return false;
+    }
+    emit changed();
+    return true;
+}
+
+QList<ContestDb::QtcRcvdRow> ContestDb::qtcRcvdRows(qint64 contestId) const {
+    QList<QtcRcvdRow> out;
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT * FROM qtc_rcvd WHERE contest_id=:c"
+              " ORDER BY ts_utc, id");
+    q.bindValue(":c", contestId);
+    if (!q.exec()) return out;
+    while (q.next()) {
+        QtcRcvdRow r;
+        r.id = q.value("id").toLongLong();
+        r.fromCall = q.value("from_call").toString();
+        r.block = q.value("block").toInt();
+        r.count = q.value("count").toInt();
+        r.item = q.value("item").toInt();
+        r.tsUtc = utcFrom(q.value("ts_utc").toString());
+        r.freqHz = q.value("freq_hz").toLongLong();
+        r.mode = q.value("mode").toString();
+        r.line = {q.value("q_time").toString(), q.value("q_call").toString(),
+                  q.value("q_serial").toString()};
         out << r;
     }
     return out;

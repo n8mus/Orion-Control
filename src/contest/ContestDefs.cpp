@@ -679,8 +679,9 @@ ContestDef makeWaeCw() {
 // point a QSO; BOTH multiplier lists count for every station — the WAE
 // countries, and every non-European DXCC entity, with W, VE, VK, ZL, ZS,
 // JA, BY, PY and Asiatic Russia counted by call area — weighted by band
-// as in the CW leg. QTCs go both ways in RTTY and are not wired here yet
-// (hasQtc stays false: the dialog is the CW leg's send-to-Europe flow).
+// as in the CW leg. QTCs go both ways in RTTY (qtcBothWays): the QTC
+// window gets a Receive page, the 10-per-station limit counts sent +
+// received, and only stations on another continent qualify.
 ContestDef makeWaeRtty() {
     ContestDef d;
     d.id = "DARC-WAEDC-RTTY";
@@ -728,6 +729,8 @@ ContestDef makeWaeRtty() {
     };
     d.cabExch = {"rst", "serial"};
     d.cutNumbers = false;           // a teleprinter prints what it is sent
+    d.hasQtc = true;
+    d.qtcBothWays = true;
     // One over per key. Enter in RUN keys F2 + F3 as one line ("DL1ABC
     // 599 001 001"), the serial twice because one hit garbles a figure.
     d.fkeyRun = {
@@ -737,6 +740,8 @@ ContestDef makeWaeRtty() {
         {4, "TU|TU {MYCALL} CQ"},
         {5, "My Call|{MYCALL} {MYCALL}"},
         {6, "QRZ|QRZ DE {MYCALL}"},
+        {7, "QTC?|QTC? QTC?"},
+        {8, "QRV|QRV QRV"},
         {9, "AGN|AGN AGN"},
         {10, "NR?|NR? NR?"},
         {11, "Serial|{SENTNR} {SENTNR}"},

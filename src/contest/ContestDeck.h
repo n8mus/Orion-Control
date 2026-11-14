@@ -60,6 +60,12 @@ public:
     // the ESM beats stay honest.
     void setVoiceKeyer(std::function<bool(int)> play,
                        std::function<void()> stop);
+    // RTTY contests (2026-11-13): every keyed message goes out as ONE
+    // RTTY over through the console's own modem (the main window's
+    // rttySend: PTT up, the text, the queue drains, PTT down) instead of
+    // the CW keyer; stop = Esc. The deck still owns nothing.
+    void setRttyKeyer(std::function<void(const QString&)> send,
+                      std::function<void()> stop);
     // ↑/↓ anywhere in contest mode: keying speed (CW contests only).
     void nudgeSpeed(int delta);
     // The call frame: knob-tuned onto a spotted station, its call shows
@@ -103,6 +109,9 @@ public:
 
 public slots:
     void appendRead(const QString& text);   // decoded CW rides in here
+    // The RTTY modem's print, in the same pane — shown only while an RTTY
+    // contest is open (and then the CW readers' text is dropped instead).
+    void appendRttyRead(const QString& text);
     // The CW deck's readouts, in the CW READ title row (2026-11-07):
     // the reader's speed and the measured tone, green within 10 Hz of
     // the CW pitch; the 0-BEAT button beside them.
@@ -192,6 +201,9 @@ private:
     void requestQrz(const QString& call);
     QString currentBand() const;
     QString modeNow() const;         // rig mode as the contest mode
+    bool rttyContest() const;        // the open contest keys RTTY
+    // CW or RTTY: Enter can send, Space is a text key. Otherwise phone.
+    bool keyedContest() const;
     QString rstPreset() const;       // "599" CW, "59" phone
     void trace(const QString& line);
     void backupNow(const QString& why);   // contest.db -> contest-backups/
@@ -306,6 +318,10 @@ private:
     QtcDialog* qtc_ = nullptr;           // lazy
     std::function<bool(int)> playVk_;    // 0-based DVR slot; false = silent
     std::function<void()> stopVoice_;
+    std::function<void(const QString&)> rttySend_;
+    std::function<void()> rttyStop_;
+    QLabel* readTitle_ = nullptr;        // "CW READ …" / "RTTY READ …"
+    QLabel* typeTitle_ = nullptr;
     QPushButton* esmBtn_ = nullptr;      // Enter-sends-message toggle
     QPushButton* pracBtn_ = nullptr;     // PRACTICE toggle (amber when on)
     PracticeEngine* practice_ = nullptr;

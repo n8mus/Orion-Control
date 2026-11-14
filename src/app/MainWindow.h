@@ -663,6 +663,7 @@ private:
     QToolButton* rttyDeckBtn_ = nullptr;       // RTTY PNL toggle
     bool rttyMode_ = false;                    // the MODE panel's RTTY
     bool rttyTxOn_ = false, rttyHold_ = false, rttyNarrow_ = false;
+    bool contestRttyArmed_ = false;            // RTTY contest on the deck: mode switched on once
     Mode rttySb_ = Mode::LSB;
     struct RttySaved {
         Mode mode = Mode::USB;

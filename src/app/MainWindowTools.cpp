@@ -30,6 +30,7 @@
 #include "contest/ContestDeck.h"
 #include "cw/CwDeck.h"
 #include "rtty/RttyDeck.h"
+#include "rtty/RttyEngine.h"
 #include "rtty/RttySkimmer.h"
 #include "contest/ContestWindow.h"
 #include <algorithm>
@@ -469,9 +470,27 @@ void MainWindow::toggleContestMode(bool on) {
                         contestDeck_, &ContestDeck::setRxPitch);
             connect(contestDeck_, &ContestDeck::zeroBeatRequested, this,
                     [this] { zeroBeat(); });
+            // RTTY contests: the deck keys through the console's own RTTY
+            // modem (one over per message) and reads its print. RTTY mode
+            // comes on with the first message if it is not on already.
+            ensureRtty();
+            connect(rtty_, &RttyEngine::textDecoded, contestDeck_,
+                    &ContestDeck::appendRttyRead);
+            contestDeck_->setRttyKeyer(
+                [this](const QString& text) {
+                    if (!rttyMode_) setRttyMode(true);
+                    rttySend(text, false);
+                },
+                [this] { rttyAbort(); });
             auto* feed = new QTimer(contestDeck_);
             feed->setInterval(1000);
             connect(feed, &QTimer::timeout, contestDeck_, [this] {
+                // An RTTY contest on the deck: RTTY mode comes on with it,
+                // once (the operator may still switch it off himself).
+                const bool wantRtty = contestDeck_->isVisible()
+                    && contestDeck_->contestModeCategory() == QLatin1String("RTTY");
+                if (wantRtty && !contestRttyArmed_ && !rttyMode_) setRttyMode(true);
+                contestRttyArmed_ = wantRtty;
                 if (!contestDeck_->isVisible()) return;
                 contestDeck_->setRig(qint64(centerHz_),
                                      adifModeText(rigMode_));

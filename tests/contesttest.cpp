@@ -183,6 +183,40 @@ static void testWae(const CtyLookup& cty) {
     CHECK(sb.total == 3 * 7, "wae: total = pts x weighted mults");
 }
 
+// The RTTY leg: everybody works everybody, both mult lists count, the
+// big countries by call area, same band weights; a teleprinter gets
+// plain digits and 599.
+static void testWaeRtty(const CtyLookup& cty) {
+    const ContestDef* d = contestDef("DARC-WAEDC-RTTY");
+    CHECK(d != nullptr, "wae rtty: defined");
+    if (!d) return;
+    CHECK(d->modeCategory == "RTTY" && d->cabrilloName == "DARC-WAEDC-RTTY",
+          "wae rtty: RTTY category, DARC tag");
+    ContestContext ctx;
+    ctx.myCall = "N8EM";
+    ctx.myCont = "NA";
+    QList<CQsoValues> log;
+    log << mkq("DL1ABC", "40M", "", "456")   // Germany 40 m: x3
+        << mkq("W1AW", "40M", "", "7")       // US area 1, 40 m: x3 (NA-NA counts)
+        << mkq("K4XYZ", "40M", "", "8")      // US area 4, 40 m: another mult
+        << mkq("N1ABC", "40M", "", "9")      // US area 1 again: none
+        << mkq("JA1XYZ", "20M", "", "3")     // Japan area 1, 20 m: x2
+        << mkq("G4XYZ", "80M", "", "112")    // England 80 m: x4
+        << mkq("DL2CC", "160M", "", "9")     // not a WAE band
+        << mkq("DL5XX", "30M", "", "9");     // nor is 30 m
+    const ScoreBreakdown sb = computeScore(*d, log, &cty, ctx);
+    CHECK(sb.points == 6, "wae rtty: one point each, any continent, WAE bands only");
+    CHECK(sb.mults == 5, "wae rtty: countries + call areas, per band");
+    CHECK(sb.weightedMults == 3 * 3 + 2 + 4, "wae rtty: weights 40x3, 20x2, 80x4");
+    CHECK(sb.total == 6 * 15, "wae rtty: total = pts x weighted mults");
+    CHECK(expandMacro("{HISCALL} {SNT} {SENTNR} {SENTNR}", *d, ctx, "dl1abc", "", 9)
+              == "DL1ABC 599 009 009",
+          "wae rtty: 599 and plain digits, never 5NN / TTN");
+    CHECK(expandMacro(d->fkeyRun.value(1).section('|', 1), *d, ctx, "", "", 1)
+              == "CQ WAE N8EM N8EM CQ",
+          "wae rtty: F1");
+}
+
 static void testMacros() {
     const ContestDef* wae = contestDef("DARC-WAEDC-CW");
     ContestContext ctx;
@@ -559,7 +593,7 @@ static void testSs(const CtyLookup& cty) {
 }
 
 static void testRoster(const CtyLookup& cty) {
-    CHECK(contestDefs().size() == 23, "roster: 23 definitions registered");
+    CHECK(contestDefs().size() == 24, "roster: 24 definitions registered");
     ContestContext ctx;
     ctx.myCall = "N8EM";
     ctx.myCont = "NA";
@@ -1106,6 +1140,7 @@ int main(int argc, char** argv) {
     testCtyZones(cty);
     testCqWw(cty);
     testWae(cty);
+    testWaeRtty(cty);
     testMacros();
     testEsm();
     testHistoryParser();

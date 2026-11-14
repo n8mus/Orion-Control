@@ -262,7 +262,10 @@ QString expandMacro(QString text, const ContestDef& def,
                     const QString& sentExch, int sentSerial) {
     text.replace("{MYCALL}", ctx.myCall);
     text.replace("{HISCALL}", hisCall.trimmed().toUpper());
-    text.replace("{SNT}", def.hasRst ? QStringLiteral("5NN") : QString());
+    text.replace("{SNT}", !def.hasRst ? QString()
+                              : def.modeCategory == QLatin1String("RTTY")
+                                    ? QStringLiteral("599")
+                                    : QStringLiteral("5NN"));
     text.replace("{SENTNR}",
                  def.sentSerial
                      ? formatSerial(sentSerial, def.cutNumbers, def.serialPad,

@@ -10,6 +10,8 @@
 // operator during the weekend.
 #include "contest/ContestDef.h"
 
+#include <QSet>
+
 #include "contest/ContestEngine.h"
 #include "util/CtyLookup.h"
 
@@ -672,6 +674,78 @@ ContestDef makeWaeCw() {
     return d;
 }
 
+// ------------------------------------------------------------ WAE DX RTTY
+// The RTTY leg's own rules (DARC §12): everybody works everybody, one
+// point a QSO; BOTH multiplier lists count for every station — the WAE
+// countries, and every non-European DXCC entity, with W, VE, VK, ZL, ZS,
+// JA, BY, PY and Asiatic Russia counted by call area — weighted by band
+// as in the CW leg. QTCs go both ways in RTTY and are not wired here yet
+// (hasQtc stays false: the dialog is the CW leg's send-to-Europe flow).
+ContestDef makeWaeRtty() {
+    ContestDef d;
+    d.id = "DARC-WAEDC-RTTY";
+    d.title = "WAE DX RTTY";
+    d.cabrilloName = "DARC-WAEDC-RTTY";
+    d.modeCategory = "RTTY";
+    d.dupe = DupeScope::PerBand;
+    d.hasRst = true;
+    d.sentSerial = true;
+    d.sentExchDefault = "";
+    d.fields = {
+        {ExchCol::RstR, "RCV", 4, "599", true, ""},
+        {ExchCol::SerialR, "RCV NR", 6, "", true, ""},
+    };
+    const auto valid = [](bool ok, const QString& band) {
+        return ok && (band == QLatin1String("80M") || band == QLatin1String("40M")
+                      || band == QLatin1String("20M") || band == QLatin1String("15M")
+                      || band == QLatin1String("10M"));
+    };
+    d.points = [valid](const CQsoValues& q, const CtyInfo&, bool ok,
+                       const ContestContext&) {
+        return valid(ok, q.band) ? 1 : 0;
+    };
+    d.mults = [valid](const CQsoValues& q, const CtyInfo& ci, bool ok,
+                      const ContestContext&) {
+        if (!valid(ok, q.band)) return QStringList{};
+        static const QSet<QString> kByArea = {
+            "United States", "Canada", "Australia", "New Zealand",
+            "South Africa", "Japan", "China", "Brazil", "Asiatic Russia",
+        };
+        QString key = ci.country;
+        if (kByArea.contains(ci.country)) {
+            // The call area is the prefix's last digit (W1AW/4 -> 4).
+            const QString pfx = wpxPrefix(q.call);
+            for (int i = pfx.size() - 1; i >= 0; --i)
+                if (pfx[i].isDigit()) { key += "/" + QString(pfx[i]); break; }
+        }
+        return QStringList{"C:" + key + "|" + q.band};
+    };
+    d.multWeight = [](const QString& key) {
+        const QString b = bandOf(key);
+        if (b == QLatin1String("80M")) return 4;
+        if (b == QLatin1String("40M")) return 3;
+        return 2;                   // 20/15/10
+    };
+    d.cabExch = {"rst", "serial"};
+    d.cutNumbers = false;           // a teleprinter prints what it is sent
+    // One over per key. Enter in RUN keys F2 + F3 as one line ("DL1ABC
+    // 599 001 001"), the serial twice because one hit garbles a figure.
+    d.fkeyRun = {
+        {1, "CQ|CQ WAE {MYCALL} {MYCALL} CQ"},
+        {2, "His Call|{HISCALL}"},
+        {3, "Exch|599 {SENTNR} {SENTNR}"},
+        {4, "TU|TU {MYCALL} CQ"},
+        {5, "My Call|{MYCALL} {MYCALL}"},
+        {6, "QRZ|QRZ DE {MYCALL}"},
+        {9, "AGN|AGN AGN"},
+        {10, "NR?|NR? NR?"},
+        {11, "Serial|{SENTNR} {SENTNR}"},
+    };
+    d.maxOpHours = 36;
+    d.minOffMinutes = 60;
+    return d;
+}
+
 // -------------------------------------------------- generic RST + serial
 // The day-of fallback for a contest with no definition yet: correct
 // dupes, a usable log, a parseable generic Cabrillo. Its proper
@@ -722,6 +796,7 @@ const QList<const ContestDef*>& contestDefs() {
     static const ContestDef aaCw = makeAllAsian(true);
     static const ContestDef aaSsb = makeAllAsian(false);
     static const ContestDef wae = makeWaeCw();
+    static const ContestDef waeRtty = makeWaeRtty();
     static const ContestDef miqp = makeMiqp();
     static const ContestDef cwOpen = makeCwOpen();
     static const ContestDef cwt = makeCwt();
@@ -730,7 +805,7 @@ const QList<const ContestDef*>& contestDefs() {
     static const QList<const ContestDef*> all = {
         &cqwwCw, &cqwwSsb, &wpxCw, &wpxSsb, &dxCw, &dxSsb,
         &ssCw, &ssPh, &a160, &a10, &c160, &naqpCw, &naqpSsb,
-        &sprint, &iaru, &aaCw, &aaSsb, &wae, &miqp, &cwOpen, &cwt, &mst,
+        &sprint, &iaru, &aaCw, &aaSsb, &wae, &waeRtty, &miqp, &cwOpen, &cwt, &mst,
         &generic,
     };
     return all;

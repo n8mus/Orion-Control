@@ -189,6 +189,7 @@ void ContestDeck::buildUi() {
         auto* t = new QLabel(
             "CW READ — double-click a call to grab it · right-click: size",
             this);
+        readTitle_ = t;
         t->setStyleSheet("color:#8798a8; font-size:10px;");
         trow->addWidget(t);
         trow->addStretch(1);
@@ -337,7 +338,7 @@ void ContestDeck::buildUi() {
             // Remembered per mode: phone defaults OFF (F1 = the CQ clip,
             // the rest by voice, Enter only logs — operator, 2026-10-23),
             // CW keeps ESM on.
-            QSettings().setValue(def_ && def_->modeCategory != QLatin1String("CW")
+            QSettings().setValue(def_ && !keyedContest()
                                      ? "contest/esmPhone" : "contest/esm", on);
             updateEsmHint();
         });
@@ -705,6 +706,7 @@ void ContestDeck::buildUi() {
         tt->setContentsMargins(0, 0, 0, 0);
         auto* thdr = new QHBoxLayout;
         auto* t = new QLabel("CW TYPE — Enter sends", this);
+        typeTitle_ = t;
         t->setStyleSheet("color:#8798a8; font-size:10px;");
         thdr->addWidget(t);
         thdr->addStretch(1);
@@ -1059,12 +1061,19 @@ void ContestDeck::openContest(qint64 id) {
     setEnabled(true);
     myCallSent_ = exchSent_ = false;
     {   // ESM per mode: phone off unless he turned it on, CW on by default
-        const bool phone = def_->modeCategory != QLatin1String("CW");
+        const bool phone = !keyedContest();
         esmOn_ = QSettings().value(phone ? "contest/esmPhone" : "contest/esm", !phone).toBool();
         const QSignalBlocker b(esmBtn_);
         esmBtn_->setChecked(esmOn_);
     }
     if (qtcBtn_) qtcBtn_->setVisible(def_->hasQtc);
+    if (readTitle_)
+        readTitle_->setText(rttyContest()
+            ? "RTTY READ — click a call to grab it · right-click: size"
+            : "CW READ — double-click a call to grab it · right-click: size");
+    if (typeTitle_)
+        typeTitle_->setText(rttyContest() ? "RTTY TYPE — Enter sends"
+                                          : "CW TYPE — Enter sends");
     applyPaneVisibility();   // phone drops the CW panes, floats included
     rebuildEntryFields();
     applyFkeyLabels();
@@ -1176,7 +1185,17 @@ QString ContestDeck::currentBand() const {
                       : QStringLiteral("20M");
 }
 
+bool ContestDeck::rttyContest() const {
+    return def_ && def_->modeCategory == QLatin1String("RTTY");
+}
+
+bool ContestDeck::keyedContest() const {
+    return def_ && (def_->modeCategory == QLatin1String("CW") || rttyContest());
+}
+
 QString ContestDeck::modeNow() const {
+    // An RTTY contest is RTTY whatever the rig calls its sideband.
+    if (rttyContest()) return QStringLiteral("RTTY");
     // Mixed-mode contests dupe per band+mode; follow the rig.
     return rigMode_ == QLatin1String("SSB") ? QStringLiteral("SSB")
                                             : QStringLiteral("CW");
@@ -1299,6 +1318,15 @@ void ContestDeck::setRxPitch(double hz) {
 
 void ContestDeck::appendRead(const QString& text) {
     if (!isVisible()) return;
+    if (rttyContest()) return;       // CW readers on RTTY tones print noise
+    QTextCursor c = read_->textCursor();
+    c.movePosition(QTextCursor::End);
+    c.insertText(text);
+    read_->setTextCursor(c);
+}
+
+void ContestDeck::appendRttyRead(const QString& text) {
+    if (!isVisible() || !rttyContest()) return;
     QTextCursor c = read_->textCursor();
     c.movePosition(QTextCursor::End);
     c.insertText(text);
@@ -1353,7 +1381,7 @@ void ContestDeck::enterPressed() {
     // PHONE: Enter never transmits, whatever the ESM button says — the
     // operator talks (Space = MOX); Enter walks call -> exchange -> log.
     // (ESM's clip-playing beats are a CW thing here; F1 is the CQ clip.)
-    const bool phone = def_->modeCategory != QLatin1String("CW");
+    const bool phone = !keyedContest();
     if (phone) in.esmOn = false;
     // Enter ON an empty exchange field that carries a hint takes the hint
     // (the expected zone): one Enter to get there, one to accept it, a
@@ -1744,6 +1772,12 @@ QString ContestDeck::fkeySpec(int key) const {
     return set.value(key);
 }
 
+void ContestDeck::setRttyKeyer(std::function<void(const QString&)> send,
+                               std::function<void()> stop) {
+    rttySend_ = std::move(send);
+    rttyStop_ = std::move(stop);
+}
+
 void ContestDeck::setVoiceKeyer(std::function<bool(int)> play,
                                 std::function<void()> stop) {
     playVk_ = std::move(play);
@@ -1803,6 +1837,16 @@ void ContestDeck::keyText(const QString& text) {
     // early return is the only thing between a practice CQ and RF.
     if (practiceOn()) {
         practice_->opKeyed(text, wpm_ ? wpm_->value() : 25);
+        return;
+    }
+    if (rttyContest()) {
+        // One over, on a fresh line at the far end (the RTTY deck's own
+        // framing). Never the CW keyer.
+        if (!rttySend_) {
+            status_->setText("no RTTY modem");
+            return;
+        }
+        rttySend_("\r\n" + text.toUpper() + " \r\n");
         return;
     }
     if (!cw_) {
@@ -2250,6 +2294,7 @@ void ContestDeck::stopEverything() {
     } else {
         if (cw_) cw_->stopKeying();  // dump the WinKeyer buffer NOW
         if (stopVoice_) stopVoice_();
+        if (rttyContest() && rttyStop_) rttyStop_();
     }
     if (autoBtn_ && autoBtn_->isChecked())
         autoBtn_->setChecked(false); // Esc also kills the auto-CQ robot
@@ -2263,7 +2308,7 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
     if (ev->type() == QEvent::KeyPress && !edits_.isEmpty()) {
         auto* ke = static_cast<QKeyEvent*>(ev);
         if (ke->key() == Qt::Key_Space && def_ && !practiceOn()
-            && def_->modeCategory != QLatin1String("CW")) {
+            && !keyedContest()) {
             bool entry = obj == call_;
             for (const auto& e : edits_) entry = entry || e.second == obj;
             if (entry) {
@@ -2345,6 +2390,21 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
             // lets ←/→ ROLL through the band. The first typed character
             // hands the arrows back to the text cursor.
             emit walkSpots(ke->key() == Qt::Key_Right ? +1 : -1);
+            return true;
+        }
+    }
+    // RTTY: ONE click on a printed call takes it (the contest loggers'
+    // habit — the call is on the screen, the hand is on the mouse).
+    if (obj == read_->viewport() && rttyContest()
+        && ev->type() == QEvent::MouseButtonRelease
+        && static_cast<QMouseEvent*>(ev)->button() == Qt::LeftButton
+        && !read_->textCursor().hasSelection()) {
+        QTextCursor c = read_->cursorForPosition(
+            static_cast<QMouseEvent*>(ev)->pos());
+        c.select(QTextCursor::WordUnderCursor);
+        const QString tok = c.selectedText().trimmed().toUpper();
+        if (loggableCall(tok)) {
+            prefillCall(tok);
             return true;
         }
     }

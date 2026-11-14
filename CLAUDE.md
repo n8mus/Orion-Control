@@ -489,6 +489,25 @@ QRN spike gate, measured on a live lightning night's own capture.
   IK3ORD capture, which `rttytest` decodes from the deck's cold-start
   defaults when present (IK3ORD twice, or FAIL). Still unverified: the
   NARROW PBT offset.
+- **RTTY contests on the contest deck** (2026-11-13, built the evening
+  WAE RTTY opened): a `ContestDef` with `modeCategory == "RTTY"` makes
+  the deck key through the console's RTTY modem instead of the CW keyer
+  — `ContestDeck::setRttyKeyer` (the main window's `rttySend`, ONE over
+  per message, framed CR/LF like the RTTY deck's; Esc = `rttyAbort`) —
+  and read `RttyEngine::textDecoded` (`appendRttyRead`; the CW readers'
+  text is dropped while an RTTY contest is open). `keyedContest()` = CW
+  or RTTY: ESM on, Space is a text key; `modeNow()` logs RTTY (Cabrillo
+  RY); `{SNT}` expands to 599 and `cutNumbers = false` keeps the serial
+  in digits; ONE click on a call in RTTY READ grabs it. RTTY mode comes
+  on once when an RTTY contest is on the visible deck (edge-triggered in
+  the deck's 1 s feed; `setRttyMode` no longer pops the RTTY PNL deck
+  while the contest deck holds the slot) and again on the first send.
+  First definition: **WAE DX RTTY** (`DARC-WAEDC-RTTY`): everybody works
+  everybody, 1 pt, mults = country per band with W/VE/VK/ZL/ZS/JA/BY/PY/
+  UA9 by call area, weights 80x4 / 40x3 / high x2. **QTCs are NOT wired
+  for RTTY** (`hasQtc = false`; the dialog is the CW leg's send-to-EU
+  flow, RTTY's go both ways). PRAC stays CW-only. Never send from a
+  headless test: pacat into the SignaLink trips its VOX.
 - **One current QSO** (`src/log/QsoContext.h`, 2026-10-19): the station
   being worked — call, handle, name, QTH, grid, RST sent/received — held
   once and shared by the LOG and CW windows, so a call or report typed in

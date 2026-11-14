@@ -211,7 +211,10 @@ void MainWindow::setRttyMode(bool on, bool keepMode) {
         rttyRefreshTones();
         if (rttyTick_) rttyTick_->start();
         panel_->showRtty(true);
-        if (rttyDeckBtn_ && !rttyDeckBtn_->isChecked()) rttyDeckBtn_->setChecked(true);
+        // The RTTY deck comes up with the mode — unless the contest deck
+        // holds the slot (an RTTY contest runs the modem from there).
+        if (rttyDeckBtn_ && !rttyDeckBtn_->isChecked() && !contestDeckVisible())
+            rttyDeckBtn_->setChecked(true);
         statusBar()->showMessage(QString("RTTY on %1: line input, reading the radio's audio; the AFC "
                                          "locks the strongest pair in the passband, a click on the waterfall "
                                          "picks another (the RY lines show which). F-keys / Enter send an "

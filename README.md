@@ -6,7 +6,9 @@ Orion = 565, Orion II = 566, Omni VII = 588.)*
 A Flex/SmartSDR-style console for the **Ten-Tec Orion (565/566)**: full
 computer control, a live wideband **panadapter/waterfall** fed by an SDRplay
 RSP, drag-the-filter-edges tuning, a draggable notch, CW decode and a
-multi-channel **CW skimmer**, DX-cluster/RBN/POTA spots painted on the
+multi-channel **CW skimmer** (24 to 64 channels), a built-in **RTTY
+modem** with its own **RTTY skimmer**, a **contest deck** for CW, phone
+and RTTY (WAE QTCs included), DX-cluster/RBN/POTA spots painted on the
 spectrum, whole-band overview landings on the band buttons, an **SWR
 sweep** plotted right on the pan, a **real-VOACAP propagation overlay**
 on the world-map backdrop (the genuine engine is bundled in the

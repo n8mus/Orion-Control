@@ -51,7 +51,8 @@ const QRegularExpression& callRe() {
 
 SkimmerEngine::SkimmerEngine(double inputRate, int channels, QObject* parent)
     : QObject(parent), inputRate_(inputRate) {
-    ch_.resize(std::clamp(channels, 1, 64));
+    ch_.resize(kMaxChannels);
+    limit_.store(std::clamp(channels, 1, kMaxChannels));
     for (int i = 0; i < int(ch_.size()); ++i) {
         ch_[i].dec = new CwDecoder(inputRate, 0.0, this);
         // SOM stays OFF on skimmer channels: the fuzzy matcher never
@@ -102,6 +103,22 @@ void SkimmerEngine::setInputRate(double rate) {
 }
 
 
+void SkimmerEngine::setChannelCount(int channels) {
+    const int n = std::clamp(channels, 1, kMaxChannels);
+    // Free first, then lower the limit: a channel past it is never fed
+    // again, so it must already be disabled when the feed stops looking.
+    for (int i = n; i < int(ch_.size()); ++i)
+        if (ch_[i].active) freeChannel(ch_[i]);
+    limit_.store(n, std::memory_order_relaxed);
+}
+
+int SkimmerEngine::threadsFor(int channels) {
+    // Six channels a thread up to 24 (the bank this was tuned on), eight a
+    // thread past that, never more than 8 threads: the IQ worker's other
+    // jobs and the GUI need cores of their own.
+    return std::clamp((channels + 7) / 8, 4, 8);
+}
+
 void SkimmerEngine::processIq(const std::complex<float>* d, size_t n) {
     if (!enabled_.load(std::memory_order_relaxed)) return;
     // Channels are independent (own mixer, own brain, queued signals
@@ -110,8 +127,14 @@ void SkimmerEngine::processIq(const std::complex<float>* d, size_t n) {
     // throughput (live-found 2026-08-07: the ring overflowed and the
     // decoders got spliced time). Without OpenMP the pragma is a no-op
     // and the loop runs serial — tests don't need the flag.
-#pragma omp parallel for schedule(static) num_threads(4)
-    for (int i = 0; i < int(ch_.size()); ++i)
+    // static,1 deals the channels out round-robin: the bank fills from
+    // channel 0, so plain static chunks put every busy channel on the
+    // first thread until the band got crowded.
+    const int count = limit_.load(std::memory_order_relaxed);
+    const int threads = threadsFor(count);
+    (void)threads;                                 // unused without OpenMP
+#pragma omp parallel for schedule(static, 1) num_threads(threads)
+    for (int i = 0; i < count; ++i)
         ch_[i].dec->processIq(d, n);              // each gated by its atomic
 }
 
@@ -241,8 +264,9 @@ void SkimmerEngine::updateFromSpectrum(const std::vector<float>& db,
             if (c.active && std::llabs(c.hz - hz) < 150) covered = true;
         if (covered) continue;
         Chan* free = nullptr;
-        for (auto& c : ch_)
-            if (!c.active) { free = &c; break; }
+        const int count = limit_.load(std::memory_order_relaxed);
+        for (int ci = 0; ci < count; ++ci)
+            if (!ch_[ci].active) { free = &ch_[ci]; break; }
         if (!free) break;                          // bank is full
         free->active = true;
         free->hz = hz;
@@ -521,10 +545,13 @@ const QVector<SkimmerEngine::SkimSpot>& SkimmerEngine::spots() {
 
 QVector<SkimmerEngine::ChanInfo> SkimmerEngine::channelInfo() const {
     QVector<ChanInfo> out;
-    out.reserve(int(ch_.size()));
-    for (const auto& c : ch_)
+    const int count = limit_.load(std::memory_order_relaxed);
+    out.reserve(count);
+    for (int i = 0; i < count; ++i) {
+        const Chan& c = ch_[i];
         out.push_back({c.active, c.hz, c.wpm, c.call,
                        (c.show.isEmpty() ? c.text : c.show).right(28)});
+    }
     return out;
 }
 

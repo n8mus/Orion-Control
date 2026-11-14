@@ -78,7 +78,8 @@ senders and weak-signal cases are the hard set.
 | target | what | pairs with |
 |---|---|---|
 | `cwtest` | decoder quality matrix, prints % (full ~8 min, `--quick` ~90 s, `--only <substr>` isolates rows) | — |
-| `skimtest` | 10-station synthetic segment through the skimmer | — |
+| `skimtest` | 10-station synthetic segment through the skimmer; the live channel count (grow/shrink/clamp, threads per count); `skimtest bench` times a FULL bank at 24/36/48/64 (2026-11-13 on this Xeon: 7 / 9 / 9 / 11 % of real time on the feed thread) | — |
+| `rttyskimtest` | RTTY skimmer (`RttySkimmer`) on a synthetic 1 MS/s 20 m scene: five stations (one at +3 dB) spotted on their MARK frequency, "calling us" flagged, two carrier pairs + a keyed carrier give their channels back, a 3 kHz dial move mid-run, dead band silent, reach from a phone dial; prints the bank's cost (~9 % of one core). `--write <f.tciq> [secs]` saves the scene for `TTC_IQFILE` replay through the console | — |
 | `skimsrvtest` | RBN telnet protocol/format/throttle | — |
 | `not1mmtest` | Not1MM contest dupe sheet (`Not1mmLog`) vs a synthetic not1mm.json + ham.db + plugin: dupe_type 1/2/3/4, other contests ignored, Band fallback, inert while Not1MM isn't running; `--real` reads this station's Not1MM read-only | — |
 | `rigctldtest` | the :4532 rigctld server over TCP, no radio attached (PTT only raises the signal): Pat's (Winlink) exact sequence — `dump_caps` ping, `\chk_vfo`, `\get_freq`, `\set_freq`, `t`, `\set_ptt 1/0`, ONE line back each, stream stays aligned — plus the `+` extended form unchanged | — |
@@ -291,7 +292,36 @@ QRN spike gate, measured on a live lightning night's own capture.
   bank on phone ("waterfall shows CW sigs, no decodes" — the STFT view is
   ungated), and working phone is exactly when the band-wide window earns
   its keep. The bank now follows the SKIM toggle alone; `skim/cwOnly` is a
-  dead key.
+  dead key. **Channel count is the operator's** (SKIM ▾ → CW channels,
+  24 / 36 / 48 / 64, `skim/channels`, live — 2026-11-13, for CW contests):
+  the engine always builds `kMaxChannels` (64) decoders and uses the first
+  N; the OpenMP team grows with it (`threadsFor`: 4 / 5 / 6 / 8) and the
+  loop is `schedule(static, 1)` because the bank fills from channel 0. The
+  menu readout stays 24 rows (busy ones first, "N of M busy"). A full
+  64-channel bank measured 11 % of real time — top's ~35 % per skimmer
+  thread is OpenMP spin-wait, not work.
+- **RTTY skimmer** (SKIM ▾ → Skim RTTY, `skim/rtty`, OFF by default,
+  `src/rtty/RttySkimmer`, 2026-11-13): independent of the CW bank and of
+  the RTTY deck. The band's RTTY window (`rttySegment`, by the dial's
+  BAND like the CW one; none on 160/6 m) is mixed to 0 Hz and decimated
+  to 125 ksps ONCE on the IQ worker (96-tap FIR, usable ±47.5 kHz), then
+  16 `RttyDemod` channels (`Params::iq`, mark +85 / space -85 about the
+  channel, AFC trim ±60 Hz) run on the slow stream — ~9 % of one core,
+  no OpenMP. The FINDER is its own 8192-pt spectrum (15 Hz/bin, ~0.5 s
+  average) looking for the RTTY shape: two humps 170 Hz apart, a valley
+  between, quiet flanks. A parked channel must open the contrast squelch
+  within 15 s, and an open one must print (>= 10 chars / 45 s), or it is
+  freed and that frequency ignored 2 min (carrier pairs). Calls: shape +
+  cty, spotted after CQ/DE/TEST/QRZ/TU context (once if in MASTER.SCP,
+  twice if not) or as a bare repeat (2 / 3); a bare call never unseats a
+  CQ-context call on the same frequency for 3 min (it is his caller).
+  Spots are kind 'R' at the MARK's RF under the existing RTTY chip, and
+  go out on the :7300 telnet feed as "RTTY" (the feed runs while either
+  skimmer does). 45.45 Bd / 170 Hz, normal sense only. `update()` on a
+  1 s tick re-mixes the slice when the LO moves. `TTC_RSKIMDBG=1` logs
+  finds / sightings / spots. NOT yet verified on air (no RTTY IQ capture
+  exists — ask the operator to record one via SDR ▾ during a RTTY
+  contest).
 
 - **SKIM view** (SKIM ▾ → Waterfall view): CW-Skimmer-style zoomed
   waterfall — `src/cw/SkimStft` (4096-pt STFT at ~125 ksps, 31 Hz/bin,
@@ -416,8 +446,8 @@ QRN spike gate, measured on a live lightning night's own capture.
   RECEIVE is `RttyDemod` on the RADIO's audio — the SignaLink capture the
   CW reader already owns (`AudioCwSource::setRawTap`), because decode from
   the Orion's ear beats the SDR IQ on air (operator's CW finding; the IQ
-  feed is kept in the demod — `process()` takes complex, mark at
-  +shift/2 — for a RTTY SKIMMER bank later, not built yet). Chain: two
+  feed in the demod — `process()` takes complex, mark at +shift/2 — is
+  what the RTTY skimmer bank runs on, see above). Chain: two
   recurrence-phasor mixers -> 1 ms boxcar -> 1 kHz -> one-bit boxcar per
   tone (non-coherent FSK matched filter) -> per-tone peak normalisation
   (fldigi's ATC idea, each peak clamped to >= -12 dB of the other or an

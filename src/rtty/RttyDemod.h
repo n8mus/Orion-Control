@@ -52,6 +52,10 @@ public:
         bool afc = true;
         double afcRangeHz = 1100.0;
         double afcTrackHz = 60.0;
+        // The feed is IQ, whatever the tones' frequencies: a skimmer
+        // channel sits kHz off its slice centre, and the audio feed's
+        // 200-3600 Hz edges must not fence its AFC in.
+        bool iq = false;
     };
     RttyDemod();
     explicit RttyDemod(const Params& p);

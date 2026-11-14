@@ -45,6 +45,7 @@ class QVBoxLayout;
 #include <QPointer>
 #include "cw/CwWindow.h"
 namespace ttc { class CwDecoder; class SkimmerEngine; class FldigiClient;
+                class RttySkimmer;
                 class AudioCwSource;
                 class DigiWindow; class SkimServer; class SkimmerWindow;
                 class SkimStft; class SkimViewWindow; }
@@ -698,6 +699,8 @@ private:
     bool rxRadio_ = false;                     // source: radio audio vs SDR
     SkimmerEngine* skim_ = nullptr;            // CW skimmer decoder bank
     QAction* skimEnable_ = nullptr;            // SKIM menu on/off toggle
+    RttySkimmer* rttySkim_ = nullptr;          // RTTY skimmer bank (off by default)
+    QAction* rttySkimEnable_ = nullptr;        // SKIM menu: Skim RTTY
     void     applySkimGate();                  // decoders follow the SKIM toggle
     QLabel*  skimStatus_ = nullptr;            // live channel readout (menu)
     SkimServer* skimSrv_ = nullptr;            // local RBN telnet (:7300)

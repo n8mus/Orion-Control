@@ -37,6 +37,9 @@ public:
 public slots:
     // Wire to SkimmerEngine::spotFound.
     void announce(const QString& call, qint64 hz, int wpm);
+    // The RTTY skimmer's finds (RttySkimmer::spotFound): the same line
+    // with RTTY for the mode, hz = the mark, throttled the same way.
+    void announceRtty(const QString& call, qint64 hz);
     // Relay one raw "DX de ..." line from the console's own cluster
     // connection, verbatim — original spotter and comment preserved. With
     // these wired, :7300 carries everything the console aggregates and a

@@ -6,6 +6,7 @@
 //
 //   cmake --build build --target skimtest && ./build/skimtest
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QString>
 #include <cmath>
@@ -129,9 +130,106 @@ int checkSegments() {
 }
 
 
+// The bank's size is the operator's choice (SKIM ▾ → CW channels) and
+// changes while the IQ runs: the engine always holds kMaxChannels decoders
+// and uses the first N. Growing must let the next spectrum pass park the
+// new ones; shrinking must free what lies past the new count.
+int checkChannels() {
+    int bad = 0;
+    const auto expect = [&](bool ok, const char* what) {
+        if (!ok) { printf("  FAIL channels: %s\n", what); ++bad; }
+    };
+    expect(SkimmerEngine::threadsFor(24) == 4, "24 channels -> 4 threads");
+    expect(SkimmerEngine::threadsFor(36) == 5, "36 -> 5");
+    expect(SkimmerEngine::threadsFor(48) == 6, "48 -> 6");
+    expect(SkimmerEngine::threadsFor(64) == 8, "64 -> 8");
+    const double rate = 1000000.0;
+    const qint64 dial = 14030000;
+    const int loOff = 260000, n = 16384;
+    const double binHz = rate / n;
+    // Forty carriers, 1.5 kHz apart, up the 20 m CW window.
+    std::vector<float> db(n, -120.0f);
+    for (int i = 0; i < 40; ++i) {
+        const qint64 hz = 14003000 + i * 1500;
+        const int bin = n / 2 + int(std::lround(double(hz - dial - loOff) / binHz));
+        db[bin] = -70.0f;
+        db[bin - 1] = db[bin + 1] = -80.0f;
+    }
+    const auto busy = [](const SkimmerEngine& e) {
+        int k = 0;
+        for (const auto& c : e.channelInfo()) if (c.active) ++k;
+        return k;
+    };
+    SkimmerEngine eng(rate, 24);
+    eng.setEnabled(true);
+    expect(eng.channelCount() == 24 && eng.channelInfo().size() == 24, "built at 24");
+    eng.updateFromSpectrum(db, int(rate), dial, loOff);
+    expect(busy(eng) == 24, "24 channels: 24 of the 40 carriers taken");
+    eng.setChannelCount(48);
+    expect(eng.channelCount() == 48, "raised to 48");
+    eng.updateFromSpectrum(db, int(rate), dial, loOff);
+    expect(busy(eng) == 40, "48 channels: all 40 carriers taken");
+    eng.setChannelCount(36);
+    expect(eng.channelInfo().size() == 36 && busy(eng) == 36, "cut to 36: the rest freed");
+    eng.setChannelCount(500);
+    expect(eng.channelCount() == SkimmerEngine::kMaxChannels, "clamped at the bank's size");
+    eng.setChannelCount(24);
+    eng.updateFromSpectrum(db, int(rate), dial, loOff);
+    expect(busy(eng) == 24, "back to 24: full, no more");
+    return bad;
+}
+
+// `skimtest bench`: what a FULL bank costs at each size, 1 MS/s — one
+// block of noise + 64 carriers fed over and over (the decoders' cost is
+// the per-sample mixer and filter, whatever is keyed). Prints how much of
+// real time the feed thread needs; under 100 % or the IQ ring overflows.
+int bench() {
+    const double rate = 1000000.0;
+    const qint64 dial = 14030000;
+    const int loOff = 260000, n = 16384;
+    const double binHz = rate / n;
+    std::vector<float> db(n, -120.0f);
+    std::vector<std::complex<float>> blk(16384);
+    std::mt19937 rng(3);
+    std::normal_distribution<float> nz(0.0f, 0.004f);
+    for (auto& z : blk) z = {nz(rng), nz(rng)};
+    for (int i = 0; i < 64; ++i) {
+        const qint64 hz = 14002000 + i * 1050;
+        const double off = double(hz - dial - loOff);
+        const int bin = n / 2 + int(std::lround(off / binHz));
+        db[bin] = -70.0f;
+        db[bin - 1] = db[bin + 1] = -80.0f;
+        for (size_t k = 0; k < blk.size(); ++k) {
+            const double ph = 2.0 * M_PI * off * double(k) / rate;
+            blk[k] += std::complex<float>(float(0.05 * std::cos(ph)), float(0.05 * std::sin(ph)));
+        }
+    }
+    printf("  full bank at 1 MS/s (feed time as a share of real time):\n");
+    for (const int count : {24, 36, 48, 64}) {
+        SkimmerEngine eng(rate, count);
+        eng.setEnabled(true);
+        eng.updateFromSpectrum(db, int(rate), dial, loOff);
+        const double secs = 8.0;
+        const size_t blocks = size_t(secs * rate / blk.size());
+        QElapsedTimer t;
+        t.start();
+        for (size_t b = 0; b < blocks; ++b) {
+            eng.processIq(blk.data(), blk.size());
+            if (b % 64 == 0) QCoreApplication::processEvents();
+        }
+        const double used = t.nsecsElapsed() / 1e9;
+        int active = 0;
+        for (const auto& c : eng.channelInfo()) if (c.active) ++active;
+        printf("    %2d channels (%2d busy), %d threads: %5.1f %%\n", count, active,
+               SkimmerEngine::threadsFor(count), 100.0 * used / secs);
+    }
+    return 0;
+}
+
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    const int segFails = checkSegments();
+    if (argc > 1 && QString(argv[1]) == "bench") return bench();
+    const int segFails = checkSegments() + checkChannels();
     // "phone": the same 20 m CW stations, but the dial parked up on SSB
     // at today's 1 MHz capture — the channels then sit 350-400 kHz off the
     // LO instead of a few tens, which is the case the band-wide CW window

@@ -30,6 +30,7 @@
 #include "contest/ContestDeck.h"
 #include "cw/CwDeck.h"
 #include "rtty/RttyDeck.h"
+#include "rtty/RttySkimmer.h"
 #include "contest/ContestWindow.h"
 #include <algorithm>
 #include <limits>
@@ -1247,13 +1248,27 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
     // even without an SDR build; it just never gets IQ.
     skim_ = new SkimmerEngine(                     // rate must match the SDR
         double(kSdrCaptureHz),
-        std::clamp(QSettings().value("skim/channels", 24).toInt(), 4, 64),
+        std::clamp(QSettings().value("skim/channels", 24).toInt(), 4,
+                   SkimmerEngine::kMaxChannels),
         this);
-    skim_->setCallValidator([this](const QString& call) {
+    const auto ctyValid = [this](const QString& call) {
         double la = 0.0, lo = 0.0;                 // decode artifacts have
         return cty_.lookup(call, la, lo);          // no country prefix
-    });
-    skim_->setKnownCalls(loadMasterScp());
+    };
+    const QSet<QString> masterScp = loadMasterScp();
+    skim_->setCallValidator(ctyValid);
+    skim_->setKnownCalls(masterScp);
+    // The RTTY skimmer (2026-11-13): its own small bank on a decimated
+    // slice of the band's RTTY window. Off unless SKIM ▾ → Skim RTTY is
+    // ticked — off, it costs one branch per IQ block.
+    rttySkim_ = new RttySkimmer(
+        double(kSdrCaptureHz),
+        std::clamp(QSettings().value("skim/rttyChannels", 16).toInt(), 4,
+                   RttySkimmer::kMaxChannels),
+        this);
+    rttySkim_->setCallValidator(ctyValid);
+    rttySkim_->setKnownCalls(masterScp);
+    rttySkim_->setMyCall(stationCall);
     // The SKIM view's fast STFT taps the IQ stream in MainWindow's
     // iqHandler; it costs one branch per block until the window opens.
     skimStft_ = new SkimStft(double(kSdrCaptureHz), this);
@@ -1263,18 +1278,48 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
     skimBtn->setFocusPolicy(Qt::NoFocus);
     skimBtn->setStyleSheet(QString(kSideBtnStyle));
     skimBtn->setToolTip("CW skimmer: decode the whole CW segment at once;\n"
-                        "found callsigns appear as violet spots");
+                        "found callsigns appear as violet spots.\n"
+                        "Skim RTTY does the same for the band's RTTY window.");
     auto* skimMenu = new QMenu(skimBtn);
     styleMenu(skimMenu);
     skimEnable_ = skimMenu->addAction("Skim the CW segment");
     skimEnable_->setCheckable(true);
     skimEnable_->setChecked(QSettings().value("skim/enabled", false).toBool());
     skimEnable_->setToolTip(
-        QString("Run %1 decoder channels over the CW segment of the current "
-                "band.\nCalls are validated against the country file and "
-                "must repeat (or follow DE)\nbefore they're spotted.")
-            .arg(skim_->channelCount()));
+        "Run the decoder channels over the CW segment of the current "
+        "band.\nCalls are validated against the country file and "
+        "must repeat (or follow DE)\nbefore they're spotted.");
     skim_->setEnabled(skimEnable_->isChecked());
+    // How many CW stations it can follow at once. 24 is plenty for an
+    // ordinary evening; a contest fills it. More channels = more CPU (the
+    // bank spreads over up to 8 threads at 48/64) — the status bar's
+    // "IQ worker … CPU overloaded" warning is the judge.
+    {
+        auto* chMenu = skimMenu->addMenu("CW channels");
+        styleMenu(chMenu);
+        auto* grp = new QActionGroup(chMenu);
+        const int cur = skim_->channelCount();
+        for (const int n : {24, 36, 48, 64}) {
+            auto* a = chMenu->addAction(QString::number(n));
+            a->setCheckable(true);
+            a->setChecked(n == cur);
+            grp->addAction(a);
+            connect(a, &QAction::triggered, this, [this, n] {
+                skim_->setChannelCount(n);
+                QSettings().setValue("skim/channels", n);
+                statusBar()->showMessage(
+                    QString("CW skimmer: %1 channels").arg(n), 5000);
+            });
+        }
+    }
+    rttySkimEnable_ = skimMenu->addAction("Skim RTTY");
+    rttySkimEnable_->setCheckable(true);
+    rttySkimEnable_->setChecked(QSettings().value("skim/rtty", false).toBool());
+    rttySkimEnable_->setToolTip(
+        "Decode every RTTY station in the band's RTTY window at once\n"
+        "(45.45 baud, 170 Hz); calls appear as RTTY spots. Independent of\n"
+        "the CW skimmer and of the RTTY deck. Off by default.");
+    rttySkim_->setEnabled(rttySkimEnable_->isChecked());
     // Band map: the skimmer's finds as a frequency-sorted click-to-tune
     // list (separate window, so it can live on all session).
     auto* skimMap = skimMenu->addAction("Band map…");
@@ -1314,6 +1359,10 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
     skimSrv_ = new SkimServer(this);
     skimSrv_->setSpotterCall(stationCall);
     connect(skim_, &SkimmerEngine::spotFound, skimSrv_, &SkimServer::announce);
+    connect(rttySkim_, &RttySkimmer::spotFound, skimSrv_,
+            [this](const QString& call, qint64 hz, bool) {
+                skimSrv_->announceRtty(call, hz);
+            });
     auto* skimTelnet = skimMenu->addAction(
         QString("Telnet feed on localhost:%1 (for cqrlog)")
             .arg(QSettings().value("skim/telnetPort", 7300).toInt()));
@@ -1331,7 +1380,9 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
     skimMenu->addSeparator();
     skimMenu->addAction(skimStatAct);
     skimBtn->setMenu(skimMenu);
-    lightWhile(skimBtn, skimMenu, [this] { return skimEnable_->isChecked(); });
+    lightWhile(skimBtn, skimMenu, [this] {
+        return skimEnable_->isChecked() || rttySkimEnable_->isChecked();
+    });
     topLay2_->addSpacing(8);
     topLay2_->addWidget(skimBtn);
     const auto refreshSkim = [this, skimMenu] {
@@ -1370,10 +1421,25 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
             }
             h += line + "\n\n";
         }
-        h += "<span style='color:#8fa3b8;'>  kHz      WPM CALL     "
-             "DECODE</span>\n";
-        for (const auto& c : skim_->channelInfo()) {
-            if (!c.active) { h += "<span style='color:#4a5a6e;'>  —</span>\n"; continue; }
+        // Busy channels first, 24 rows whatever the bank's size (a
+        // 64-row menu would run off the screen; the Band map shows all).
+        const auto info = skim_->channelInfo();
+        int busy = 0;
+        for (const auto& c : info) if (c.active) ++busy;
+        h += QString("<span style='color:#8fa3b8;'>  kHz      WPM CALL     "
+                     "DECODE        %1 of %2 busy</span>\n")
+                 .arg(busy).arg(info.size());
+        constexpr int kRows = 24;
+        int rows = 0;
+        for (const auto& c : info) {
+            if (!c.active) continue;
+            if (rows == kRows - 1 && busy > kRows) {
+                h += QString("<span style='color:#8fa3b8;'>  … %1 more — "
+                             "Band map shows all</span>\n").arg(busy - rows);
+                ++rows;
+                break;
+            }
+            ++rows;
             h += QString("  %1 %2 %3 %4\n")
                      .arg(c.hz / 1000.0, -8, 'f', 1)
                      .arg(c.wpm > 0 ? QString::number(c.wpm) : QString("--"), 3)
@@ -1384,6 +1450,58 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
                                     .arg(c.call.leftJustified(8)),
                           -8)
                      .arg(c.text.toHtmlEscaped());
+        }
+        for (; rows < kRows; ++rows)
+            h += "<span style='color:#4a5a6e;'>  —</span>\n";
+        // The RTTY skimmer's own block, only while it is switched on.
+        if (rttySkim_->enabled()) {
+            const auto r = rttySkim_->reach();
+            QString line;
+            if (r.segHi == 0)
+                line = "<span style='color:#c87a7a;'>RTTY — no RTTY window "
+                       "on this band</span>";
+            else {
+                const QString win = QString("RTTY %1-%2")
+                        .arg(r.segLo / 1000.0, 0, 'f', 1)
+                        .arg(r.segHi / 1000.0, 0, 'f', 1);
+                if (r.gotHi == 0)
+                    line = QString("<span style='color:#c87a7a;'>%1 — out of "
+                                   "the capture from this dial</span>").arg(win);
+                else if (r.gotLo > r.segLo || r.gotHi < r.segHi)
+                    line = QString("<span style='color:#d8b45a;'>%1 — reaching "
+                                   "%2-%3</span>")
+                               .arg(win).arg(r.gotLo / 1000.0, 0, 'f', 1)
+                               .arg(r.gotHi / 1000.0, 0, 'f', 1);
+                else
+                    line = QString("<span style='color:#7fc98f;'>%1 — all of it "
+                                   "in the capture</span>").arg(win);
+            }
+            h += "\n" + line + "\n";
+            constexpr int kRttyRows = 8;
+            const auto rinfo = rttySkim_->channelInfo();
+            int rbusy = 0, rrows = 0;
+            for (const auto& c : rinfo) if (c.active) ++rbusy;
+            for (const auto& c : rinfo) {
+                if (!c.active) continue;
+                if (rrows == kRttyRows - 1 && rbusy > kRttyRows) {
+                    h += QString("<span style='color:#8fa3b8;'>  … %1 more"
+                                 "</span>\n").arg(rbusy - rrows);
+                    ++rrows;
+                    break;
+                }
+                ++rrows;
+                h += QString("  %1     %2 %3\n")
+                         .arg(c.hz / 1000.0, -8, 'f', 1)
+                         .arg(c.call.isEmpty()
+                                  ? QString("<span style='color:#4a5a6e;'>?"
+                                            "       </span>")
+                                  : QString("<span style='color:#f07878;'>%1</span>")
+                                        .arg(c.call.leftJustified(8)),
+                              -8)
+                         .arg(c.text.toHtmlEscaped());
+            }
+            for (; rrows < kRttyRows; ++rrows)
+                h += "<span style='color:#4a5a6e;'>  —</span>\n";
         }
         h += "</pre>";
         skimStatus_->setText(h);
@@ -1405,6 +1523,26 @@ void MainWindow::setupSkimUi(const QString& stationCall) {
         refreshSkim();
     });
     skimTick->start();
+    // The RTTY skimmer keeps its own, faster clock: its slice is mixed
+    // against the SDR's LO, so it has to hear about a dial move promptly.
+    auto* rttySkimTick = new QTimer(this);
+    rttySkimTick->setInterval(1000);
+    connect(rttySkimTick, &QTimer::timeout, this, [this] {
+#ifdef HAVE_SDRPLAY
+        if (rttySkim_->enabled())
+            rttySkim_->update(qint64(centerHz_), loOffHz_, sdrSpanHz_);
+#endif
+    });
+    rttySkimTick->start();
+    connect(rttySkim_, &RttySkimmer::spotFound, this,
+            [this](const QString& call, qint64 hz, bool toMe) {
+                statusBar()->showMessage(
+                    QString(toMe ? "RTTY SKIM: %1 is calling you on %2 kHz"
+                                 : "RTTY SKIM: %1 on %2 kHz")
+                        .arg(call)
+                        .arg(hz / 1000.0, 0, 'f', 1),
+                    8000);
+            });
     connect(skim_, &SkimmerEngine::spotFound, this,
             [this](const QString& call, qint64 hz, int wpm) {
                 statusBar()->showMessage(

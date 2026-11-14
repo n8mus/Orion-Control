@@ -71,6 +71,7 @@
 #include "cw/SkimmerEngine.h"
 #include "cw/SkimServer.h"
 #include "cw/SkimStft.h"
+#include "rtty/RttySkimmer.h"
 #include "ui/SkimViewWindow.h"
 #include "net/FldigiClient.h"
 #include "net/SpotClient.h"
@@ -1168,6 +1169,24 @@ MainWindow::MainWindow(QWidget* parent)
                 labels.push_back(l);
             }
         }
+        // The RTTY skimmer's finds ('R' too, at the mark's RF). A call
+        // the deck itself just printed is already on the map from above.
+        if (rttySkim_->enabled() && rttyOn->isChecked())
+            for (const auto& s : rttySkim_->spots()) {
+                bool dup = false;
+                for (const RttyHeard& h : rttyHeard_)
+                    if (h.call == s.call) dup = true;
+                if (dup) continue;
+                SpotLabel l{s.call, s.hz, s.atSecs, 'R', QStringLiteral("RTTY")};
+                ctyPlace(l);
+                l.status = logStatus(l);
+                l.spotter = s.toMe ? QStringLiteral("calling you")
+                                   : QStringLiteral("RTTY skimmer");
+                l.comment = QStringLiteral("RTTY");
+                l.alert = s.toMe;
+                needFill(l);
+                labels.push_back(l);
+            }
         // Our own WSJT-X decodes (CQs + calls to us), like the skimmer's
         // finds: this station's ears, independent of the cluster feeds.
         if (wsjtx_ && wsjtOn->isChecked())
@@ -1329,20 +1348,33 @@ MainWindow::MainWindow(QWidget* parent)
                 watchNotified_.clear();
                 pushSpots();
             });
-    connect(skimEnable_, &QAction::toggled, this, [this, pushSpots](bool on) {
+    // The telnet feed runs while either skimmer does.
+    const auto skimFeed = [this] {
+        const bool want = skimEnable_->isChecked() || rttySkimEnable_->isChecked();
+        if (want && !skimSrv_->active())
+            skimSrv_->start(
+                quint16(QSettings().value("skim/telnetPort", 7300).toUInt()));
+        else if (!want && skimSrv_->active())
+            skimSrv_->stop();
+    };
+    connect(skimEnable_, &QAction::toggled, this, [this, pushSpots, skimFeed](bool on) {
         QSettings().setValue("skim/enabled", on);
         applySkimGate();
-        const quint16 sp =
-            quint16(QSettings().value("skim/telnetPort", 7300).toUInt());
-        if (on) skimSrv_->start(sp);
-        else skimSrv_->stop();
+        skimFeed();
         statusBar()->showMessage(on ? "CW skimmer ON (violet spots)"
                                     : "CW skimmer off", 5000);
         pushSpots();
     });
-    if (skimEnable_->isChecked())
-        skimSrv_->start(
-            quint16(QSettings().value("skim/telnetPort", 7300).toUInt()));
+    connect(rttySkim_, &RttySkimmer::spotsChanged, this, pushSpots);
+    connect(rttySkimEnable_, &QAction::toggled, this, [this, pushSpots, skimFeed](bool on) {
+        QSettings().setValue("skim/rtty", on);
+        rttySkim_->setEnabled(on);
+        skimFeed();
+        statusBar()->showMessage(on ? "RTTY skimmer ON (RTTY spots)"
+                                    : "RTTY skimmer off", 5000);
+        pushSpots();
+    });
+    skimFeed();
     // Recolor live when the logbook loads or a bridged QSO lands in it.
     connect(&logbook_, &LogbookIndex::updated, this, pushSpots);
     // The console's own log (SQLite) is the second worked-before source —
@@ -3670,6 +3702,7 @@ MainWindow::MainWindow(QWidget* parent)
             cwDec_->processIq(iq.data(), iq.size());
             cwDecB_->processIq(iq.data(), iq.size());   // no-op unless SO2V
             skim_->processIq(iq.data(), iq.size());
+            rttySkim_->processIq(iq.data(), iq.size());
             skimStft_->processIq(iq.data(), iq.size());
         }
 #ifdef HAVE_WDSP
@@ -3762,6 +3795,7 @@ MainWindow::MainWindow(QWidget* parent)
                 startSpecPacer();
                 cwDec_->setInputRate(fRate);
                 skim_->setInputRate(fRate);
+                rttySkim_->setInputRate(fRate);
                 skimStft_->setInputRate(fRate);
 #ifdef HAVE_WDSP
                 if (sdrRx_) sdrRx_->setInputRate(fRate);
@@ -3785,6 +3819,7 @@ MainWindow::MainWindow(QWidget* parent)
                     spectrum_.addSamples(blk);
                     cwDec_->processIq(blk.data(), blk.size());
                     skim_->processIq(blk.data(), blk.size());
+                    rttySkim_->processIq(blk.data(), blk.size());
                     skimStft_->processIq(blk.data(), blk.size());
 #ifdef HAVE_WDSP
                     if (sdrRx_) sdrRx_->processIq(blk.data(), blk.size());

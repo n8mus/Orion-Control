@@ -187,7 +187,7 @@ void RttyDemod::acquire() {
     const double range = afcTrack_ ? p_.afcTrackHz : p_.afcRangeHz;
     // The audio feed's tones must stay inside the audio band; the IQ feed
     // (tones at +-shift/2 about 0) has no such edge.
-    const bool audio = std::abs(p_.markHz) > 400.0;
+    const bool audio = !p_.iq && std::abs(p_.markHz) > 400.0;
     const double lo = std::min(mHz_, sHz_) + afcHz_, hi = std::max(mHz_, sHz_) + afcHz_;
     std::vector<double> pm;
     pm.reserve(256);

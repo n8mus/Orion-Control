@@ -120,4 +120,16 @@ void SkimServer::announce(const QString& call, qint64 hz, int wpm) {
                   .arg(QDateTime::currentDateTimeUtc().toString("hhmm")));
 }
 
+void SkimServer::announceRtty(const QString& call, qint64 hz) {
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const QString key = QStringLiteral("R:") + call;   // own throttle lane
+    if (now - lastSent_.value(key, 0) < 120) return;
+    lastSent_[key] = now;
+    broadcast(QStringLiteral("DX de %1-#:  %2  %3 RTTY         %4Z")
+                  .arg(spotter_)
+                  .arg(hz / 1000.0, 8, 'f', 1)
+                  .arg(call, -12)
+                  .arg(QDateTime::currentDateTimeUtc().toString("hhmm")));
+}
+
 } // namespace ttc

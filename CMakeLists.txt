@@ -81,6 +81,7 @@ add_executable(tentec-console
   src/rtty/RttyDemod.cpp        src/rtty/RttyDemod.h
   src/rtty/RttyMod.cpp          src/rtty/RttyMod.h
   src/rtty/RttyEngine.cpp       src/rtty/RttyEngine.h
+  src/rtty/RttySkimmer.cpp      src/rtty/RttySkimmer.h
   src/rtty/RttyDeck.cpp         src/rtty/RttyDeck.h
   src/app/Voacap.cpp            src/app/Voacap.h
   src/app/Bands.h
@@ -296,6 +297,17 @@ add_executable(skimtest EXCLUDE_FROM_ALL
   src/cw/CwDecoder.cpp src/cw/FldigiCwEngine.cpp src/cw/SkimmerEngine.cpp)
 target_include_directories(skimtest PRIVATE src)
 target_link_libraries(skimtest PRIVATE Qt6::Core)
+if(OpenMP_CXX_FOUND)                # `skimtest bench` times the threaded bank
+  target_link_libraries(skimtest PRIVATE OpenMP::OpenMP_CXX)
+endif()
+
+add_executable(rttyskimtest EXCLUDE_FROM_ALL
+  tests/rttyskimtest.cpp
+  src/rtty/Ita2.cpp src/rtty/RttyDemod.cpp
+  src/rtty/RttySkimmer.cpp src/rtty/RttySkimmer.h
+  src/dsp/Fft.cpp)
+target_include_directories(rttyskimtest PRIVATE src)
+target_link_libraries(rttyskimtest PRIVATE Qt6::Core)
 
 add_executable(fldigitest EXCLUDE_FROM_ALL
   tests/fldigitest.cpp

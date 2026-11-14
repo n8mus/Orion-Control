@@ -29,13 +29,20 @@ class CwDecoder;
 class SkimmerEngine : public QObject {
     Q_OBJECT
 public:
-    // channels: size of the decoder bank. Each channel costs one complex
-    // multiply per input sample (the recurrence-phasor mixer), so even a
-    // few dozen are cheap at 500 ksps.
+    // channels: how many of the bank's decoders are in use. The bank is
+    // always built at kMaxChannels (an idle decoder costs one branch per
+    // block), so the count can change while the IQ runs — a contest
+    // weekend wants more than an ordinary evening. Each busy channel costs
+    // one complex multiply per input sample (the recurrence-phasor mixer).
+    static constexpr int kMaxChannels = 64;
     explicit SkimmerEngine(double inputRate, int channels = 8,
                            QObject* parent = nullptr);
 
-    int channelCount() const { return int(ch_.size()); }
+    int channelCount() const { return limit_.load(std::memory_order_relaxed); }
+    // GUI thread. Shrinking frees the channels past the new count.
+    void setChannelCount(int channels);
+    // Worker threads the bank is spread over at a given count (OpenMP).
+    static int threadsFor(int channels);
 
     void setEnabled(bool on);              // gates the whole bank
     bool enabled() const { return enabled_.load(std::memory_order_relaxed); }
@@ -124,7 +131,8 @@ private:
 
     std::atomic<bool> enabled_{false};
     double inputRate_;
-    std::vector<Chan> ch_;                 // fixed size after construction
+    std::vector<Chan> ch_;                 // kMaxChannels, fixed after construction
+    std::atomic<int> limit_{8};            // channels in use: ch_[0..limit)
     QVector<SkimSpot> spots_;
     std::function<bool(const QString&)> validate_;
     QSet<QString> known_;                  // MASTER.SCP (empty = all known)

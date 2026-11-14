@@ -55,7 +55,10 @@ void MainWindow::onTuneRequested(int offsetHz, bool exact) {
     if (rttyMode_ && rtty_ && !exact) {
         int lo = 0, hi = 0;
         edgesFromRig(rigMode_, rigBwHz_, rigPbtHz_, lo, hi);
-        if (offsetHz >= lo && offsetHz <= hi) {
+        // Contest tuning: the radio always moves and the tones stay on
+        // the convention, so transmit is never left parked on a clicked
+        // audio tone after the next QSY.
+        if (!rtty_->contestTuning() && offsetHz >= lo && offsetHz <= hi) {
             const int audio = pbtRfSign(rigMode_) * offsetHz;
             if (audio >= 300 && audio <= 3500) {
                 rtty_->setToneCenterHz(audio);

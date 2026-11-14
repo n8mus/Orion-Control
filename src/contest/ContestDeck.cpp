@@ -33,6 +33,7 @@
 #include "contest/PracticeEngine.h"
 #include "net/SntpCheck.h"
 #include "contest/QtcDialog.h"
+#include "rtty/RttyTuneWidget.h"
 #include "cw/CwWindow.h"
 #include "ui/DeckStyle.h"
 #include "log/QrzLookup.h"
@@ -237,7 +238,21 @@ void ContestDeck::buildUi() {
                     m.exec(read_->mapToGlobal(p));
                 });
         read_->viewport()->installEventFilter(this);
-        box->addWidget(read_, 1);
+        {
+            auto* rrow = new QHBoxLayout;
+            rrow->setSpacing(4);
+            rrow->addWidget(read_, 1);
+            rttyTune_ = new RttyTuneWidget(readPane_);
+            rttyTune_->setFixedWidth(64);
+            rttyTune_->setToolTip(
+                "Mark (left) and space (right). Tune until both bars are tall\n"
+                "and swap as the station keys; green = text is printing.\n"
+                "Below: signal over noise, keying contrast, the mark tone and\n"
+                "how far the reader has trimmed onto him.");
+            rttyTune_->setVisible(false);
+            rrow->addWidget(rttyTune_);
+            box->addLayout(rrow, 1);
+        }
         lay->addWidget(readPane_, 11);
         addPopout("read", "CW READ", readPane_, trow,
                   [this](QWidget* w) {
@@ -1026,8 +1041,9 @@ void ContestDeck::applyPaneVisibility() {
     vis("read", !phone);
     vis("type", !phone);
     vis("log", true);
-    if (rxInfo_) rxInfo_->setVisible(!phone);
-    if (zbBtn_) zbBtn_->setVisible(!phone);
+    // The CW reader's speed / pitch / 0-BEAT: CW contests only.
+    if (rxInfo_) rxInfo_->setVisible(!phone && !rttyContest());
+    if (zbBtn_) zbBtn_->setVisible(!phone && !rttyContest());
 }
 
 bool ContestDeck::openContestId(qint64 id) {
@@ -1091,6 +1107,7 @@ void ContestDeck::openContest(qint64 id) {
     if (typeTitle_)
         typeTitle_->setText(rttyContest() ? "RTTY TYPE — Enter sends"
                                           : "CW TYPE — Enter sends");
+    if (rttyTune_) rttyTune_->setVisible(rttyContest());
     applyPaneVisibility();   // phone drops the CW panes, floats included
     rebuildEntryFields();
     applyFkeyLabels();
@@ -1790,6 +1807,12 @@ QString ContestDeck::fkeySpec(int key) const {
     return set.value(key);
 }
 
+void ContestDeck::setRttyTune(float mark, float space, float quality, float snrDb,
+                              bool open, float afcHz, int markHz) {
+    if (rttyTune_ && rttyTune_->isVisible())
+        rttyTune_->set(mark, space, quality, snrDb, open, afcHz, markHz);
+}
+
 void ContestDeck::setRttyKeyer(std::function<void(const QString&)> send,
                                std::function<void()> stop) {
     rttySend_ = std::move(send);
@@ -2427,6 +2450,27 @@ bool ContestDeck::eventFilter(QObject* obj, QEvent* ev) {
         if (loggableCall(tok)) {
             prefillCall(tok);
             return true;
+        }
+        // A number — or a number that printed in the LETTERS case (the
+        // shift was lost: 012 prints PQW; Q W E R T Y U I O P are 1..0) —
+        // goes to the received-serial box. Live-found on the first QSO
+        // (DQ2A, WAE RTTY 2026): "what he sent me is gibberish".
+        static const QString kTop = QStringLiteral("PQWERTYUIO");   // index = digit
+        QString digits;
+        for (const QChar ch : tok) {
+            if (ch.isDigit()) digits += ch;
+            else if (kTop.contains(ch)) digits += QString::number(kTop.indexOf(ch));
+            else { digits.clear(); break; }
+        }
+        if (!digits.isEmpty() && digits.size() <= 4) {
+            for (const auto& e : edits_)
+                if (e.first == ExchCol::SerialR) {
+                    e.second->setText(digits);
+                    e.second->setFocus();
+                    status_->setText(tok == digits ? "NR " + digits
+                                                   : QString("NR %1 (printed %2)").arg(digits, tok));
+                    return true;
+                }
         }
     }
     if (obj == read_->viewport()

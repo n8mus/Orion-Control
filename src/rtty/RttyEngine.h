@@ -65,6 +65,18 @@ public:
     int markHz() const { return s_.markHz; }                 // nominal
     double effectiveMarkHz() const;                          // + AFC
     void resetAfc() { demod_.resetAfc(); }
+    // Contest tuning (the contest deck, 2026-11-13): the pair search
+    // stays within +-150 Hz of the dial's tones instead of roaming the
+    // whole passband — on a contest band the "strongest pair" is a
+    // different station every few seconds (live-found, WAE RTTY: "it's
+    // jumping around, not locking in") — and the tones go back to the
+    // convention. Off = the everyday full-passband search.
+    void setContestTuning(bool on);
+    bool contestTuning() const { return contestTuning_; }
+    // Whether transmit rides the AFC's trim (fldigi's rule, the default)
+    // or stays on the nominal tones: a station RUNNING must not follow
+    // each caller's offset around.
+    void setTxFollowsAfc(bool on) { txFollowsAfc_ = on; }
 
     // ---- receive ----
     void setRxEnabled(bool on);
@@ -102,6 +114,8 @@ private:
     RttyDemod demod_;
     RttyMod mod_;
     bool rxOn_ = false;
+    bool contestTuning_ = false;
+    bool txFollowsAfc_ = true;
     QString line_;                            // the line being decoded
     QString myCall_;
     QString lastHeard_;

@@ -72,6 +72,7 @@ void RttyEngine::apply(const Settings& s, bool save) {
     dp.usos = s.usos;
     dp.squelch = s.squelch;
     dp.afc = s.afc;
+    if (contestTuning_) dp.afcRangeHz = 150.0;  // under the shift: never a neighbour's tone
     demod_.setParams(dp);                      // resets the channel
     RttyMod::Params mp;
     mp.sampleRate = kRate;
@@ -85,6 +86,14 @@ void RttyEngine::apply(const Settings& s, bool save) {
     mp.level = float(std::pow(10.0, std::clamp(s.txLevelDb, -30, 0) / 20.0));
     mod_.setParams(mp);
     if (save) saveSettings(s);
+}
+
+void RttyEngine::setContestTuning(bool on) {
+    if (on == contestTuning_) return;
+    contestTuning_ = on;
+    Settings s = s_;
+    s.markHz = loadSettings().markHz;          // a clicked-away pair comes home
+    apply(s, false);
 }
 
 void RttyEngine::setSidebandUsb(bool usb) {
@@ -161,7 +170,7 @@ bool RttyEngine::start(const QString& sinkNode) {
         // Transmit where we receive (fldigi's rule): the AFC's trim rides
         // along, so the far end hears us on the pair it is sending on.
         RttyMod::Params mp = mod_.params();
-        const int mark = int(std::lround(effectiveMarkHz()));
+        const int mark = txFollowsAfc_ ? int(std::lround(effectiveMarkHz())) : s_.markHz;
         mp.markHz = mark;
         mp.spaceHz = mark + s_.shiftHz;
         mod_.setParams(mp);

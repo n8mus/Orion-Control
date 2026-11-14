@@ -476,6 +476,17 @@ void MainWindow::toggleContestMode(bool on) {
             ensureRtty();
             connect(rtty_, &RttyEngine::textDecoded, contestDeck_,
                     &ContestDeck::appendRttyRead);
+            {
+                auto* bars = new QTimer(contestDeck_);
+                bars->setInterval(50);
+                connect(bars, &QTimer::timeout, contestDeck_, [this] {
+                    if (!rtty_ || !rttyMode_ || !contestDeck_->isVisible()) return;
+                    const auto st = rtty_->rxStatus();
+                    contestDeck_->setRttyTune(st.mark, st.space, st.quality, st.snrDb,
+                                              st.open, st.afcHz, rtty_->markHz());
+                });
+                bars->start();
+            }
             contestDeck_->setRttyKeyer(
                 [this](const QString& text) {
                     if (!rttyMode_) setRttyMode(true);
@@ -489,8 +500,34 @@ void MainWindow::toggleContestMode(bool on) {
                 // once (the operator may still switch it off himself).
                 const bool wantRtty = contestDeck_->isVisible()
                     && contestDeck_->contestModeCategory() == QLatin1String("RTTY");
-                if (wantRtty && !contestRttyArmed_ && !rttyMode_) setRttyMode(true);
+                if (wantRtty && !contestRttyArmed_ && !rttyMode_) {
+                    setRttyMode(true);
+                    // Start from a filter the tones are certain to be in.
+                    // The Orion recalls the sideband's STORED filter on the
+                    // mode change, and that can be anything — live-found
+                    // on the first evening: 500 Hz with the passband
+                    // tuning far over (an old NARROW), one tone cut off,
+                    // the print gibberish. Wide and centred; the operator
+                    // narrows it from there.
+                    if (rttyMode_ && !rttyNarrow_)
+                        QTimer::singleShot(700, this, [this] {
+                            if (!rttyMode_) return;
+                            radio_->setBandwidthHz(Rx::Main, 2800);
+                            radio_->setPbtHz(Rx::Main, 0);
+                            QTimer::singleShot(400, this, [this] { radio_->queryFilter(Rx::Main); });
+                        });
+                }
                 contestRttyArmed_ = wantRtty;
+                // Contest tuning while the RTTY contest is up: the reader
+                // holds on the station under the dial; running, transmit
+                // stays on the dial's tones whatever a caller's offset.
+                if (rtty_) {
+                    if (rtty_->contestTuning() != wantRtty) {
+                        rtty_->setContestTuning(wantRtty);
+                        rttyRefreshTones();
+                    }
+                    rtty_->setTxFollowsAfc(!(wantRtty && contestDeck_->running()));
+                }
                 if (!contestDeck_->isVisible()) return;
                 contestDeck_->setRig(qint64(centerHz_),
                                      adifModeText(rigMode_));
@@ -564,6 +601,12 @@ void MainWindow::toggleContestMode(bool on) {
         pan_->setDisplaySettings(ds);
         contestRx_ = false;
         applyCwRxRouting();
+        contestRttyArmed_ = false;
+        if (rtty_) {
+            rtty_->setContestTuning(false);
+            rtty_->setTxFollowsAfc(true);
+            rttyRefreshTones();
+        }
     }
     if (pushSpots_) pushSpots_();      // recolor the labels immediately
 }

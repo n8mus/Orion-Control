@@ -7,6 +7,9 @@
 #include <QAbstractButton>
 #include <QEvent>
 #include <QMenu>
+#include <QObject>
+#include <QMouseEvent>
+#include <QAction>
 #include <QPointer>
 #include "radio/RadioController.h"
 
@@ -104,7 +107,33 @@ inline bool windowUp(const QWidget* w) {
     return w && w->isVisible() && !w->isMinimized();
 }
 
+// A tick-box item toggles WITHOUT closing its menu (operator, 2026-11-13,
+// mid-contest: unticking four spot sources meant opening SPOTS four
+// times). Plain items close the menu as ever; a click anywhere else, or
+// Esc, closes it when he is done.
+class MenuStayOpen : public QObject {
+public:
+    using QObject::QObject;
+
+protected:
+    bool eventFilter(QObject* o, QEvent* e) override {
+        if (e->type() == QEvent::MouseButtonRelease) {
+            auto* m = qobject_cast<QMenu*>(o);
+            auto* me = static_cast<QMouseEvent*>(e);
+            if (m && me->button() == Qt::LeftButton) {
+                QAction* a = m->actionAt(me->position().toPoint());
+                if (a && a->isCheckable() && a->isEnabled() && !a->menu()) {
+                    a->trigger();
+                    return true;               // eaten: the menu stays up
+                }
+            }
+        }
+        return QObject::eventFilter(o, e);
+    }
+};
+
 inline void styleMenu(QMenu* m) {
+    m->installEventFilter(new MenuStayOpen(m));
     m->setAttribute(Qt::WA_TranslucentBackground);  // real rounded corners
     m->setStyleSheet(
         "QMenu { background-color: #141b24; color: #c8d4e0;"

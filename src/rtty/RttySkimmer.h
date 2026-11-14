@@ -110,7 +110,9 @@ private:
     static constexpr int kFft = 8192;
     static constexpr int kHop = 4096;
 
-    struct Sight { int count = 0; qint64 lastMs = 0; bool ctx = false; };
+    // ctx: heard after DE (anyone signing). cq: heard with CQ / TEST /
+    // QRZ / TU around it — the station RUNNING the frequency.
+    struct Sight { int count = 0; qint64 lastMs = 0; bool ctx = false, cq = false; };
     struct Chan {
         bool    active = false;
         quint32 gen = 0;                   // tenancy stamp
@@ -125,7 +127,8 @@ private:
         qint64  winMs = 0;
         int     winTicks = 0, winOpen = 0, winChars = 0;
         QString call;
-        int     grade = 0;                 // 2 = heard in CQ/DE context
+        int     grade = 0;                 // 3 running (CQ), 2 after DE, 1 bare
+        qint64  lastCharMs = 0;            // for the pause between overs
         qint64  callMs = 0;
         QString text;                      // rolling print, for the readout
         QString partial;                   // the word being received
@@ -143,6 +146,7 @@ private:
     void assign(int i, double offHz);
     void onText(int idx, quint32 gen, const QString& t);
     void onWord(int idx);
+    void consider(int idx, const QString& tok, bool toMe);   // spot it if earned
     qint64 markHz(const Chan& c) const;
 
     std::atomic<bool> enabled_{false};

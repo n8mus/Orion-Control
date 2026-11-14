@@ -414,6 +414,22 @@ void RttySkimmer::onText(int idx, quint32 gen, const QString& t) {
     if (idx < 0 || idx >= int(ch_.size())) return;
     Chan& c = ch_[idx];
     if (!c.active || c.gen != gen) return;     // late, from an old tenancy
+    // A pause in the print is a new over (characters arrive 165 ms apart
+    // while anyone keys): context words do not carry across it.
+    {
+        const qint64 now = nowMs();
+        if (c.lastCharMs > 0 && now - c.lastCharMs > 700) {
+            if (!c.partial.isEmpty()) {
+                c.words.push_back(c.partial);
+                c.partial.clear();
+                onWord(idx);
+                if (!c.active) return;
+            }
+            if (c.words.isEmpty() || c.words.last() != QStringLiteral("\x01"))
+                c.words.push_back(QStringLiteral("\x01"));
+        }
+        c.lastCharMs = now;
+    }
     for (const QChar qc : t) {
         const QChar u = qc.toUpper();
         const bool gap = (u == ' ' || u == '\n');
@@ -431,28 +447,60 @@ void RttySkimmer::onText(int idx, quint32 gen, const QString& t) {
 }
 
 // A completed word. It is a call if it has the shape and a country; it is
-// SPOTTED once it has been seen enough: straight away after CQ / DE / TEST
-// / QRZ / TU for a MASTER.SCP call, twice in that context otherwise, and
-// a bare repeated call ("W1AW W1AW", a caller's whole transmission) twice
-// if listed, three times if not. One decode with a flipped bit still has
-// a call's shape — the repeats are what a bust does not have.
+// SPOTTED once it has been seen enough: straight away with CQ / DE / TEST
+// / QRZ / TU around it for a MASTER.SCP call, twice in that context
+// otherwise, and a bare repeated call ("W1AW W1AW", a caller's whole
+// transmission) twice if listed, three times if not. One decode with a
+// flipped bit still has a call's shape — the repeats are what a bust does
+// not have.
+//
+// WHO OWNS THE FREQUENCY (first evening on air, WAE RTTY 2026: 7045.8
+// read DP6K, then WT9U, then WA3KCP — the runner unseated by each of his
+// callers): a call heard with CQ / TEST / QRZ / TU before it, or CQ /
+// TEST right after it, is RUNNING there (grade 3); after DE alone it is
+// just somebody signing (2); bare, a caller (1). Context never reaches
+// across a pause between overs (kOverBreak), or the runner's closing
+// "CQ" would crown the next caller.
+namespace {
+const QString kOverBreak = QStringLiteral("\x01");
+QString callToken(QString w) {
+    w.remove(QRegularExpression(QStringLiteral("[^A-Z0-9/]")));
+    return w;
+}
+}  // namespace
+
 void RttySkimmer::onWord(int idx) {
     Chan& c = ch_[idx];
-    QString tok = c.words.last();
-    tok.remove(QRegularExpression(QStringLiteral("[^A-Z0-9/]")));
+    const int n = c.words.size();
+    const auto word = [&](int back) { return back < n ? c.words[n - 1 - back] : QString(); };
+    const QString raw = c.words.last();
+    const qint64 now = nowMs();
+
+    // "... DP6K DP6K CQ": the CQ that FOLLOWS a call marks its sender.
+    if (raw == QLatin1String("CQ") || raw == QLatin1String("TEST")) {
+        const QString prev = callToken(word(1));
+        auto it = c.sight.find(prev);
+        if (word(1) != kOverBreak && it != c.sight.end() && !it->cq) {
+            it->cq = it->ctx = true;
+            consider(idx, prev, false);
+        }
+        return;
+    }
+
+    const QString tok = callToken(raw);
     if (tok.size() < 3 || tok.size() > 12) return;
     if (!callRe().match(tok).hasMatch()) return;
     if (!myCall_.isEmpty() && (tok == myCall_ || tok.section('/', 0, 0) == myCall_)) return;
     if (validate_ && !validate_(tok)) return;
 
-    const qint64 now = nowMs();
-    const int n = c.words.size();
-    const auto word = [&](int back) { return back < n ? c.words[n - 1 - back] : QString(); };
-    static const QSet<QString> kCtx = {"CQ", "DE", "TEST", "QRZ", "QRZ?", "TU"};
+    static const QSet<QString> kRun = {"CQ", "TEST", "QRZ", "QRZ?", "TU"};
     const bool afterDe = word(1) == QLatin1String("DE");
-    bool ctx = afterDe;
-    for (int b = 1; b <= 3 && !ctx; ++b)
-        if (kCtx.contains(word(b))) ctx = true;
+    bool ctx = afterDe, cq = false;
+    for (int b = 1; b <= 3; ++b) {
+        const QString w = word(b);
+        if (w == kOverBreak) break;            // another over: not his context
+        if (kRun.contains(w)) { cq = ctx = true; break; }
+    }
     // endsWith: the first word of an over often carries a character or
     // two of key-down garbage in front ("SIN8EM DE K3LR").
     const bool toMe = afterDe && !myCall_.isEmpty() && word(2).endsWith(myCall_);
@@ -463,13 +511,23 @@ void RttySkimmer::onWord(int idx) {
     ++s.count;
     s.lastMs = now;
     s.ctx = s.ctx || ctx;
+    s.cq = s.cq || cq;
+    consider(idx, tok, toMe);
+}
+
+void RttySkimmer::consider(int idx, const QString& tok, bool toMe) {
+    Chan& c = ch_[idx];
+    const auto sit = c.sight.constFind(tok);
+    if (sit == c.sight.constEnd()) return;
+    const Sight s = *sit;
+    const qint64 now = nowMs();
     const bool listed = !known_.isEmpty() && known_.contains(tok);
     const int need = s.ctx ? (listed ? 1 : 2) : (listed ? 2 : 3);
     if (dbg())
         std::fprintf(stderr, "[rskim] ch%d %-10s n%d need %d%s\n", idx, qPrintable(tok),
-                     s.count, need, s.ctx ? " ctx" : "");
+                     s.count, need, s.cq ? " cq" : s.ctx ? " ctx" : "");
     if (s.count < need) return;
-    const int grade = s.ctx ? 2 : 1;
+    const int grade = s.cq ? 3 : s.ctx ? 2 : 1;
 
     // The same station on another channel: a duplicate listener next door
     // folds; anywhere else it is the far end of someone's QSO, not his
@@ -492,9 +550,9 @@ void RttySkimmer::onWord(int idx) {
         emit spotsChanged();
         return;
     }
-    // A frequency has one owner on the map. A bare call does not unseat a
-    // station heard calling CQ there (it is his caller) unless he has
-    // been silent for three minutes.
+    // A frequency has one owner on the map. A lesser call never unseats
+    // the station running there (it is his caller) unless he has been
+    // silent for three minutes.
     if (!c.call.isEmpty() && grade < c.grade && now - c.callMs < 180000) return;
     if (!c.call.isEmpty()) {
         const QString old = c.call;

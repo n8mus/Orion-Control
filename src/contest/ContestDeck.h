@@ -93,8 +93,12 @@ public:
     // A as always. The main window owns the ears, the B reader and the
     // transmitter moves — the deck only says what it wants.
     bool running() const { return runMode_; }
+    bool rttyContest() const;        // the open contest keys RTTY
     bool so2vOn() const { return so2v_; }
-    bool arrowsWalkB() const { return so2v_ && runMode_; }
+    // Never in an RTTY contest: the second receiver has no RTTY reader,
+    // so a walk on B lands nowhere useful (live-found, WAE RTTY: SO2V
+    // still lit from the CW weekend, "the arrows are not working").
+    bool arrowsWalkB() const { return so2v_ && runMode_ && !rttyContest(); }
     // A B-walk landing: the spot's call into the SUB box, classified.
     void setSubCall(const QString& call, qint64 hz);
     // Take the SUB line's call: pounce (SO2V) or hand it to A. False
@@ -202,7 +206,6 @@ private:
     void requestQrz(const QString& call);
     QString currentBand() const;
     QString modeNow() const;         // rig mode as the contest mode
-    bool rttyContest() const;        // the open contest keys RTTY
     // CW or RTTY: Enter can send, Space is a text key. Otherwise phone.
     bool keyedContest() const;
     QString rstPreset() const;       // "599" CW, "59" phone

@@ -140,6 +140,33 @@ int main(int argc, char** argv) {
     station("JA1XYZ", 14140100, 12, "CQ CQ DE JA1XYZ JA1XYZ PSE K\r\n", 2.5);
     station("K3LR", 14101000, 18, "N8EM DE K3LR K3LR UR 599 599 OH OH BK\r\n", 3.0);
     station("VE3ABC", 14096000, 3, "CQ CQ CQ DE VE3ABC VE3ABC VE3ABC K\r\n", 1.0);
+    // A runner and his caller on ONE frequency, taking turns: the runner
+    // owns the spot, the caller (signing "DE", and following the runner's
+    // closing CQ) never takes it from him.
+    {
+        const auto planSecs = [](const Station& st) {
+            double n = 0;
+            for (const auto& e : st.plan) n += e.first;
+            return n / kRate;
+        };
+        Station run;
+        run.call = "DP6K";
+        run.markHz = 14115000;
+        run.amp = ampFor(18);
+        addOver(run, "CQ WAE DP6K DP6K CQ\r\n", 0.0);
+        const double runOver = planSecs(run);
+        Station caller;
+        caller.call = nullptr;                 // must NOT be spotted
+        caller.markHz = 14115000 + 20;         // nearly zero beat
+        caller.amp = ampFor(15);
+        caller.plan.emplace_back((runOver + 0.8) * kRate, Off);
+        addOver(caller, "DE WT9U WT9U\r\n", 0.0);
+        const double cycle = planSecs(caller) + 1.0;
+        run.plan.emplace_back((cycle - runOver) * kRate, Off);
+        caller.plan.emplace_back(1.0 * kRate, Off);
+        sts.push_back(std::move(run));
+        sts.push_back(std::move(caller));
+    }
     // Not RTTY: two carriers 170 Hz apart, equal; the same 10 dB apart;
     // a keyed lone carrier (CW-ish, 60 ms elements).
     const auto carrier = [&](qint64 hz, double db) {
@@ -201,7 +228,7 @@ int main(int argc, char** argv) {
     RttySkimmer skim(kRate, 16);
     skim.setClock([&] { return streamMs; });
     skim.setMyCall("N8EM");
-    skim.setKnownCalls(QSet<QString>{"W1AW", "DL1ABC", "K3LR"});
+    skim.setKnownCalls(QSet<QString>{"W1AW", "DL1ABC", "K3LR", "DP6K", "WT9U"});
     skim.setEnabled(true);
 
     qint64 dial = 14090000;
@@ -267,6 +294,10 @@ int main(int argc, char** argv) {
         if (ok) ++found;
     }
     check(int(spots.size()) == found, "nothing else on the band map");
+    bool callerSpotted = false;
+    for (const auto& sp : spots)
+        if (sp.call == QLatin1String("WT9U")) callerSpotted = true;
+    check(!callerSpotted, "a caller never takes the runner's frequency (WT9U on DP6K)");
     bool toMe = false;
     for (const auto& s : spots)
         if (s.call == QLatin1String("K3LR") && s.toMe) toMe = true;

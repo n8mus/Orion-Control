@@ -142,11 +142,13 @@ TuneEntryDialog::TuneEntryDialog(const QString& antenna, const TunePoint& start,
     // The Titan III's dials read 0-10 (operator, 2026-10-24: "I need to
     // enter a zero for the amp tune and it won't go below 1.0").
     tune_ = tenthsBox(amp);
-    tune_->setRange(0.0, 10.0);
+    tune_->setRange(-0.1, 10.0);          // -0.1 shows blank: no setting yet
+    tune_->setSpecialValueText(" ");
     ag->addWidget(tune_, 0, 1);
     ag->addWidget(new QLabel("Load", amp), 1, 0);
     load_ = tenthsBox(amp);
-    load_->setRange(0.0, 10.0);
+    load_->setRange(-0.1, 10.0);
+    load_->setSpecialValueText(" ");
     ag->addWidget(load_, 1, 1);
     ag->setColumnStretch(2, 1);
     lay->addWidget(amp);
@@ -188,8 +190,10 @@ TuneEntryDialog::TuneEntryDialog(const QString& antenna, const TunePoint& start,
     cap_->setValue(start.cap);
     z_->setCurrentIndex((start.highZ ? 5 : 0) + std::clamp(start.zPos, 1, 5) - 1);
     ind_->setValue(start.ind);
-    tune_->setValue(start.ampTune);
-    load_->setValue(start.ampLoad);
+    tune_->setValue(start.ampTune < 0 ? -0.1 : start.ampTune);
+    load_->setValue(start.ampLoad < 0 ? -0.1 : start.ampLoad);
+    connect(tune_, &QDoubleSpinBox::valueChanged, this, [this] { updateBand(); });
+    connect(load_, &QDoubleSpinBox::valueChanged, this, [this] { updateBand(); });
     swr_->setValue(start.swr >= 1.0 ? start.swr : 0.0);
     note_->setText(start.note);
 
@@ -239,7 +243,8 @@ void TuneEntryDialog::updateBand() {
     band_->setText(b.isEmpty()
         ? QStringLiteral("<span style='color:#eb503c'>outside the ham bands</span>")
         : QString("%1 m").arg(b));
-    save_->setEnabled(!b.isEmpty());
+    // Amp Tune/Load blank = no setting found yet: Save waits for real numbers.
+    save_->setEnabled(!b.isEmpty() && tune_->value() >= 0 && load_->value() >= 0);
 }
 
 void TuneEntryDialog::updateBypass() {

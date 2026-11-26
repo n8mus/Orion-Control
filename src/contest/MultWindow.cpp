@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/MultWindow.h"
+#include "ui/DarkDialog.h"
 
 #include <QCheckBox>
 #include <QHeaderView>
@@ -22,6 +23,7 @@ QString kindName(const QString& k) {
 } // namespace
 
 MultWindow::MultWindow(QWidget* parent) : QDialog(parent) {
+    setStyleSheet(darkDialogCss());
     setWindowTitle("Multipliers");
     auto* lay = new QVBoxLayout(this);
     head_ = new QLabel(this);

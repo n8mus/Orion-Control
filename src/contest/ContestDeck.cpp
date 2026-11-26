@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestDeck.h"
+#include "ui/DarkDialog.h"
 
 #include <QDateTime>
 #include <cmath>
@@ -1410,6 +1411,7 @@ bool ContestDeck::guardUnlogged() {
     QMessageBox box(QMessageBox::Warning, "Unlogged contact",
                     QString("%1 is not logged yet.\n\nLog it before moving on?").arg(c),
                     QMessageBox::NoButton, this);
+    box.setStyleSheet(darkDialogCss());
     auto* logB = box.addButton("Log it", QMessageBox::AcceptRole);
     box.addButton("Discard", QMessageBox::DestructiveRole);
     box.setDefaultButton(logB);
@@ -1477,6 +1479,25 @@ void ContestDeck::enterPressed() {
     if (so2v_ && runMode_ && !pounceOn_
         && call_->text().trimmed().isEmpty() && takeSub())
         return;
+    // CW/RTTY run: a call the master list doesn't know (the orange "?") is a
+    // partial or a bust — Enter asks "CALL?" instead of sending the exchange
+    // (operator, 2026-11-26). Enter again with the call unchanged goes on as
+    // usual (a real station that simply isn't in master).
+    {
+        const QString cq = call_->text().trimmed().toUpper();
+        // Only from the CALL box: Enter in the zone field is the answer/log
+        // beat, never another "?".
+        bool inExchBox = false;
+        for (const auto& e : edits_) inExchBox = inExchBox || e.second->hasFocus();
+        if (esmOn_ && runMode_ && keyedContest() && callUnverified_
+            && !inExchBox
+            && !cq.isEmpty() && askedCall_ != cq) {
+            askedCall_ = cq;
+            keyText(cq + "?");
+            status_->setText("→ " + cq + "?");
+            return;
+        }
+    }
     EsmInput in;
     // ESM drives BOTH modes when the (now clearly lit) button is on —
     // the operator's revised ruling once the toggle was understood:
@@ -1979,6 +2000,7 @@ void ContestDeck::editFkey(int idx0) {
         return;
     }
     QDialog d(this);
+    d.setStyleSheet(darkDialogCss());
     d.setWindowTitle(QString("F%1 — %2 (%3)")
                          .arg(idx0 + 1)
                          .arg(def_->title, runMode_ ? "Run" : "S&P"));
@@ -2057,6 +2079,7 @@ void ContestDeck::onCallEdited() {
     myCallSent_ = exchSent_ = false;   // new station, new beats
     if (contestId_ < 0) return;
     const QString c = up.trimmed();
+    if (c != askedCall_) askedCall_.clear();   // a different/cleared call asks afresh
     if (qtc_) qtc_->followCall(c);     // QTC To box rides the entry
     refreshScp();
     if (c.isEmpty()) {
@@ -2261,7 +2284,8 @@ void ContestDeck::refreshScp() {
         delete it;
     }
     const QString p = call_->text().trimmed().toUpper();
-    if (p.size() < 2 || contestId_ < 0) { setCallMark({}, {}); return; }
+    callUnverified_ = false;
+    if (p.isEmpty() || contestId_ < 0) { setCallMark({}, {}); return; }
     // master.scp + everything already in this contest's log.
     QSet<QString> pool = scp_;
     for (const CQsoValues& v : values_) pool.insert(v.call);
@@ -2271,11 +2295,12 @@ void ContestDeck::refreshScp() {
         const QString color = cls == 'M' ? "#ff5252" : cls == 'W' ? "#6c7a88"
                             : cls == 'Z' ? "#4a4a4a" : "#5db2f0";
         if (hit) setCallMark("✓", color);
-        else if (p.size() >= 3 && !p.contains('?')) setCallMark("?", "#e0b050");
+        else if (!p.isEmpty() && !p.contains('?')) setCallMark("?", "#e0b050");
         else setCallMark({}, {});
+        callUnverified_ = !hit && !p.isEmpty() && !p.contains('?');
         call_->setStyleSheet(QString("QLineEdit { color:%1; }").arg(color));
     }
-    const QStringList m = scpMatches(p, pool, 12);
+    const QStringList m = p.size() >= 2 ? scpMatches(p, pool, 12) : QStringList{};
     auto* h = static_cast<QHBoxLayout*>(l);
     for (const QString& c : m) {
         auto* b = new QPushButton(c, scpRow_);
@@ -2736,11 +2761,13 @@ void ContestDeck::deleteQsoAt(int idx) {
         status_->setText("⚠ " + q.v.call + " went out in a QTC — cannot delete");
         return;
     }
-    if (QMessageBox::question(this, "Delete QSO",
-                              QString("Delete %1 (%2 %3) from the log?")
-                                  .arg(q.v.call, q.tsUtc.toString("HHmm"), q.v.band),
-                              QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)
-        != QMessageBox::Yes) {
+    QMessageBox delBox(QMessageBox::Question, "Delete QSO",
+                       QString("Delete %1 (%2 %3) from the log?")
+                           .arg(q.v.call, q.tsUtc.toString("HHmm"), q.v.band),
+                       QMessageBox::Yes | QMessageBox::No, this);
+    delBox.setDefaultButton(QMessageBox::Yes);
+    delBox.setStyleSheet(darkDialogCss());
+    if (delBox.exec() != QMessageBox::Yes) {
         call_->setFocus();
         return;
     }

@@ -238,7 +238,10 @@ void PracticeEngine::spawnCaller(int delayMs) {
     // after kTries and takes what it drew.
     constexpr int kTries = 200;
     const bool weighted = def_ && def_->points && cty_ && !ctx_.myCountry.isEmpty();
-    const bool wantZero = weighted && randInt(1, 100) <= kOffPoolPct;
+    // CQ WW practice: never a US caller (operator, 2026-11-26) — the real
+    // contest is all DX to a W, and own-country zero-pointers are noise.
+    const bool noZero = def_ && def_->id.startsWith(QLatin1String("CQ-WW"));
+    const bool wantZero = weighted && !noZero && randInt(1, 100) <= kOffPoolPct;
     QString call;
     for (int t = 0; t < kTries; ++t) {
         const QString c = pool_.at(randInt(0, pool_.size() - 1));

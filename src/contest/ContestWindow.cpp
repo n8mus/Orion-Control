@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "contest/ContestWindow.h"
+#include "ui/DarkDialog.h"
 #include <QFont>
 #include <QDialog>
 #include <QPlainTextEdit>
@@ -45,6 +46,7 @@ QString rstDefault(const QString& mode) {
 ContestWindow::ContestWindow(ContestDb* db, const CtyLookup* cty,
                              LogDb* logDb, QWidget* parent)
     : QDialog(parent), db_(db), cty_(cty), logDb_(logDb) {
+    setStyleSheet(darkDialogCss());     // its sub-dialogs and message boxes inherit
     setWindowTitle("Contest manager");
     buildUi();
     connect(db_, &ContestDb::changed, this, [this] {

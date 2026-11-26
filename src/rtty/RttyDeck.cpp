@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "rtty/RttyDeck.h"
+#include "ui/DarkDialog.h"
 
 #include <QComboBox>
 #include <QDialog>
@@ -630,6 +631,7 @@ void RttyDeck::editFkey(int idx0) {
     const QString key = QString("rtty/fkey/F%1").arg(idx0 + 1);
     const QString spec = QSettings().value(key).toString();
     QDialog d(this);
+    d.setStyleSheet(darkDialogCss());
     d.setWindowTitle(QString("F%1 — RTTY macro").arg(idx0 + 1));
     auto* form = new QFormLayout(&d);
     auto* label = new QLineEdit(spec.section('|', 0, 0), &d);

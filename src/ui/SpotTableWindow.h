@@ -14,6 +14,7 @@ namespace ttc {
 
 class LogbookIndex;
 class RotorLink;
+class CtyLookup;
 
 // The cluster feed as a table — HRD's DX-cluster window, kept: one row per
 // spot with the country/band/mode needed-status columns (green check /
@@ -28,6 +29,11 @@ public:
                     QWidget* parent = nullptr);
 
     void setSpots(const QVector<SpotLabel>& spots);   // from pushSpots
+    void setCty(const CtyLookup* cty) { cty_ = cty; dirty_ = true; }
+    // QRZ answer for a right-click lookup (any call; shown if it is ours).
+    void showQrz(const QString& call, bool ok, const QString& name,
+                 const QString& qth, const QString& grid,
+                 const QString& error);
 
     // Contest mode: the rows arrive contest-classified (SpotLabel::
     // contest) and cross-band — THIS window is where "do I need to go
@@ -40,6 +46,7 @@ signals:
     // Double-clicked row: tune the radio and run the spot-click feed.
     void spotActivated(const QString& call, qint64 hz, QChar kind,
                        const QString& tag);
+    void qrzRequested(const QString& call);      // right-click -> QRZ lookup
 
 protected:
     void showEvent(QShowEvent* e) override;
@@ -53,6 +60,9 @@ private:
     QVector<SpotLabel> spots_;
     QTableWidget* table_ = nullptr;
     QLabel* count_ = nullptr;
+    const CtyLookup* cty_ = nullptr;
+    QLabel* lookup_ = nullptr;       // right-click QRZ answer
+    QString lookupCall_;
     QLabel* bands_ = nullptr;        // contest: per-band Qs/mults line
     QPushButton* fDx_ = nullptr;
     QPushButton* fPota_ = nullptr;

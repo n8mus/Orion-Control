@@ -245,6 +245,8 @@ private:
     QString confirmPending_;         // no-country call awaiting 2nd Enter
     bool exchAutoLock_ = false;      // operator overtyped an auto-fill
     int  expectedCqz_ = 0, expectedItuz_ = 0;  // QRZ zones for the call
+    bool callUnverified_ = false;              // mark is "?": not in master/log/history
+    QString askedCall_;                        // call we already keyed "CALL?" for
     int  histCqz_ = 0;                         // zone he sent in a past CQ WW log
     double myLat_ = 0, myLon_ = 0;
     int hdg_ = -1;

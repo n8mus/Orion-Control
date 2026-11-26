@@ -4,7 +4,10 @@
 #include <QDateTime>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QDesktopServices>
 #include <QLabel>
+#include <QMenu>
+#include <QUrl>
 #include <QPushButton>
 #include <QSettings>
 #include <QShowEvent>
@@ -16,6 +19,7 @@
 
 #include "net/RotorLink.h"
 #include "util/Bearing.h"
+#include "contest/ContestEngine.h"      // normalizeForCty
 #include "util/CtyLookup.h"
 #include "util/LogbookIndex.h"
 #include "util/SpotMode.h"
@@ -23,7 +27,7 @@
 namespace ttc {
 
 namespace {
-enum Col { ColUtc = 0, ColKhz, ColCall, ColC, ColB, ColM, ColAz, ColSpotter,
+enum Col { ColUtc = 0, ColKhz, ColCall, ColCountry, ColC, ColB, ColM, ColAz, ColSpotter,
            ColComment, ColCount };
 
 // The band map's worked-before ramp — same story everywhere.
@@ -125,7 +129,7 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
     v->addLayout(chips);
 
     table_ = new QTableWidget(0, ColCount, this);
-    table_->setHorizontalHeaderLabels({"UTC", "KHZ", "CALL", "C", "B", "M",
+    table_->setHorizontalHeaderLabels({"UTC", "KHZ", "CALL", "COUNTRY", "C", "B", "M",
                                        "~AZ", "SPOTTER", "COMMENT"});
     table_->verticalHeader()->setVisible(false);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
@@ -135,6 +139,7 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
     table_->setColumnWidth(ColUtc, 52);
     table_->setColumnWidth(ColKhz, 78);
     table_->setColumnWidth(ColCall, 110);
+    table_->setColumnWidth(ColCountry, 130);
     table_->setColumnWidth(ColC, 28);
     table_->setColumnWidth(ColB, 28);
     table_->setColumnWidth(ColM, 28);
@@ -146,6 +151,34 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
         "✓ confirmed · ○ worked, unconfirmed · ✕ needed"
         "     az click = rotate · double-click = tune + log", this);
     v->addWidget(legend);
+    lookup_ = new QLabel(this);
+    lookup_->setWordWrap(true);
+    lookup_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    lookup_->hide();
+    v->addWidget(lookup_);
+
+    // Right-click a row: ask QRZ about that call, or open its page.
+    table_->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(table_, &QTableWidget::customContextMenuRequested, this,
+            [this](const QPoint& p) {
+        const int row = table_->rowAt(p.y());
+        const auto* it = row >= 0 ? table_->item(row, ColCall) : nullptr;
+        if (!it) return;
+        const QString call = it->text();
+        QMenu m(this);
+        QAction* a = m.addAction("QRZ lookup  " + call);
+        QAction* w = m.addAction("Open on qrz.com");
+        QAction* pick = m.exec(table_->viewport()->mapToGlobal(p));
+        if (pick == a) {
+            lookupCall_ = call.toUpper();
+            lookup_->setStyleSheet("color:#8798a8;");
+            lookup_->setText("QRZ: asking about " + call + " …");
+            lookup_->show();
+            emit qrzRequested(call);
+        } else if (pick == w) {
+            QDesktopServices::openUrl(QUrl("https://www.qrz.com/db/" + call));
+        }
+    });
 
     // Az click turns the rotor; double-click anywhere tunes.
     connect(table_, &QTableWidget::cellClicked, this,
@@ -185,6 +218,22 @@ SpotTableWindow::SpotTableWindow(LogbookIndex* idx, RotorLink* rotor,
 void SpotTableWindow::setSpots(const QVector<SpotLabel>& spots) {
     spots_ = spots;
     dirty_ = true;
+}
+
+void SpotTableWindow::showQrz(const QString& call, bool ok,
+                              const QString& name, const QString& qth,
+                              const QString& grid, const QString& error) {
+    if (call.trimmed().toUpper() != lookupCall_ || !lookup_) return;
+    if (ok) {
+        lookup_->setStyleSheet("color:#7fd08a;");
+        lookup_->setText(QString("QRZ  %1 — %2, %3 %4").arg(call, name, qth, grid).trimmed());
+    } else {
+        lookup_->setStyleSheet("color:#e0b050; font-weight:bold;");
+        lookup_->setText(QString("QRZ  %1 — %2").arg(call, error.isEmpty()
+                                                              ? QStringLiteral("not found")
+                                                              : error));
+    }
+    lookup_->show();
 }
 
 void SpotTableWindow::setContestMode(bool on) {
@@ -282,6 +331,16 @@ void SpotTableWindow::rebuild() {
         call->setData(Qt::UserRole + 1, l.tag);
         call->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         table_->setItem(r, ColCall, call);
+
+        {
+            CtyInfo ci;
+            const bool known = cty_ && cty_->info(normalizeForCty(l.call), ci);
+            auto* co = new QTableWidgetItem(
+                known ? ci.country : (cty_ ? QStringLiteral("⚠ no country") : QString()));
+            co->setForeground(known ? QColor(152, 168, 186) : QColor(224, 176, 80));
+            co->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            table_->setItem(r, ColCountry, co);
+        }
 
         if (cRow) {
             // One verdict column; the lifetime-logbook dots would only

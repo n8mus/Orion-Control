@@ -914,6 +914,12 @@ void MainWindow::openSpotTable() {
     if (!spotTable_) {
         spotTable_ = new SpotTableWindow(&logbook_, &rotor_,
                                          this);
+        spotTable_->setCty(&cty_);
+        connect(spotTable_, &SpotTableWindow::qrzRequested, this,
+                [this](const QString& call) { if (qrz_) qrz_->lookup(call); });
+        if (qrz_)
+            connect(qrz_, &QrzLookup::result, spotTable_,
+                    &SpotTableWindow::showQrz);
         // Double-click = the band-map spot click, plus the QSY the band map
         // can't do (a table row may live on another band entirely).
         connect(spotTable_, &SpotTableWindow::spotActivated, this,

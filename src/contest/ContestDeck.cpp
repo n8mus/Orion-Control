@@ -101,7 +101,7 @@ ContestDeck::ContestDeck(ContestDb* db, const CtyLookup* cty, CwWindow* cw,
                     if (cqz > 0) qrzCqz_.insert(c, cqz);
                     if (ituz > 0) qrzItuz_.insert(c, ituz);
                     if (c != call_->text().trimmed().toUpper()) return;
-                    if (cqz > 0) expectedCqz_ = cqz;
+                    if (cqz > 0 && histCqz_ == 0) expectedCqz_ = cqz;
                     if (ituz > 0) expectedItuz_ = ituz;
                     autoFillExch();
                 });
@@ -2091,10 +2091,8 @@ void ContestDeck::onCallEdited() {
     if (cty_ && cty_->info(normalizeForCty(c), ci)) {
         info_->setStyleSheet("color:#8798a8;");
         info_->setText(ci.country + " · " + ci.cont);
-        if (ci.country != QLatin1String("United States")) {
-            expectedCqz_ = ci.cq;
-            expectedItuz_ = ci.itu;
-        }
+        expectedCqz_ = ci.cq;           // call-area table for US/VE (CtyLookup)
+        expectedItuz_ = ci.itu;
     } else if (loggableCall(c)) {
         // The loudest bust alarm there is: a call that maps to NO
         // country. J12MED wore a quiet "—" while the real JI2MED sat
@@ -2111,6 +2109,9 @@ void ContestDeck::onCallEdited() {
     const QString cu = c.trimmed().toUpper();
     if (qrzCqz_.contains(cu)) expectedCqz_ = qrzCqz_.value(cu);
     if (qrzItuz_.contains(cu)) expectedItuz_ = qrzItuz_.value(cu);
+    // What he actually sent in a past CQ WW log beats QRZ and cty.
+    histCqz_ = db_ && loggableCall(c) ? db_->lastCqwwZone(cu) : 0;
+    if (histCqz_ > 0) expectedCqz_ = histCqz_;
     autoFillExch();                          // DX/cached fills now; US on QRZ
     updateHeading();
     if (loggableCall(c)) qrzTimer_.start();  // ask QRZ once typing settles

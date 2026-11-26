@@ -1665,7 +1665,7 @@ void MainWindow::openTuneEntryHere() {
     }
     const QString bl = QLatin1String(kBands[band].label);
     TunePoint start;
-    start.cap = 5.0; start.ampTune = start.ampLoad = -1.0;   // blank = no amp setting on this band yet (operator)
+    start.cap = start.ind = 0.0; start.ampTune = start.ampLoad = -1.0;   // cap/ind start at 0; blank amp = no setting on this band yet (operator)
     qint64 replaces = 0;
     if (const TunePoint* p = tuneTable_.nearest(curAntenna_, bl, qint64(hz))) {
         start = *p;
@@ -1728,7 +1728,7 @@ void MainWindow::showTuneTable() {
         connect(dlg, &TuneTableDialog::addRequested, this,
                 [this](const QString& a) {
                     TunePoint start;
-                    start.cap = 5.0; start.ampTune = start.ampLoad = -1.0;   // blank = no amp setting on this band yet (operator)
+                    start.cap = start.ind = 0.0; start.ampTune = start.ampLoad = -1.0;   // cap/ind start at 0; blank amp = no setting on this band yet (operator)
                     start.hz = qint64(txDialHz());
                     openTuneEntry(a, start, 0);
                 });

@@ -22,12 +22,12 @@ namespace ttc {
 struct TunePoint {
     qint64  hz       = 0;       // TX frequency, stored rounded to the kHz
     bool    bypass   = false;   // tuner out of line: cap/z/ind not used
-    double  cap      = 1.0;     // 1.0 .. 10.0, 0.1 steps
+    double  cap      = 0.0;     // 0.0 .. 10.0, 0.1 steps
     bool    highZ    = false;   // impedance knob side ...
     int     zPos     = 1;       // ... and position 1-5 on that side
-    double  ind      = 1.0;     // 1.0 .. 30.0, 0.1 steps
-    double  ampTune  = 1.0;     // 0.0 .. 10.0, 0.1 steps
-    double  ampLoad  = 1.0;     // 0.0 .. 10.0, 0.1 steps
+    double  ind      = 0.0;     // 0.0 .. 30.0, 0.1 steps
+    double  ampTune  = 0.0;     // 0.0 .. 10.0, 0.1 steps
+    double  ampLoad  = 0.0;     // 0.0 .. 10.0, 0.1 steps
     double  swr      = 0.0;     // wattmeter SWR at save time; 0 = none
     QString note;
     qint64  savedMs  = 0;       // epoch ms of the last save

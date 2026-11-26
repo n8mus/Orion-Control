@@ -82,6 +82,9 @@ public:
     int importCallHistory(const QList<HistoryRow>& rows);
     HistoryRow historyFor(const QString& call) const;
     int historyCount() const;
+    // The zone this station last SENT us in any CQ WW log (what he said on
+    // the air beats QRZ and cty). 0 = never worked in CQ WW.
+    int lastCqwwZone(const QString& call) const;
 
     // ---- WAE QTC (sending side) ----------------------------------------
     // A confirmed block spends its QSOs forever; a QSO that has gone out

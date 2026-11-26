@@ -589,6 +589,16 @@ HistoryRow ContestDb::historyFor(const QString& call) const {
     return r;
 }
 
+int ContestDb::lastCqwwZone(const QString& call) const {
+    QSqlQuery q(QSqlDatabase::database(conn_));
+    q.prepare("SELECT q.exch1 FROM cqso q JOIN contest c ON c.id=q.contest_id "
+              "WHERE q.call=:c AND c.def_id LIKE 'CQ-WW%' "
+              "AND q.exch1 GLOB '[0-9]*' ORDER BY q.ts_utc DESC LIMIT 1");
+    q.bindValue(":c", call.trimmed().toUpper());
+    if (q.exec() && q.next()) return q.value(0).toString().toInt();
+    return 0;
+}
+
 int ContestDb::historyCount() const {
     QSqlQuery q(QSqlDatabase::database(conn_));
     if (q.exec("SELECT COUNT(*) FROM callhistory") && q.next())

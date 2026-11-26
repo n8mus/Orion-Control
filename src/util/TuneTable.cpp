@@ -19,9 +19,9 @@ double tenth(double v) { return std::round(v * 10.0) / 10.0; }
 
 TunePoint clamp(TunePoint p) {
     p.hz      = TuneTable::roundKhz(p.hz);
-    p.cap     = std::clamp(tenth(p.cap), 1.0, 10.0);
+    p.cap     = std::clamp(tenth(p.cap), 0.0, 10.0);
     p.zPos    = std::clamp(p.zPos, 1, 5);
-    p.ind     = std::clamp(tenth(p.ind), 1.0, 30.0);
+    p.ind     = std::clamp(tenth(p.ind), 0.0, 30.0);
     p.ampTune = std::clamp(tenth(p.ampTune), 0.0, 10.0);   // Titan dials read 0-10
     p.ampLoad = std::clamp(tenth(p.ampLoad), 0.0, 10.0);
     p.swr     = p.swr >= 1.0 ? std::round(p.swr * 100.0) / 100.0 : 0.0;

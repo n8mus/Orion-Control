@@ -111,6 +111,29 @@ bool CtyLookup::info(const QString& call, CtyInfo& out) const {
     out.country = c.name;
     out.cont = c.cont;
     out.cq  = cqOv >= 0 ? cqOv : c.cq;    // per-prefix zone wins
+    // cty.dat gives the US and Canada ONE default zone (5) and lists only
+    // exceptions; the contest loggers' call-area table is what an operator
+    // expects (N1MM CQ WW: US 6/7 -> 3, 5/8/9/0 -> 4, 1-4 -> 5).
+    if (cqOv < 0 && (c.name == QLatin1String("United States")
+                     || c.name == QLatin1String("Canada"))) {
+        int d = 0;
+        while (d < cc.size() && !cc[d].isDigit()) ++d;
+        if (d < cc.size()) {
+            const int n = cc[d].digitValue();
+            if (c.name == QLatin1String("United States")) {
+                out.cq = (n == 6 || n == 7) ? 3 : (n >= 1 && n <= 4) ? 5 : 4;
+            } else {
+                const QString pre = cc.left(d + 1);
+                static const QHash<QString, int> ve = {
+                    {"VE1",5},{"VA1",5},{"VO1",5},{"XJ1",5},{"VY2",5},{"VE9",5},
+                    {"VE2",2},{"VA2",2},{"VO2",2},{"XJ2",2},
+                    {"VE3",4},{"VA3",4},{"XJ3",4},{"VE4",4},{"VA4",4},{"VE5",4},
+                    {"VA5",4},{"VE6",4},{"VA6",4},
+                    {"VE7",3},{"VA7",3},{"VC7",3},{"VY1",1}};
+                out.cq = ve.value(pre, out.cq);
+            }
+        }
+    }
     out.itu = ituOv >= 0 ? ituOv : c.itu;
     out.lat = c.lat;
     out.lon = c.lon;

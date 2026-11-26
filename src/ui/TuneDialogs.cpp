@@ -59,7 +59,7 @@ QString bandOfHz(qint64 hz) {
 
 QDoubleSpinBox* tenthsBox(QWidget* parent) {
     auto* s = new QDoubleSpinBox(parent);
-    s->setRange(1.0, 10.0);
+    s->setRange(0.0, 10.0);
     s->setDecimals(1);
     s->setSingleStep(0.1);
     s->setFixedWidth(80);
@@ -131,7 +131,7 @@ TuneEntryDialog::TuneEntryDialog(const QString& antenna, const TunePoint& start,
     tg->addWidget(z_, 2, 1);
     tg->addWidget(new QLabel("Inductor", tuner), 3, 0);
     ind_ = tenthsBox(tuner);
-    ind_->setRange(1.0, 30.0);
+    ind_->setRange(0.0, 30.0);
     tg->addWidget(ind_, 3, 1);
     tg->setColumnStretch(2, 1);
     lay->addWidget(tuner);

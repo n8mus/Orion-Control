@@ -193,7 +193,8 @@ ContestDef makeCqWw(bool cw) {
     d.mults = [](const CQsoValues& q, const CtyInfo& ci, bool ok,
                  const ContestContext&) {
         QStringList keys;
-        const QString z = q.exch1.trimmed();
+        QString z = q.exch1.trimmed();
+        while (z.size() > 1 && z.startsWith('0')) z.remove(0, 1);   // "04" == "4"
         if (!z.isEmpty()) keys << "Z:" + z + "|" + q.band;
         if (ok) keys << "C:" + ci.country + "|" + q.band;
         return keys;
@@ -203,6 +204,8 @@ ContestDef makeCqWw(bool cw) {
                          {1, "CQ|cq test {MYCALL} {MYCALL}"},
                      })
                    : withOverrides(kBaseRun, kVoiceRun);
+    d.maxOpHours = 36;          // CQ WW single-op: 36 of 48 h, off periods 60 min+
+    d.minOffMinutes = 60;
     return d;
 }
 

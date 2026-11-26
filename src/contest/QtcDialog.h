@@ -8,6 +8,7 @@
 
 class QLabel;
 class QLineEdit;
+class QCheckBox;
 class QPushButton;
 class QStackedWidget;
 class QTableWidget;
@@ -39,6 +40,9 @@ public:
     }
     // The RTTY print rides in here; on the Receive page it fills the grid.
     void appendRx(const QString& text);
+    // TTC_QTCDEMO=1: Receive page with a sample block copied, and every
+    // key press only SAYS what it would send (nothing is ever transmitted).
+    void demoReceive();
 
 public slots:
     void followCall(const QString& call);  // deck call box rides in
@@ -51,6 +55,8 @@ private:
     void sendHeader();
     void sendRow(int i);
     void sendAll();
+    void sendSelected();
+    void askTicked();
     void confirmBlock();
     void cancelBlock();
     void refreshCounters();
@@ -85,6 +91,7 @@ private:
     QPushButton* sendTab_ = nullptr;
     QPushButton* rcvTab_ = nullptr;
     QStackedWidget* pages_ = nullptr;
+    QCheckBox* qslOnSave_ = nullptr;
     QLineEdit* series_ = nullptr;          // his "12/5"
     QTableWidget* rcvTable_ = nullptr;     // 10 x (time, call, nr), editable
     QLabel* rcvCount_ = nullptr;

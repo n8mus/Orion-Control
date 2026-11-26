@@ -65,6 +65,7 @@
 #include "ui/MeterHost.h"
 #include "ui/DisplayPanel.h"
 #include "ui/SdrGainPanel.h"
+#include "contest/QtcDialog.h"
 #include "ui/SetupDialog.h"
 #include "radio/PmMeter.h"
 #include "cw/CwDecoder.h"
@@ -3940,6 +3941,13 @@ MainWindow::MainWindow(QWidget* parent)
     // TTC_CONTEST=1: flip contest mode on at startup (pairs with
     // TTC_SCREENSHOT to review the deck headless; a pre-seeded
     // contest.db + contest/currentId make it open on a real contest).
+    // TTC_QTCDEMO=1: the QTC Receive page with a sample block, no keying.
+    if (std::getenv("TTC_QTCDEMO"))
+        QTimer::singleShot(500, this, [this] {
+            auto* d = new QtcDialog(nullptr, {}, {}, this);
+            d->setAttribute(Qt::WA_DeleteOnClose);
+            d->demoReceive();
+        });
     // TTC_CWDECK=1: the CW deck up at startup (headless review).
     if (std::getenv("TTC_CWDECK"))
         QTimer::singleShot(0, this, [this] {

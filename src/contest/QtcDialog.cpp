@@ -2,11 +2,15 @@
 #include "contest/QtcDialog.h"
 
 #include <QHBoxLayout>
+#include <algorithm>
 #include <QHeaderView>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
+#include <QCheckBox>
 #include <QPushButton>
+#include <QSettings>
+#include <QRegularExpression>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
@@ -21,6 +25,22 @@ QtcDialog::QtcDialog(ContestDb* db,
     : QDialog(parent), db_(db), keyFn_(std::move(keyFn)),
       stopFn_(std::move(stopFn)) {
     setWindowTitle("QTC — WAE");
+    // Same dark look as the tuner dialogs and the rest of the console.
+    setStyleSheet(
+        "QDialog { background: #11161d; }"
+        "QLabel { color: #c8d4e0; }"
+        "QLineEdit { background: #1c2430; color: #e8eef5; border: 1px solid"
+        " #2a3644; padding: 3px 6px; selection-background-color: #3a4a5c; }"
+        "QPushButton { background: #1c2430; color: #c8d4e0; border: 1px solid"
+        " #2a3644; padding: 4px 10px; }"
+        "QPushButton:hover { background: #243040; }"
+        "QPushButton:disabled { color: #4a5868; }"
+        "QTableWidget { background: #0b1016; color: #c8d4e0; border: 1px"
+        " solid #2a3644; gridline-color: #1c2430;"
+        " selection-background-color: #2b5c8a; selection-color: #ffffff; }"
+        "QHeaderView::section { background: #1c2430; color: #8fa3b8;"
+        " border: none; padding: 3px 8px; font-weight: bold; }"
+        "QTableCornerButton::section { background: #1c2430; border: none; }");
     auto* lay = new QVBoxLayout(this);
 
     // Send | Receive — shown for WAE RTTY only.
@@ -94,12 +114,18 @@ QtcDialog::QtcDialog(ContestDb* db,
     table_->verticalHeader()->setVisible(false);
     table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table_->setSelectionMode(QAbstractItemView::ExtendedSelection);  // Ctrl/Shift-click lines to repeat
     lay->addWidget(table_, 1);
 
     auto* bot = new QHBoxLayout;
     auto* allBtn = new QPushButton("Send all", this);
     connect(allBtn, &QPushButton::clicked, this, [this] { sendAll(); });
     bot->addWidget(allBtn);
+    auto* selBtn = new QPushButton("Send selected", this);
+    selBtn->setToolTip("Resend the lines whose box you ticked (first column) —\n"
+                       "for \"AGN line 3\" or \"repeat 3 to 5\". No header.");
+    connect(selBtn, &QPushButton::clicked, this, [this] { sendSelected(); });
+    bot->addWidget(selBtn);
     bot->addWidget(new QLabel("Esc stops the keyer instantly", this));
     bot->addStretch(1);
     auto* cancelBtn = new QPushButton("Cancel block", this);
@@ -140,15 +166,27 @@ QtcDialog::QtcDialog(ContestDb* db,
             return sr.isEmpty() ? QStringLiteral("QSL TU")
                                 : QString("QSL %1 TU").arg(sr);
         });
+        // Tick the lines you missed, press "AGN ticked": PSE AGN 3 5 10.
+        auto* ask = new QPushButton("AGN ticked", rcvPage);
+        ask->setToolTip("Asks him to repeat just the lines ticked in the AGN\n"
+                        "column: sends \"PSE AGN 3 5 10\". Ticks clear when sent.");
+        connect(ask, &QPushButton::clicked, this, [this] { askTicked(); });
+        r1->addWidget(ask);
         r1->addStretch(1);
         rcvCount_ = new QLabel(rcvPage);
         r1->addWidget(rcvCount_);
         rl->addLayout(r1);
-        rcvTable_ = new QTableWidget(10, 3, rcvPage);
-        rcvTable_->setHorizontalHeaderLabels({"Time", "Call", "NR"});
+        rcvTable_ = new QTableWidget(10, 4, rcvPage);
+        rcvTable_->setHorizontalHeaderLabels({"Time", "Call", "NR", "AGN"});
+        for (int i = 0; i < 10; ++i) {
+            auto* c = new QTableWidgetItem;
+            c->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled);
+            c->setCheckState(Qt::Unchecked);
+            rcvTable_->setItem(i, 3, c);
+        }
         rcvTable_->horizontalHeader()->setStretchLastSection(true);
-        connect(rcvTable_, &QTableWidget::cellChanged, this, [this](int, int) {
-            if (!filling_) rcvTouched_ = true;     // his hands: hands off
+        connect(rcvTable_, &QTableWidget::cellChanged, this, [this](int, int col) {
+            if (!filling_ && col < 3) rcvTouched_ = true;     // his hands: hands off
         });
         rl->addWidget(rcvTable_, 1);
         auto* r2 = new QHBoxLayout;
@@ -158,6 +196,14 @@ QtcDialog::QtcDialog(ContestDb* db,
         r2->addWidget(new QLabel("fills from the print · edit any cell · "
                                  "Clear starts over", rcvPage));
         r2->addStretch(1);
+        qslOnSave_ = new QCheckBox("QSL on save", rcvPage);
+        qslOnSave_->setToolTip("Saving keys \"QSL 12/5 TU\" to him first, so he knows "
+                               "you have the block — no typing QSL by hand.");
+        qslOnSave_->setChecked(QSettings().value("qtc/qslOnSave", true).toBool());
+        connect(qslOnSave_, &QCheckBox::toggled, this, [](bool on) {
+            QSettings().setValue("qtc/qslOnSave", on);
+        });
+        r2->addWidget(qslOnSave_);
         auto* save = new QPushButton("Save && log block", rcvPage);
         connect(save, &QPushButton::clicked, this, [this] { saveReceived(); });
         r2->addWidget(save);
@@ -202,6 +248,18 @@ void QtcDialog::showPage(bool receive) {
     refreshCounters();
 }
 
+void QtcDialog::demoReceive() {
+    keyFn_ = [this](const QString& s) {
+        status_->setText("DEMO - would key: " + s);
+    };
+    setBothWays(true, "RTTY");
+    to_->setText("DL1ABC");
+    showPage(true);
+    show();                                // the grid only fills while visible
+    appendRx("QTC 12/5\r\n0031 DL1ABC 045\r\n0034 OH2BH 112\r\n"
+             "0040 PA3XYZ 203\r\n0052 SP9XY 087\r\n0101 G3ABC 251\r\n");
+}
+
 void QtcDialog::appendRx(const QString& text) {
     rxBuf_ += text;
     if (rxBuf_.size() > 4000) rxBuf_ = rxBuf_.right(3000);
@@ -228,6 +286,22 @@ void QtcDialog::fillFromRx() {
     rcvCount_->setText(p.count > 0
                            ? QString("%1 of %2 copied").arg(p.lines.size()).arg(p.count)
                            : QString("%1 copied").arg(p.lines.size()));
+}
+
+void QtcDialog::askTicked() {
+    QStringList n;
+    for (int i = 0; i < 10; ++i)
+        if (auto* c = rcvTable_->item(i, 3); c && c->checkState() == Qt::Checked)
+            n << QString::number(i + 1);
+    if (n.isEmpty()) {
+        status_->setText("tick the AGN box beside each missed line first");
+        return;
+    }
+    if (keyFn_) keyFn_(QString("PSE AGN %1").arg(n.join(' ')));
+    for (int i = 0; i < 10; ++i)
+        if (auto* c = rcvTable_->item(i, 3)) c->setCheckState(Qt::Unchecked);
+    status_->setText(QString("asked for line %1 again — fix the grid as they "
+                             "arrive, then QSL").arg(n.join(", ")));
 }
 
 void QtcDialog::clearReceive() {
@@ -285,6 +359,8 @@ void QtcDialog::saveReceived() {
         return;
     }
     const int n = int(lines.size());
+    if (qslOnSave_ && qslOnSave_->isChecked() && keyFn_)
+        keyFn_(QString("QSL %1 TU").arg(series_->text().trimmed()));
     clearReceive();
     status_->setText(QString("QTC %1/%2 from %3 logged — %2 points")
                          .arg(block).arg(n).arg(from));
@@ -351,7 +427,10 @@ void QtcDialog::load() {
     table_->setRowCount(int(alloc_.size()));
     for (int i = 0; i < alloc_.size(); ++i) {
         const ContestQso& q = alloc_[i];
-        table_->setItem(i, 0, new QTableWidgetItem(QString::number(i + 1)));
+        auto* num = new QTableWidgetItem(QString::number(i + 1));
+        num->setFlags((num->flags() | Qt::ItemIsUserCheckable) & ~Qt::ItemIsEditable);
+        num->setCheckState(Qt::Unchecked);      // tick the lines to resend
+        table_->setItem(i, 0, num);
         table_->setItem(i, 1, new QTableWidgetItem(
             q.tsUtc.toUTC().toString("HHmm")));
         table_->setItem(i, 2, new QTableWidgetItem(q.v.call));
@@ -396,6 +475,31 @@ void QtcDialog::sendAll() {
     for (int i = 0; i < alloc_.size(); ++i) keyFn_(rowText(i));
     status_->setText("block keyed — Confirm when he acknowledges, "
                      "Cancel if it fell apart");
+}
+
+void QtcDialog::sendSelected() {
+    if (alloc_.isEmpty() || !keyFn_) return;
+    QList<int> rows;
+    for (int r = 0; r < table_->rowCount(); ++r)
+        if (table_->item(r, 0) && table_->item(r, 0)->checkState() == Qt::Checked)
+            rows << r;
+    if (rows.isEmpty())
+        for (const QModelIndex& ix : table_->selectionModel()->selectedRows())
+            rows << ix.row();
+    std::sort(rows.begin(), rows.end());
+    if (rows.isEmpty()) {
+        status_->setText("tick the box beside the line(s) to repeat first, "
+                         "or use a row's Send");
+        return;
+    }
+    QStringList nums;
+    for (int r : rows) {
+        keyFn_(rowText(r));
+        nums << QString::number(r + 1);
+        if (table_->item(r, 0)) table_->item(r, 0)->setCheckState(Qt::Unchecked);
+    }
+    status_->setText(QString("repeated line %1 — Confirm when he has them all")
+                         .arg(nums.join(", ")));
 }
 
 void QtcDialog::confirmBlock() {

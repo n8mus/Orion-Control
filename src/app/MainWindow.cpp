@@ -671,6 +671,13 @@ MainWindow::MainWindow(QWidget* parent)
         solarClient_.setEnabled(d.showSolar || d.showVoacap);
         voacapEnabled_ = d.showVoacap;
     }
+    connect(&weather_, &WeatherClient::updated, this, [this] {
+        const auto d = weather_.data();
+        panel_->setWeather(weather_.text(),
+            d.valid() ? QString("Open-Meteo · %1 · %2").arg(weather_.source(), d.when)
+                      : QString());
+    });
+    weather_.start();
     connect(&solarClient_, &SolarClient::updated, this, [this] {
         const SolarData sd = solarClient_.data();
         pan_->setSolarInfo(sd.sfi, sd.aIdx, sd.kIdx, sd.ssn, sd.xray);
@@ -4386,6 +4393,7 @@ void MainWindow::openSetup() {
         // point is "make CW come out of a different thing", and silently
         // deferring it reads as the selector doing nothing.
         if (cwWin_) cwWin_->reloadKeyer();
+        weather_.start();                  // new ZIP / grid / units
         // (The cluster node left Setup for SPOTS ▾ → Cluster node, 2026-10-28.)
         statusBar()->showMessage(
             "setup saved — the keyer applies now; "

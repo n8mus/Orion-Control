@@ -34,6 +34,7 @@ class QVBoxLayout;
 #include "net/PskReporter.h"
 #include "net/PotaClient.h"
 #include "net/SolarClient.h"
+#include "net/WeatherClient.h"
 #include "app/Voacap.h"
 #include "net/RotorLink.h"
 #include "util/CtyLookup.h"
@@ -301,6 +302,7 @@ private:
     FreeDvReporter   freedv_;                      // qso.freedv.org, view-only
     Not1mmLog        not1mm_;                      // Not1MM's contest dupes (read-only)
     bool             not1mmShownActive_ = false;   // status-bar edge only
+    WeatherClient    weather_;                     // clock's weather line
     SolarClient      solarClient_;                 // NOAA space-weather poller
     // VOACAP overlay driver: recomputed on solar data, band crossings and
     // a slow timer; keyed so identical inputs never rerun the engine.

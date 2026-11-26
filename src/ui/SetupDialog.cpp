@@ -126,6 +126,12 @@ SetupDialog::SetupDialog(const QString& liveRadioDev,
     grid_->setToolTip("Maidenhead grid square (4 or 6 chars) — centers the "
                       "compass rose and bearing math");
     form->addRow("Grid square", grid_);
+    zip_ = new QLineEdit(s.value("station/zip", "").toString(), this);
+    zip_->setMaxLength(10);
+    zip_->setToolTip("ZIP / postal code for the clock's weather line "
+                     "(US ZIPs and many other countries). Empty = use the "
+                     "grid square's centre.");
+    form->addRow("Weather ZIP", zip_);
     // What the CW macros' [my name] / [my QTH] send.
     opName_ = new QLineEdit(s.value("station/name").toString(), this);
     opName_->setMaxLength(20);
@@ -825,6 +831,7 @@ void SetupDialog::accept() {
     QSettings s;
     s.setValue("station/callsign", call_->text().trimmed().toUpper());
     s.setValue("station/grid", grid_->text().trimmed());
+    s.setValue("station/zip", zip_->text().trimmed());
     s.setValue("station/name", opName_->text().trimmed());
     s.setValue("station/qth", opQth_->text().trimmed());
     s.setValue("station/opname", cabName_->text().trimmed());

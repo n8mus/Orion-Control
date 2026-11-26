@@ -107,6 +107,7 @@ add_executable(tentec-console
   src/ui/dss/DssRenderer.h
   src/log/Not1mmLog.cpp         src/log/Not1mmLog.h
   src/net/SolarClient.cpp       src/net/SolarClient.h
+  src/net/WeatherClient.cpp     src/net/WeatherClient.h
   src/net/FldigiClient.cpp      src/net/FldigiClient.h
   src/net/RotorClient.cpp       src/net/RotorClient.h
   src/net/RotorServer.cpp       src/net/RotorServer.h

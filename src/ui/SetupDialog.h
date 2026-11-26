@@ -51,6 +51,7 @@ private:
 
     QLineEdit* call_ = nullptr;
     QLineEdit* grid_ = nullptr;
+    QLineEdit* zip_ = nullptr;
     QLineEdit* opName_ = nullptr;      // station/name — CW [my name]
     QLineEdit* opQth_ = nullptr;       // station/qth  — CW [my QTH]
     // Cabrillo NAME / ADDRESS* header lines (station/opname, station/addr*).

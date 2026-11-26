@@ -396,6 +396,11 @@ ControlPanel::ControlPanel(QWidget* parent) : QWidget(parent) {
     clockLoc_->setAlignment(Qt::AlignHCenter);
     clockLay->addWidget(clockUtc_);
     clockLay->addWidget(clockLoc_);
+    clockWx_ = new QLabel(clock_);
+    clockWx_->setStyleSheet("color: #7fb8ff; font-size: 12px; font-weight: bold;");
+    clockWx_->setAlignment(Qt::AlignHCenter);
+    clockWx_->hide();                       // until a reading arrives
+    clockLay->addWidget(clockWx_);
     lay->addWidget(clock_);
 }
 
@@ -407,6 +412,13 @@ void ControlPanel::showClock(const QString& utc, const QString& local) {
 void ControlPanel::setClockVisible(bool on) {
     clockUtc_->setVisible(on);
     clockLoc_->setVisible(on);
+    clockWx_->setVisible(on && !clockWx_->text().isEmpty());
+}
+
+void ControlPanel::setWeather(const QString& text, const QString& tip) {
+    clockWx_->setText(text);
+    clockWx_->setToolTip(tip);
+    clockWx_->setVisible(!text.isEmpty() && clockLoc_->isVisible());
 }
 
 QWidget* ControlPanel::makeDspRow(const QString& name, QSlider*& slider, QLabel*& value) {

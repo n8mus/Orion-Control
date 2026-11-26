@@ -881,7 +881,10 @@ void CwWindow::keyExternal(const QString& text) {
     if (t.isEmpty()) return;
     emit txImminent();
     openKeyer();                 // contest window may key before we show
-    sendDaemonText(t);
+    // Trailing spaces are kept (at most two): the word gap before whatever
+    // is keyed next (QTC lines are separate messages).
+    const int gap = text.endsWith("  ") ? 2 : text.endsWith(' ') ? 1 : 0;
+    sendDaemonText(t + QString(gap, ' '));
 }
 
 void CwWindow::stopKeying() { keyer_->stop(); }

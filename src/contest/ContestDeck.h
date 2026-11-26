@@ -320,6 +320,13 @@ private:
     QLabel* status_ = nullptr;
     QPushButton* qtcBtn_ = nullptr;      // WAE only
     QtcDialog* qtc_ = nullptr;           // lazy
+    // Never lose a contact: a complete entry (call + his number) that is
+    // about to be wiped or replaced by another station asks first.
+    bool guardUnlogged();            // true = it logged/handled, caller stops
+    QString prevCall_;
+    bool wipeQuiet_ = false, guarding_ = false;
+    void ensureQtc();                    // build it (WAE RTTY: at the first print)
+    bool entryReady() const;             // call + his number are in the entry
     std::function<bool(int)> playVk_;    // 0-based DVR slot; false = silent
     std::function<void()> stopVoice_;
     std::function<void(const QString&)> rttySend_;

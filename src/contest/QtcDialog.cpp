@@ -4,6 +4,7 @@
 #include <QHBoxLayout>
 #include <algorithm>
 #include <QHeaderView>
+#include <QCloseEvent>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
@@ -102,6 +103,12 @@ QtcDialog::QtcDialog(ContestDb* db,
     mid->addWidget(new QLabel(
         "oldest unreported QSOs · min(10, 10−sent, eligible)", this));
     mid->addStretch(1);
+    auto* askBtn = new QPushButton("QTC?", this);
+    askBtn->setToolTip("Ask if he wants QTCs: keys \"QTC?\" (his QRV comes back)");
+    connect(askBtn, &QPushButton::clicked, this, [this] {
+        keyCw(QStringLiteral("QTC?"));
+    });
+    mid->addWidget(askBtn);
     auto* hdrBtn = new QPushButton("Send header", this);
     connect(hdrBtn, &QPushButton::clicked, this, [this] { sendHeader(); });
     mid->addWidget(hdrBtn);
@@ -132,6 +139,11 @@ QtcDialog::QtcDialog(ContestDb* db,
     connect(cancelBtn, &QPushButton::clicked, this,
             [this] { cancelBlock(); });
     bot->addWidget(cancelBtn);
+    auto* closeBtn = new QPushButton("Close", this);
+    closeBtn->setToolTip("Leave the window (a finished contact still in the entry\n"
+                         "is logged; an unconfirmed block stays unspent)");
+    connect(closeBtn, &QPushButton::clicked, this, [this] { close(); });
+    bot->addWidget(closeBtn);
     confirmBtn_ = new QPushButton("Confirm && log block", this);
     connect(confirmBtn_, &QPushButton::clicked, this,
             [this] { confirmBlock(); });
@@ -172,6 +184,18 @@ QtcDialog::QtcDialog(ContestDb* db,
                         "column: sends \"PSE AGN 3 5 10\". Ticks clear when sent.");
         connect(ask, &QPushButton::clicked, this, [this] { askTicked(); });
         r1->addWidget(ask);
+        auto* hdr = new QPushButton("Hdr AGN", rcvPage);
+        hdr->setToolTip("Ask for the QTC header again: \"PSE AGN HDR\"");
+        connect(hdr, &QPushButton::clicked, this, [this] {
+            if (keyFn_) keyFn_(QStringLiteral("PSE AGN HDR"));
+            status_->setText("asked for the header again");
+        });
+        r1->addWidget(hdr);
+        auto* skip = new QPushButton("Skip", rcvPage);
+        skip->setToolTip("This line was garbled: leave its row blank and carry on —\n"
+                         "the next line you copy goes in the row below.");
+        connect(skip, &QPushButton::clicked, this, [this] { skipLine(); });
+        r1->addWidget(skip);
         r1->addStretch(1);
         rcvCount_ = new QLabel(rcvPage);
         r1->addWidget(rcvCount_);
@@ -196,6 +220,12 @@ QtcDialog::QtcDialog(ContestDb* db,
         r2->addWidget(new QLabel("fills from the print · edit any cell · "
                                  "Clear starts over", rcvPage));
         r2->addStretch(1);
+        auto* cancel = new QPushButton("Cancel", rcvPage);
+        cancel->setToolTip("No QTCs this time: closes the window. If his number is\n"
+                           "already in the entry the contact is LOGGED; the entry\n"
+                           "is never wiped.");
+        connect(cancel, &QPushButton::clicked, this, [this] { cancelReceive(); });
+        r2->addWidget(cancel);
         qslOnSave_ = new QCheckBox("QSL on save", rcvPage);
         qslOnSave_->setToolTip("Saving keys \"QSL 12/5 TU\" to him first, so he knows "
                                "you have the block — no typing QSL by hand.");
@@ -222,7 +252,7 @@ QtcDialog::QtcDialog(ContestDb* db,
         b->setDefault(false);
         b->setFocusPolicy(Qt::NoFocus);
     }
-    resize(560, 540);
+    resize(660, 540);
 }
 
 void QtcDialog::setBothWays(bool on, const QString& mode) {
@@ -238,13 +268,13 @@ int QtcDialog::usedWith(const QString& call) const {
          + (bothWays_ ? db_->qtcRcvdFrom(contestId_, call) : 0);
 }
 
-void QtcDialog::showPage(bool receive) {
+void QtcDialog::showPage(bool receive, bool keepRx) {
     if (receive && !bothWays_) receive = false;
     sendTab_->setChecked(!receive);
     rcvTab_->setChecked(receive);
     pages_->setCurrentIndex(receive ? 1 : 0);
     toLbl_->setText(receive ? "From:" : "To:");
-    if (receive) clearReceive();
+    if (receive && !keepRx) clearReceive();
     refreshCounters();
 }
 
@@ -268,14 +298,31 @@ void QtcDialog::appendRx(const QString& text) {
 
 void QtcDialog::fillFromRx() {
     const QtcParsed p = parseQtcText(rxBuf_);
+    QList<QtcParsed::Line> rows;
+    if (base_.isEmpty()) {
+        rows = p.lines;
+    } else {
+        rows = base_;
+        QList<QtcParsed::Line> tail = parseQtcText(rxBuf_.mid(mark_)).lines;
+        const int N = p.count > 0 ? p.count : 10;
+        while (!tail.isEmpty() && rows.size() < N) rows << tail.takeFirst();
+        QList<int> want = awaiting_.values();
+        std::sort(want.begin(), want.end());
+        for (int s : want) {               // repeats land in their own rows
+            if (tail.isEmpty()) break;
+            if (s < rows.size() && rows[s].qCall.isEmpty()) rows[s] = tail.takeFirst();
+        }
+    }
     filling_ = true;
     if (p.block > 0)
         series_->setText(QString("%1/%2").arg(p.block).arg(p.count));
+    int copied = 0;
     for (int i = 0; i < 10; ++i) {
-        const bool have = i < p.lines.size();
-        const QString v[3] = {have ? p.lines[i].qTime : QString(),
-                              have ? p.lines[i].qCall : QString(),
-                              have ? p.lines[i].qSerial : QString()};
+        const bool have = i < rows.size();
+        const QString v[3] = {have ? rows[i].qTime : QString(),
+                              have ? rows[i].qCall : QString(),
+                              have ? rows[i].qSerial : QString()};
+        if (have && !rows[i].qCall.isEmpty()) ++copied;
         for (int col = 0; col < 3; ++col) {
             QTableWidgetItem* it = rcvTable_->item(i, col);
             if (!it) rcvTable_->setItem(i, col, it = new QTableWidgetItem);
@@ -284,8 +331,8 @@ void QtcDialog::fillFromRx() {
     }
     filling_ = false;
     rcvCount_->setText(p.count > 0
-                           ? QString("%1 of %2 copied").arg(p.lines.size()).arg(p.count)
-                           : QString("%1 copied").arg(p.lines.size()));
+                           ? QString("%1 of %2 copied").arg(copied).arg(p.count)
+                           : QString("%1 copied").arg(copied));
 }
 
 void QtcDialog::askTicked() {
@@ -298,14 +345,61 @@ void QtcDialog::askTicked() {
         return;
     }
     if (keyFn_) keyFn_(QString("PSE AGN %1").arg(n.join(' ')));
+    base_ = gridRows();                     // freeze; blank the ticked rows
+    for (const QString& s : n) {
+        const int r = s.toInt() - 1;
+        while (base_.size() <= r) base_.push_back({});
+        base_[r] = {};
+        awaiting_.insert(r);
+    }
+    mark_ = rxBuf_.size();                  // what comes next is the repeat
     for (int i = 0; i < 10; ++i)
         if (auto* c = rcvTable_->item(i, 3)) c->setCheckState(Qt::Unchecked);
+    fillFromRx();
     status_->setText(QString("asked for line %1 again — fix the grid as they "
                              "arrive, then QSL").arg(n.join(", ")));
 }
 
+QList<QtcParsed::Line> QtcDialog::gridRows() const {
+    QList<QtcParsed::Line> rows;
+    int last = -1;
+    for (int i = 0; i < 10; ++i) {
+        const auto cell = [&](int col) {
+            const QTableWidgetItem* it = rcvTable_->item(i, col);
+            return it ? it->text().trimmed() : QString();
+        };
+        rows.push_back({cell(0), cell(1), cell(2)});
+        if (!rows.back().qTime.isEmpty() || !rows.back().qCall.isEmpty()
+            || !rows.back().qSerial.isEmpty()) last = i;
+    }
+    rows.resize(last + 1);
+    return rows;
+}
+
+void QtcDialog::skipLine() {
+    base_ = gridRows();
+    awaiting_.insert(base_.size());
+    base_.push_back({});                    // the blank row the line would fill
+    mark_ = rxBuf_.size();
+    fillFromRx();
+    status_->setText(QString("line %1 skipped — copy on; AGN ticked asks for it later")
+                         .arg(base_.size()));
+}
+
+void QtcDialog::cancelReceive() {
+    const bool log = entryReady_ && entryReady_();
+    if (log && logQso_) logQso_();
+    clearReceive();
+    hide();
+    status_->setText(log ? "QTC cancelled — contact logged"
+                         : "QTC cancelled — entry kept, not logged yet");
+}
+
 void QtcDialog::clearReceive() {
     rxBuf_.clear();
+    base_.clear();
+    awaiting_.clear();
+    mark_ = 0;
     rcvTouched_ = false;
     series_->clear();
     fillFromRx();                          // empties the grid
@@ -362,8 +456,12 @@ void QtcDialog::saveReceived() {
     if (qslOnSave_ && qslOnSave_->isChecked() && keyFn_)
         keyFn_(QString("QSL %1 TU").arg(series_->text().trimmed()));
     clearReceive();
-    status_->setText(QString("QTC %1/%2 from %3 logged — %2 points")
-                         .arg(block).arg(n).arg(from));
+    const bool logged = entryReady_ && entryReady_() && logQso_;
+    if (logged) logQso_();             // the contact goes in with its QTCs
+    status_->setText(QString("QTC %1/%2 from %3 logged — %2 points%4")
+                         .arg(block).arg(n).arg(from)
+                         .arg(logged ? ", contact logged"
+                                     : " — contact NOT logged (no number in the entry)"));
     refreshCounters();
 }
 
@@ -373,7 +471,10 @@ void QtcDialog::openFor(qint64 contestId) {
     alloc_.clear();
     table_->setRowCount(0);
     confirmBtn_->setEnabled(false);
-    showPage(false);
+    // WAE RTTY: open on RECEIVE (he is usually already sending), with
+    // whatever header/lines already came in while this was closed.
+    showPage(bothWays_, true);
+    if (bothWays_) fillFromRx();
     refreshCounters();
     show();
     raise();
@@ -457,22 +558,30 @@ QString QtcDialog::rowText(int i) const {
         + q.v.serialR;
 }
 
+// CW keys each message on its own; without a trailing word space the next
+// message ran straight into this one (live-found, WAE CW). RTTY frames its
+// own overs, so it gets the text as is.
+void QtcDialog::keyCw(const QString& text) {
+    if (!keyFn_) return;
+    keyFn_(bothWays_ ? text : text + "  ");
+}
+
 void QtcDialog::sendHeader() {
     if (alloc_.isEmpty() || !keyFn_) return;
     const QString h = QString("QTC %1/%2").arg(block_).arg(alloc_.size());
-    keyFn_(bothWays_ ? h + ' ' + h : h);   // a teleprinter gets it twice
+    keyCw(bothWays_ ? h + ' ' + h : h);   // a teleprinter gets it twice
 }
 
 void QtcDialog::sendRow(int i) {
     if (i < 0 || i >= alloc_.size() || !keyFn_) return;
-    keyFn_(rowText(i));
+    keyCw(rowText(i));
     table_->selectRow(i);
 }
 
 void QtcDialog::sendAll() {
     if (alloc_.isEmpty() || !keyFn_) return;
     sendHeader();
-    for (int i = 0; i < alloc_.size(); ++i) keyFn_(rowText(i));
+    for (int i = 0; i < alloc_.size(); ++i) keyCw(rowText(i));
     status_->setText("block keyed — Confirm when he acknowledges, "
                      "Cancel if it fell apart");
 }
@@ -494,7 +603,7 @@ void QtcDialog::sendSelected() {
     }
     QStringList nums;
     for (int r : rows) {
-        keyFn_(rowText(r));
+        keyCw(rowText(r));
         nums << QString::number(r + 1);
         if (table_->item(r, 0)) table_->item(r, 0)->setCheckState(Qt::Unchecked);
     }
@@ -529,6 +638,13 @@ void QtcDialog::cancelBlock() {
     table_->setRowCount(0);
     confirmBtn_->setEnabled(false);
     status_->setText("block discarded — nothing spent");
+}
+
+void QtcDialog::closeEvent(QCloseEvent* e) {
+    // Whatever page, however it was left: a finished contact still in the
+    // entry is logged on the way out.
+    if (entryReady_ && logQso_ && entryReady_()) logQso_();
+    QDialog::closeEvent(e);
 }
 
 void QtcDialog::keyPressEvent(QKeyEvent* e) {

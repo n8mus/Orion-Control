@@ -42,6 +42,7 @@
 #include "util/LogbookIndex.h"
 
 namespace ttc {
+namespace { int editDist(const QString& a, const QString& b); }
 
 namespace {
 QString fkeyLabel(const QString& spec) {
@@ -532,6 +533,37 @@ void ContestDeck::buildUi() {
                 autoPaused_ = true;  // never CQ over an answering station
             onCallEdited();
         });
+        // Another station typed or clicked over a finished, unlogged contact.
+        connect(call_, &QLineEdit::textChanged, this, [this](const QString& now) {
+            const QString old = prevCall_;
+            prevCall_ = now.trimmed().toUpper();
+            if (guarding_ || wipeQuiet_ || practiceOn()) return;
+            if (old.isEmpty() || prevCall_.isEmpty() || !loggableCall(old)
+                || !loggableCall(prevCall_) || editDist(old, prevCall_) <= 2) return;
+            bool hasNr = false;
+            for (const auto& [col, edit] : edits_)
+                if (col == ExchCol::SerialR && !edit->text().trimmed().isEmpty())
+                    hasNr = true;
+            if (!hasNr) return;
+            const QString typed = prevCall_;
+            guarding_ = true;
+            call_->setText(old);         // so the QSO is logged under HIS call
+            guarding_ = false;
+            if (guardUnlogged()) {
+                guarding_ = true;        // logged + wiped: the new call goes in
+                call_->setText(typed);
+                guarding_ = false;
+            } else {
+                wipeQuiet_ = true;       // discarded: drop the old number too
+                wipe();
+                wipeQuiet_ = false;
+                guarding_ = true;
+                call_->setText(typed);
+                guarding_ = false;
+            }
+            prevCall_ = typed;
+            onCallEdited();
+        });
         connect(call_, &QLineEdit::returnPressed, this,
                 [this] { enterPressed(); });
         cbox->addWidget(call_);
@@ -783,30 +815,15 @@ void ContestDeck::buildUi() {
                             "you're working; RTTY also receives");
         connect(qtcBtn_, &QPushButton::clicked, this, [this] {
             if (contestId_ < 0) return;
-            if (!qtc_) {
-                qtc_ = new QtcDialog(
-                    db_, [this](const QString& t) { keyText(t); },
-                    [this] {
-                        if (cw_) cw_->stopKeying();
-                        if (rttyContest() && rttyStop_) rttyStop_();
-                    }, this);
-                // RTTY: QTC traffic only between continents.
-                qtc_->setCallCheck([this](const QString& call) {
-                    if (!def_ || !def_->qtcBothWays) return QString();
-                    CtyInfo ci;
-                    if (!cty_ || !cty_->info(normalizeForCty(call), ci))
-                        return QString("%1: no country found — QTCs need a "
-                                       "station on another continent").arg(call);
-                    if (ci.cont == ctx_.myCont)
-                        return QString("%1 is on your continent (%2) — QTCs only "
-                                       "between continents").arg(call, ci.cont);
-                    return QString();
-                });
-            }
+            ensureQtc();
+            // The contact is logged BEFORE any QTC traffic (call + his number
+            // in the entry): nothing about the QTC can lose it afterwards.
+            QString who = call_->text().trimmed().toUpper();
+            if (entryReady()) logNow();
             qtc_->setBothWays(def_ && def_->qtcBothWays, modeNow());
             qtc_->setRigFreq(rigHz_);
             qtc_->openFor(contestId_);
-            qtc_->followCall(call_->text());
+            qtc_->followCall(who);
         });
         br->addWidget(qtcBtn_);
         auto* multBtn = new QPushButton("MULTS", this);
@@ -1343,8 +1360,82 @@ void ContestDeck::appendRead(const QString& text) {
     read_->setTextCursor(c);
 }
 
+void ContestDeck::ensureQtc() {
+    if (qtc_) return;
+    qtc_ = new QtcDialog(
+        db_, [this](const QString& t) { keyText(t); },
+        [this] {
+            if (cw_) cw_->stopKeying();
+            if (rttyContest() && rttyStop_) rttyStop_();
+        }, this);
+    // RTTY: QTC traffic only between continents.
+    qtc_->setCallCheck([this](const QString& call) {
+        if (!def_ || !def_->qtcBothWays) return QString();
+        CtyInfo ci;
+        if (!cty_ || !cty_->info(normalizeForCty(call), ci))
+            return QString("%1: no country found — QTCs need a "
+                           "station on another continent").arg(call);
+        if (ci.cont == ctx_.myCont)
+            return QString("%1 is on your continent (%2) — QTCs only "
+                           "between continents").arg(call, ci.cont);
+        return QString();
+    });
+    // The QTC window and the contact are ONE thing (as in N1MM): Save and
+    // Cancel log the QSO sitting in the entry, so a QTC can never leave
+    // it behind to be lost when the next station is called.
+    qtc_->setQsoHooks([this] { return entryReady(); },
+                      [this] { logNow(); });
+}
+
+namespace {
+int editDist(const QString& a, const QString& b) {
+    QVector<int> prev(b.size() + 1), cur(b.size() + 1);
+    for (int j = 0; j <= b.size(); ++j) prev[j] = j;
+    for (int i = 1; i <= a.size(); ++i) {
+        cur[0] = i;
+        for (int j = 1; j <= b.size(); ++j)
+            cur[j] = std::min({prev[j] + 1, cur[j - 1] + 1,
+                               prev[j - 1] + (a[i - 1] != b[j - 1])});
+        prev = cur;
+    }
+    return prev[b.size()];
+}
+}  // namespace
+
+// A finished contact (call + his number) is in the entry and something is
+// about to throw it away: ask. "Log it" logs it; "Discard" is the operator's
+// deliberate choice.
+bool ContestDeck::guardUnlogged() {
+    const QString c = call_->text().trimmed().toUpper();
+    QMessageBox box(QMessageBox::Warning, "Unlogged contact",
+                    QString("%1 is not logged yet.\n\nLog it before moving on?").arg(c),
+                    QMessageBox::NoButton, this);
+    auto* logB = box.addButton("Log it", QMessageBox::AcceptRole);
+    box.addButton("Discard", QMessageBox::DestructiveRole);
+    box.setDefaultButton(logB);
+    box.exec();
+    if (box.clickedButton() != logB) return false;
+    guarding_ = true;
+    logNow();                            // wipes the entry itself
+    guarding_ = false;
+    return true;
+}
+
+bool ContestDeck::entryReady() const {
+    if (!loggableCall(call_->text().trimmed().toUpper())) return false;
+    for (const auto& [col, edit] : edits_)
+        if (col == ExchCol::SerialR && !edit->text().trimmed().isEmpty()) return true;
+    return false;
+}
+
 void ContestDeck::appendRttyRead(const QString& text) {
     if (!isVisible() || !rttyContest()) return;
+    // WAE RTTY: the window exists from the first print, so a header that
+    // arrives BEFORE it is opened is already waiting in its buffer.
+    if (!qtc_ && def_ && def_->qtcBothWays && contestId_ >= 0) {
+        ensureQtc();
+        qtc_->setBothWays(true, modeNow());
+    }
     if (qtc_) qtc_->appendRx(text);      // the Receive page copies from here
     QTextCursor c = read_->textCursor();
     c.movePosition(QTextCursor::End);
@@ -1644,7 +1735,9 @@ void ContestDeck::logNow() {
     trace(QString("DECK QSO %1 %2 ser %3")
               .arg(c, q.v.band)
               .arg(q.v.serialS));
+    wipeQuiet_ = true;
     wipe();                          // the silent "it logged" signal
+    wipeQuiet_ = false;
     refreshAll();
     status_->setText(QString("logged %1").arg(c));
 }
@@ -1734,11 +1827,15 @@ void ContestDeck::practiceVerdict() {
     status_->setText((r.allGood ? "✓ " : "✗ ") + line);
     appendRead((r.allGood ? "\n== ✓ " : "\n== ✗ ") + line + " ==\n");
     trace("PRAC " + line);
+    wipeQuiet_ = true;
     wipe();                          // same silent reset as a real log
+    wipeQuiet_ = false;
     refreshAll();                    // score / rate / MULTS follow the drill
 }
 
 void ContestDeck::wipe() {
+    if (!wipeQuiet_ && !guarding_ && !practiceOn() && entryReady() && guardUnlogged())
+        return;                          // it was logged (and wiped) instead
     call_->clear();
     for (const auto& e : edits_) e.second->setPlaceholderText(QString());   // zone hint goes with the call
     if (rstS_) rstS_->setText(rstPreset());
@@ -2272,6 +2369,14 @@ void ContestDeck::refreshAll() {
     if (lastLog_) {
         const int n = qMin(qsizetype(12), qsos_.size());
         lastLog_->setRowCount(n);
+        // QTC traffic per station (sent / received lines), shown on that QSO.
+        QHash<QString, QPair<int, int>> qtcByCall;
+        if (def_->hasQtc) {
+            for (const ContestDb::QtcRow& r : db_->qtcRows(contestId_))
+                qtcByCall[r.toCall.toUpper()].first++;
+            for (const ContestDb::QtcRcvdRow& r : db_->qtcRcvdRows(contestId_))
+                qtcByCall[r.fromCall.toUpper()].second++;
+        }
         for (int i = 0; i < n; ++i) {
             const ContestQso& q = qsos_[qsos_.size() - 1 - i];
             QStringList ex;
@@ -2286,6 +2391,16 @@ void ContestDeck::refreshAll() {
             put(0, q.tsUtc.toString("HHmm"));
             lastLog_->item(i, 0)->setData(Qt::UserRole, i);   // newest-first index
             put(1, q.v.call);
+            if (def_->hasQtc) {
+                const auto it = qtcByCall.constFind(q.v.call);
+                if (it != qtcByCall.constEnd()) {
+                    const QString m = QString("QTC ↑%1 ↓%2").arg(it->first).arg(it->second);
+                    lastLog_->item(i, 1)->setText(q.v.call + "  " + m);
+                    lastLog_->item(i, 1)->setToolTip(
+                        QString("QTC with %1: %2 sent, %3 received").arg(q.v.call)
+                            .arg(it->first).arg(it->second));
+                }
+            }
             put(2, ex.join(' '));
             put(3, QString::number(q.points));
         }

@@ -3,11 +3,15 @@
 #include <QDialog>
 #include <QList>
 #include <functional>
+#include <QList>
+#include <QSet>
+#include "contest/ContestEngine.h"
 
 #include "contest/ContestDb.h"
 
 class QLabel;
 class QLineEdit;
+class QCloseEvent;
 class QCheckBox;
 class QPushButton;
 class QStackedWidget;
@@ -40,6 +44,12 @@ public:
     }
     // The RTTY print rides in here; on the Receive page it fills the grid.
     void appendRx(const QString& text);
+    // The deck's entry: ready() = call and his number are typed in; log()
+    // logs that contact now. Save/Cancel use them so no QSO is left behind.
+    void setQsoHooks(std::function<bool()> ready, std::function<void()> log) {
+        entryReady_ = std::move(ready);
+        logQso_ = std::move(log);
+    }
     // TTC_QTCDEMO=1: Receive page with a sample block copied, and every
     // key press only SAYS what it would send (nothing is ever transmitted).
     void demoReceive();
@@ -49,24 +59,31 @@ public slots:
 
 protected:
     void keyPressEvent(QKeyEvent* e) override;
+    void closeEvent(QCloseEvent* e) override;   // leaving never loses the contact
 
 private:
     void load();
+    void keyCw(const QString& text);       // + a word space in CW
     void sendHeader();
     void sendRow(int i);
     void sendAll();
     void sendSelected();
     void askTicked();
+    void skipLine();
+    QList<QtcParsed::Line> gridRows() const;   // what the grid shows now
     void confirmBlock();
     void cancelBlock();
     void refreshCounters();
     QString rowText(int i) const;          // "0030 DL1ABC 456"
     int usedWith(const QString& call) const;   // sent (+ received, RTTY)
-    void showPage(bool receive);
+    void showPage(bool receive, bool keepRx = false);
+    void cancelReceive();
     void fillFromRx();                     // parse rxBuf_ into the grid
     void clearReceive();
     void saveReceived();
 
+    std::function<bool()> entryReady_;
+    std::function<void()> logQso_;
     ContestDb* db_;
     std::function<void(const QString&)> keyFn_;
     std::function<void()> stopFn_;
@@ -96,6 +113,11 @@ private:
     QTableWidget* rcvTable_ = nullptr;     // 10 x (time, call, nr), editable
     QLabel* rcvCount_ = nullptr;
     QString rxBuf_;                        // print since the page was cleared
+    // Frozen rows after a Skip / AGN ticked: new print continues the block,
+    // then fills the rows awaiting a repeat (N1MM's S and Agn n).
+    QList<QtcParsed::Line> base_;
+    QSet<int> awaiting_;
+    int mark_ = 0;
     bool rcvTouched_ = false;              // operator edited: stop auto-fill
     bool filling_ = false;
 };

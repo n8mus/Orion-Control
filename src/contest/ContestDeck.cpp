@@ -3,6 +3,8 @@
 #include "ui/DarkDialog.h"
 
 #include <QDateTime>
+#include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -1973,6 +1975,8 @@ void ContestDeck::keyText(const QString& text) {
     // to the simulator's sidetone and NOTHING reaches the keyer — this
     // early return is the only thing between a practice CQ and RF.
     if (practiceOn()) {
+        if (std::getenv("TTC_KEYLOG"))   // headless check: what WOULD go out
+            std::fprintf(stderr, "[keylog] practice: %s\n", qPrintable(text));
         practice_->opKeyed(text, wpm_ ? wpm_->value() : 25);
         return;
     }

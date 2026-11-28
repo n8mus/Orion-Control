@@ -1459,11 +1459,15 @@ char ContestDeck::classifySpot(const QString& call, qint64 hz) const {
     probe.mode = modeNow();
     CtyInfo ci;
     const bool ok = cty_ && cty_->info(normalizeForCty(c), ci);
-    // A new multiplier outranks the points verdict: in CQ WW a US
-    // station is worth 0 points to us but its zone or country can still
-    // be a mult we lack, and N1MM paints that one as a mult too. Judged
-    // as 'Z' first, it drew gray and the SO2V walk stepped over it
-    // (live-found 2026-10-28: KI4I on a fresh log, arrows refused it).
+    // Own country in a contest that pays it nothing (CQ WW: US to US): the
+    // spot is worthless to the operator, gray and skipped by the arrows,
+    // even though the country/zone key would count as a mult (operator,
+    // 2026-11-27: "I'm a US station, I don't need US spots").
+    if (ok && ci.country == ctx_.myCountry && def_->points
+        && def_->points(probe, ci, ok, ctx_) <= 0)
+        return 'Z';
+    // A new multiplier outranks the points verdict for OTHER countries
+    // (zero-point own-country spots were settled above).
     if (def_->mults)
         for (const QString& k : def_->mults(probe, ci, ok, ctx_))
             if (!k.isEmpty() && !sb_.multKeys.contains(k)) return 'M';
